@@ -1,3 +1,8 @@
+pub mod actions;
+pub mod error;
+pub mod events;
+pub mod model;
+
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
