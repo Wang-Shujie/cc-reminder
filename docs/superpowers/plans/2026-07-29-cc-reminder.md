@@ -493,7 +493,7 @@ fn main() {
 }
 ```
 
-Set the Tauri identifier to `com.ccreminder.app`. `run()` builds a Tauri app with single-instance and autostart plugins registered, a minimum window size of 960 x 640 in `tauri.conf.json`, and no remote URL or network capability granted to the WebView. Set production CSP to `default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self'; font-src 'self'` with no inline/remote script, frame, object, or form destinations; a separate debug-only `devCsp` adds only the exact Vite localhost HTTP/WebSocket origin. Keep the native window visible during this bootstrap task; tray/minimize behavior is added only after the health model exists.
+Set the Tauri identifier to `com.ccreminder.app`. `run()` builds a Tauri app with single-instance and autostart plugins registered, a minimum window size of 960 x 640 in `tauri.conf.json`, and no remote URL or network capability granted to the WebView. Set production CSP to `default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'` with no inline/remote script, frame, object, form, or base destinations; a separate debug-only `devCsp` adds only the exact Vite localhost HTTP/WebSocket origin while retaining those explicit `none` directives. Keep the native window visible during this bootstrap task; tray/minimize behavior is added only after the health model exists.
 
 - [ ] **Step 5: Verify the shell and both builds**
 
