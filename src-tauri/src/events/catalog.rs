@@ -158,7 +158,8 @@ mod tests {
     use semver::Version;
 
     use super::{
-        CapabilityCatalog, CapabilityStatus, CatalogVerification, NeutralOutput, catalog_for,
+        CapabilityCatalog, CapabilityStatus, CatalogVerification, HookCapability, NeutralOutput,
+        Sensitivity, catalog_for,
     };
     use crate::model::AgentKind;
 
@@ -266,7 +267,98 @@ mod tests {
     }
 
     #[test]
-    fn runtime_catalogs_do_not_claim_unverified_hook_metadata() {
+    fn verified_codex_capture_metadata_supports_task_three() {
+        let catalog = catalog_for(AgentKind::Codex, &Version::new(0, 145, 0)).catalog;
+        let permission = hook(&catalog, "PermissionRequest");
+        let stop = hook(&catalog, "Stop");
+
+        assert_eq!(permission.matcher_target.as_deref(), Some("tool_name"));
+        assert!(permission.supports_matcher);
+        assert_eq!(
+            field_names(permission),
+            vec![
+                "session_id",
+                "transcript_path",
+                "cwd",
+                "hook_event_name",
+                "model",
+                "permission_mode",
+                "turn_id",
+                "tool_name",
+                "tool_input",
+            ]
+        );
+        assert_eq!(
+            field(permission, "transcript_path").sensitivity,
+            Sensitivity::Forbidden
+        );
+        assert_eq!(
+            field(permission, "tool_input").sensitivity,
+            Sensitivity::Sensitive
+        );
+        assert!(!stop.supports_matcher);
+        assert_eq!(
+            field_names(stop),
+            vec![
+                "session_id",
+                "transcript_path",
+                "cwd",
+                "hook_event_name",
+                "model",
+                "permission_mode",
+                "turn_id",
+                "stop_hook_active",
+                "last_assistant_message",
+            ]
+        );
+    }
+
+    #[test]
+    fn verified_claude_capture_metadata_supports_task_three() {
+        let catalog = catalog_for(AgentKind::ClaudeCode, &Version::new(2, 1, 218)).catalog;
+        let permission = hook(&catalog, "PermissionRequest");
+        let stop = hook(&catalog, "Stop");
+
+        assert_eq!(permission.matcher_target.as_deref(), Some("tool_name"));
+        assert!(permission.supports_matcher);
+        assert_eq!(
+            field_names(permission),
+            vec![
+                "session_id",
+                "transcript_path",
+                "cwd",
+                "permission_mode",
+                "hook_event_name",
+                "tool_name",
+                "tool_input",
+                "permission_suggestions",
+            ]
+        );
+        assert_eq!(
+            field(permission, "transcript_path").sensitivity,
+            Sensitivity::Forbidden
+        );
+        assert_eq!(
+            field(permission, "tool_input").sensitivity,
+            Sensitivity::Sensitive
+        );
+        assert!(!stop.supports_matcher);
+        assert_eq!(
+            field_names(stop),
+            vec![
+                "session_id",
+                "transcript_path",
+                "cwd",
+                "permission_mode",
+                "hook_event_name",
+                "stop_hook_active",
+                "last_assistant_message",
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_catalogs_keep_unverified_metadata_conservative() {
         for (agent, version) in [
             (AgentKind::ClaudeCode, Version::new(2, 1, 218)),
             (AgentKind::Codex, Version::new(0, 145, 0)),
@@ -275,9 +367,6 @@ mod tests {
 
             assert!(catalog.hooks.iter().all(|hook| {
                 hook.status == CapabilityStatus::Stable
-                    && !hook.supports_matcher
-                    && hook.matcher_target.is_none()
-                    && hook.input_fields.is_empty()
                     && !hook.high_frequency
                     && hook.neutral_output == NeutralOutput::Empty
             }));
@@ -290,5 +379,27 @@ mod tests {
             .iter()
             .map(|hook| hook.source_event.as_str())
             .collect()
+    }
+
+    fn hook<'a>(catalog: &'a CapabilityCatalog, source_event: &str) -> &'a HookCapability {
+        catalog
+            .hooks
+            .iter()
+            .find(|hook| hook.source_event == source_event)
+            .unwrap()
+    }
+
+    fn field_names(hook: &HookCapability) -> Vec<&str> {
+        hook.input_fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect()
+    }
+
+    fn field<'a>(hook: &'a HookCapability, name: &str) -> &'a super::InputField {
+        hook.input_fields
+            .iter()
+            .find(|field| field.name == name)
+            .unwrap()
     }
 }
