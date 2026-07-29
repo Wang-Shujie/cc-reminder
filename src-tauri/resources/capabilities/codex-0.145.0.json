@@ -13,7 +13,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -29,7 +29,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -45,7 +45,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -61,7 +61,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -77,7 +77,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -93,7 +93,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -109,7 +109,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -125,7 +125,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -141,7 +141,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -157,7 +157,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
@@ -173,7 +173,7 @@
       "sensitivity": "sensitive",
       "high_frequency": false,
       "input_fields": [],
-      "neutral_output": "empty_object",
+      "neutral_output": "empty",
       "status": "stable",
       "min_verified_version": "0.145.0",
       "max_verified_version": "0.145.0"
