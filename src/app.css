@@ -1,7 +1,8 @@
 :root {
+  color-scheme: light dark;
   font-family: system-ui, sans-serif;
-  color: #1b1b1b;
-  background: #ffffff;
+  color: CanvasText;
+  background: Canvas;
 }
 
 body {
