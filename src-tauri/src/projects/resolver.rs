@@ -102,7 +102,7 @@ mod tests {
         assert_match(
             resolve_project(
                 Path::new("/repos/app/./src"),
-                &[project.clone()],
+                std::slice::from_ref(&project),
                 PathPlatform::Unix,
             ),
             project.id,
@@ -116,7 +116,7 @@ mod tests {
         assert_match(
             resolve_project(
                 Path::new("c:\\repos\\app\\src"),
-                &[project.clone()],
+                std::slice::from_ref(&project),
                 PathPlatform::Windows,
             ),
             project.id,
@@ -163,7 +163,7 @@ mod tests {
         assert_match(
             resolve_project(
                 &project.canonical_root.join("src"),
-                &[project.clone()],
+                std::slice::from_ref(&project),
                 PathPlatform::Unix,
             ),
             project.id,
@@ -178,7 +178,7 @@ mod tests {
         assert_match(
             resolve_project(
                 Path::new("/repos/app-worktree/src"),
-                &[project.clone()],
+                std::slice::from_ref(&project),
                 PathPlatform::Unix,
             ),
             project.id,
