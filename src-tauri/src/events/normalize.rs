@@ -105,7 +105,7 @@ pub fn capture_hook_json(
                 _ => {
                     captured
                         .sensitive_fields
-                        .insert(field.name, value.to_string());
+                        .insert(field.name, sensitive_string(value));
                 }
             },
         }
@@ -206,6 +206,13 @@ fn string(value: &Value) -> Option<String> {
     value.as_str().map(str::to_owned)
 }
 
+fn sensitive_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        _ => value.to_string(),
+    }
+}
+
 fn invalid(message: &str) -> AppError {
     AppError {
         domain: ErrorDomain::Integration,
@@ -269,6 +276,25 @@ mod tests {
         assert!(captured.sensitive_fields.contains_key("tool_input"));
         assert!(!captured.sensitive_fields.contains_key("transcript_path"));
         assert!(!captured.public_fields.contains_key("unknown_field"));
+    }
+
+    #[test]
+    fn capture_preserves_sensitive_string_value_without_json_quotes() {
+        let captured = capture_hook_json(
+            AgentKind::Codex,
+            "Stop",
+            Version::new(0, 145, 0),
+            fixture("codex/0.145.0/stop.json"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            captured
+                .sensitive_fields
+                .get("last_assistant_message")
+                .map(String::as_str),
+            Some("private completion text")
+        );
     }
 
     #[test]
