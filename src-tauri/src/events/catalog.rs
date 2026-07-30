@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +145,18 @@ pub fn catalog_for(agent: AgentKind, version: &Version) -> CapabilityResolution 
         },
         verification: CatalogVerification::UpgradeRequired,
     }
+}
+
+pub(crate) fn catalogued_hooks() -> BTreeSet<(AgentKind, String)> {
+    embedded_catalogs()
+        .into_iter()
+        .flat_map(|catalog| {
+            catalog
+                .hooks
+                .into_iter()
+                .map(move |hook| (catalog.agent, hook.source_event))
+        })
+        .collect()
 }
 
 fn embedded_catalogs() -> [CapabilityCatalog; 2] {

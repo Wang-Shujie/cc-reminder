@@ -5,10 +5,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, ErrorDomain};
+use crate::events::catalog::catalogued_hooks;
 use crate::model::{
     AgentKind, DeliveryMode, DeliveryPolicy, FilterGroup, PrivacyPolicy, ProjectId, QuietBehavior,
     RuleConfig, RuleId, RulePatch, SummaryMode,
 };
+
+const MAX_RULE_LIST_ITEMS: usize = 100;
+const MAX_RULE_VALUE_BYTES: usize = 256;
+const MAX_TEMPLATE_BYTES: usize = 4_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredGlobalRule {
@@ -92,14 +97,20 @@ pub fn required_hook_selection(
     global: &[StoredGlobalRule],
     overrides: &[StoredRulePatch],
 ) -> BTreeSet<(AgentKind, String)> {
+    let catalogued = catalogued_hooks();
     global
         .iter()
-        .filter(|rule| rule.config.enabled)
+        .filter(|rule| {
+            rule.config.enabled && catalogued.contains(&(rule.agent, rule.source_event.clone()))
+        })
         .map(|rule| (rule.agent, rule.source_event.clone()))
         .chain(
             overrides
                 .iter()
-                .filter(|rule| rule.patch.enabled == Some(true))
+                .filter(|rule| {
+                    rule.patch.enabled == Some(true)
+                        && catalogued.contains(&(rule.agent, rule.source_event.clone()))
+                })
                 .map(|rule| (rule.agent, rule.source_event.clone())),
         )
         .collect()
@@ -116,6 +127,22 @@ pub fn validate_rule(rule: &RuleConfig) -> Result<(), AppError> {
             && parse_quiet_time(&quiet.end_local).is_some()
             && quiet.weekdays.iter().all(|day| (1..=7).contains(day))
     });
+    let filter_values = [
+        rule.filters.tool_names.as_slice(),
+        rule.filters.event_subtypes.as_slice(),
+        rule.filters.permission_modes.as_slice(),
+        rule.filters.models.as_slice(),
+        rule.filters.statuses.as_slice(),
+    ];
+    let bounded_strings = filter_values.into_iter().all(valid_rule_strings)
+        && valid_rule_strings(&rule.privacy.allowed_sensitive_fields)
+        && valid_rule_strings(&rule.privacy.extra_redaction_patterns)
+        && rule.targets.iter().all(|target| {
+            target
+                .template
+                .as_ref()
+                .is_none_or(|template| template.len() <= MAX_TEMPLATE_BYTES)
+        });
 
     if rule.targets.len() > 20
         || rule.privacy.max_body_chars > 4_000
@@ -126,6 +153,7 @@ pub fn validate_rule(rule: &RuleConfig) -> Result<(), AppError> {
         || delivery.window_seconds > 86_400
         || !(1..=100).contains(&delivery.max_per_window)
         || !quiet_hours_are_valid
+        || !bounded_strings
     {
         return Err(AppError {
             domain: ErrorDomain::Configuration,
@@ -136,6 +164,13 @@ pub fn validate_rule(rule: &RuleConfig) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+fn valid_rule_strings(values: &[String]) -> bool {
+    values.len() <= MAX_RULE_LIST_ITEMS
+        && values
+            .iter()
+            .all(|value| value.len() <= MAX_RULE_VALUE_BYTES)
 }
 
 pub fn default_rule(agent: AgentKind, event: &str) -> RuleConfig {
@@ -404,6 +439,26 @@ mod tests {
     }
 
     #[test]
+    fn unknown_events_are_never_selected_for_hook_installation() {
+        let globals = [
+            stored_global(AgentKind::Codex, "Stop", true),
+            stored_global(AgentKind::Codex, "ArbitraryHook", true),
+        ];
+        let overrides = [stored_patch(
+            AgentKind::ClaudeCode,
+            "UncataloguedEvent",
+            Some(true),
+        )];
+
+        assert_eq!(
+            required_hook_selection(&globals, &overrides)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![(AgentKind::Codex, "Stop".into())]
+        );
+    }
+
+    #[test]
     fn validation_accepts_every_inclusive_limit() {
         let mut rule = default_rule(AgentKind::Codex, "Stop");
         rule.targets = (0..20).map(target).collect();
@@ -490,6 +545,79 @@ mod tests {
             rule.quiet_hours.as_mut().unwrap().weekdays = vec![weekday];
             assert_rule_invalid(&rule);
         }
+    }
+
+    #[test]
+    fn validation_rejects_unbounded_rule_collections_and_strings() {
+        let baseline = default_rule(AgentKind::Codex, "Stop");
+        let too_many = vec!["x".into(); 101];
+        let too_long = vec!["x".repeat(257)];
+
+        for filters in [
+            FilterGroup {
+                tool_names: too_many.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                event_subtypes: too_many.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                permission_modes: too_many.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                models: too_many.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                statuses: too_many.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                tool_names: too_long.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                event_subtypes: too_long.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                permission_modes: too_long.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                models: too_long.clone(),
+                ..FilterGroup::default()
+            },
+            FilterGroup {
+                statuses: too_long.clone(),
+                ..FilterGroup::default()
+            },
+        ] {
+            let mut rule = baseline.clone();
+            rule.filters = filters;
+            assert_rule_invalid(&rule);
+        }
+
+        let mut rule = baseline.clone();
+        rule.privacy.allowed_sensitive_fields = too_many.clone();
+        assert_rule_invalid(&rule);
+        rule.privacy.allowed_sensitive_fields = too_long.clone();
+        assert_rule_invalid(&rule);
+
+        let mut rule = baseline.clone();
+        rule.privacy.extra_redaction_patterns = too_many;
+        assert_rule_invalid(&rule);
+        rule.privacy.extra_redaction_patterns = too_long;
+        assert_rule_invalid(&rule);
+
+        let mut rule = baseline;
+        rule.targets = vec![TargetConfig {
+            channel_id: Uuid::from_u128(99),
+            template: Some("x".repeat(4_001)),
+        }];
+        assert_rule_invalid(&rule);
     }
 
     #[test]

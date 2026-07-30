@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, Days, NaiveDate, NaiveTime, TimeDelta, Utc};
+use chrono::{
+    DateTime, Datelike, Days, FixedOffset, NaiveDate, NaiveTime, TimeDelta, TimeZone, Utc,
+};
 use sha2::{Digest, Sha256};
 
 use crate::events::catalog::HookCapability;
@@ -38,6 +40,7 @@ pub struct PolicyInput<'a> {
     pub rule: &'a RuleConfig,
     pub notification_pause: Option<&'a NotificationPause>,
     pub now: DateTime<Utc>,
+    pub local_offset: FixedOffset,
     pub recent_delivery_times: &'a [DateTime<Utc>],
 }
 
@@ -136,8 +139,9 @@ fn quiet_decision(input: &PolicyInput<'_>) -> Option<PolicyDecision> {
 
     let start = parse_quiet_time(&quiet.start_local)?;
     let end = parse_quiet_time(&quiet.end_local)?;
-    let time = input.now.time();
-    let weekday = input.now.weekday().number_from_monday() as u8;
+    let local_now = input.now.with_timezone(&input.local_offset);
+    let time = local_now.time();
+    let weekday = local_now.weekday().number_from_monday() as u8;
     let (active, start_weekday) = quiet_membership(time, weekday, start, end);
     if !active || !quiet.weekdays.contains(&start_weekday) {
         return None;
@@ -145,7 +149,7 @@ fn quiet_decision(input: &PolicyInput<'_>) -> Option<PolicyDecision> {
 
     Some(match input.rule.delivery.quiet_behavior {
         QuietBehavior::Suppress => PolicyDecision::Suppress(SuppressReason::QuietHours),
-        QuietBehavior::Defer => PolicyDecision::DeferUntil(quiet_end(input.now, start, end)),
+        QuietBehavior::Defer => PolicyDecision::DeferUntil(quiet_end(local_now, start, end)),
     })
 }
 
@@ -165,13 +169,17 @@ fn quiet_membership(time: NaiveTime, weekday: u8, start: NaiveTime, end: NaiveTi
     }
 }
 
-fn quiet_end(now: DateTime<Utc>, start: NaiveTime, end: NaiveTime) -> DateTime<Utc> {
+fn quiet_end(now: DateTime<FixedOffset>, start: NaiveTime, end: NaiveTime) -> DateTime<Utc> {
     let end_date = if start >= end && now.time() >= start || start == end {
         next_day(now.date_naive())
     } else {
         now.date_naive()
     };
-    end_date.and_time(end).and_utc()
+    now.offset()
+        .from_local_datetime(&end_date.and_time(end))
+        .single()
+        .expect("a fixed offset has one local representation")
+        .with_timezone(&Utc)
 }
 
 fn next_day(date: NaiveDate) -> NaiveDate {
@@ -218,16 +226,18 @@ fn hash_part(hasher: &mut Sha256, value: &[u8]) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use chrono::{DateTime, TimeDelta, Utc};
+    use chrono::{DateTime, FixedOffset, TimeDelta, Utc};
     use semver::Version;
     use uuid::Uuid;
 
     use super::{PolicyDecision, PolicyInput, SuppressReason, evaluate_policy, matches_filters};
     use crate::events::catalog::{HookCapability, catalog_for};
+    use crate::events::normalize::{NormalizeContext, capture_hook_json, normalize_event};
     use crate::model::{
         AgentKind, DeliveryMode, EventCategory, EventEnvelope, FilterGroup, NotificationPause,
         QuietBehavior, QuietHours, ScalarValue, Severity,
     };
+    use crate::projects::PathPlatform;
     use crate::rules::resolve::default_rule;
 
     #[test]
@@ -238,28 +248,47 @@ mod tests {
         event
             .public_fields
             .insert("tool_name".into(), ScalarValue::String("Read".into()));
-        event.public_fields.insert(
-            "event_subtype".into(),
-            ScalarValue::String("completed".into()),
-        );
-        event
-            .public_fields
-            .insert("status".into(), ScalarValue::String("success".into()));
         let filters = FilterGroup {
             tool_names: vec!["Write".into(), "Read".into()],
-            event_subtypes: vec!["failed".into(), "completed".into()],
             permission_modes: vec!["default".into(), "plan".into()],
             models: vec!["other".into(), "gpt-5".into()],
-            statuses: vec!["pending".into(), "success".into()],
+            ..FilterGroup::default()
         };
 
         assert!(matches_filters(&event, &filters));
 
         let mismatched = FilterGroup {
-            statuses: vec!["failed".into()],
+            models: vec!["missing".into()],
             ..filters
         };
         assert!(!matches_filters(&event, &mismatched));
+    }
+
+    #[test]
+    fn normalized_catalog_fields_drive_subtype_and_status_filters() {
+        let captured = capture_hook_json(
+            AgentKind::Codex,
+            "SessionEnd",
+            Version::new(0, 145, 0),
+            serde_json::json!({ "reason": "clear" }),
+        )
+        .unwrap();
+        let event = normalize_event(
+            captured,
+            &NormalizeContext {
+                correlation_key: [3_u8; 32],
+                projects: Vec::new(),
+                platform: PathPlatform::Unix,
+            },
+        )
+        .unwrap();
+        let filters = FilterGroup {
+            event_subtypes: vec!["clear".into()],
+            statuses: vec!["end".into()],
+            ..FilterGroup::default()
+        };
+
+        assert!(matches_filters(&event, &filters));
     }
 
     #[test]
@@ -453,6 +482,26 @@ mod tests {
     }
 
     #[test]
+    fn non_utc_quiet_hours_use_local_weekday_and_return_a_utc_deadline() {
+        let mut fixture = Fixture::new("Stop");
+        fixture.now = at("2026-07-27T14:30:00Z");
+        fixture.event.occurred_at = fixture.now;
+        fixture.local_offset = FixedOffset::east_opt(8 * 60 * 60).unwrap();
+        fixture.rule.delivery.quiet_behavior = QuietBehavior::Defer;
+        fixture.rule.quiet_hours = Some(QuietHours {
+            start_local: "22:00".into(),
+            end_local: "08:00".into(),
+            weekdays: vec![1],
+            bypass_at_or_above: None,
+        });
+
+        assert_eq!(
+            evaluate_policy(&fixture.input()),
+            PolicyDecision::DeferUntil(at("2026-07-28T00:00:00Z"))
+        );
+    }
+
+    #[test]
     fn cooldown_includes_recent_deliveries_but_excludes_its_lower_boundary() {
         let mut fixture = Fixture::new("Stop");
         fixture.rule.delivery.cooldown_seconds = 60;
@@ -559,6 +608,7 @@ mod tests {
         rule: crate::model::RuleConfig,
         pause: Option<NotificationPause>,
         now: DateTime<Utc>,
+        local_offset: FixedOffset,
         recent_delivery_times: Vec<DateTime<Utc>>,
     }
 
@@ -574,6 +624,7 @@ mod tests {
                 rule: default_rule(AgentKind::Codex, source_event),
                 pause: None,
                 now,
+                local_offset: FixedOffset::east_opt(0).unwrap(),
                 recent_delivery_times: Vec::new(),
             }
         }
@@ -585,6 +636,7 @@ mod tests {
                 rule: &self.rule,
                 notification_pause: self.pause.as_ref(),
                 now: self.now,
+                local_offset: self.local_offset,
                 recent_delivery_times: &self.recent_delivery_times,
             }
         }

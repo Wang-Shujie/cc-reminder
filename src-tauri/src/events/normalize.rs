@@ -70,6 +70,8 @@ pub fn capture_hook_json(
         .into_iter()
         .find(|hook| hook.source_event == event)
         .ok_or_else(|| invalid("hook event is not supported by the selected catalog"))?;
+    let matcher_target = hook.matcher_target.clone();
+    let phase = hook.phase.clone();
     let mut captured = CapturedHookEvent {
         source: agent,
         source_version,
@@ -112,6 +114,20 @@ pub fn capture_hook_json(
             },
         }
     }
+
+    if !captured.public_fields.contains_key("event_subtype")
+        && let Some(ScalarValue::String(value)) = matcher_target
+            .as_ref()
+            .and_then(|target| captured.public_fields.get(target))
+    {
+        captured
+            .public_fields
+            .insert("event_subtype".into(), ScalarValue::String(value.clone()));
+    }
+    captured
+        .public_fields
+        .entry("status".into())
+        .or_insert(ScalarValue::String(phase));
 
     Ok(captured)
 }
