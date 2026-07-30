@@ -267,50 +267,198 @@ mod tests {
     }
 
     #[test]
-    fn verified_codex_capture_metadata_supports_task_three() {
-        let catalog = catalog_for(AgentKind::Codex, &Version::new(0, 145, 0)).catalog;
-        let permission = hook(&catalog, "PermissionRequest");
-        let stop = hook(&catalog, "Stop");
+    fn verified_codex_catalog_declares_complete_matcher_and_capture_metadata() {
+        type ExpectedHook = (
+            &'static str,
+            Option<&'static str>,
+            &'static [(&'static str, Sensitivity)],
+        );
 
-        assert_eq!(permission.matcher_target.as_deref(), Some("tool_name"));
-        assert!(permission.supports_matcher);
-        assert_eq!(
-            field_names(permission),
-            vec![
-                "session_id",
-                "transcript_path",
-                "cwd",
-                "hook_event_name",
-                "model",
-                "permission_mode",
-                "turn_id",
-                "tool_name",
-                "tool_input",
-            ]
-        );
-        assert_eq!(
-            field(permission, "transcript_path").sensitivity,
-            Sensitivity::Forbidden
-        );
-        assert_eq!(
-            field(permission, "tool_input").sensitivity,
-            Sensitivity::Sensitive
-        );
-        assert!(!stop.supports_matcher);
-        assert_eq!(
-            field_names(stop),
-            vec![
-                "session_id",
-                "transcript_path",
-                "cwd",
-                "hook_event_name",
-                "model",
-                "permission_mode",
-                "turn_id",
-                "stop_hook_active",
-                "last_assistant_message",
-            ]
-        );
+        let catalog = catalog_for(AgentKind::Codex, &Version::new(0, 145, 0)).catalog;
+        let cases: [ExpectedHook; 11] = [
+            (
+                "SessionStart",
+                Some("source"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("source", Sensitivity::Public),
+                ],
+            ),
+            (
+                "SessionEnd",
+                Some("reason"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("reason", Sensitivity::Public),
+                ],
+            ),
+            (
+                "UserPromptSubmit",
+                None,
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("prompt", Sensitivity::Sensitive),
+                ],
+            ),
+            (
+                "PreToolUse",
+                Some("tool_name"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("tool_name", Sensitivity::Public),
+                    ("tool_use_id", Sensitivity::Sensitive),
+                    ("tool_input", Sensitivity::Sensitive),
+                ],
+            ),
+            (
+                "PostToolUse",
+                Some("tool_name"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("tool_name", Sensitivity::Public),
+                    ("tool_use_id", Sensitivity::Sensitive),
+                    ("tool_input", Sensitivity::Sensitive),
+                    ("tool_response", Sensitivity::Sensitive),
+                ],
+            ),
+            (
+                "PermissionRequest",
+                Some("tool_name"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("tool_name", Sensitivity::Public),
+                    ("tool_input", Sensitivity::Sensitive),
+                ],
+            ),
+            (
+                "PreCompact",
+                Some("trigger"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("trigger", Sensitivity::Public),
+                ],
+            ),
+            (
+                "PostCompact",
+                Some("trigger"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("trigger", Sensitivity::Public),
+                ],
+            ),
+            (
+                "SubagentStart",
+                Some("agent_type"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("agent_id", Sensitivity::Sensitive),
+                    ("agent_type", Sensitivity::Public),
+                ],
+            ),
+            (
+                "SubagentStop",
+                Some("agent_type"),
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("agent_id", Sensitivity::Sensitive),
+                    ("agent_type", Sensitivity::Public),
+                    ("agent_transcript_path", Sensitivity::Forbidden),
+                    ("stop_hook_active", Sensitivity::Public),
+                    ("last_assistant_message", Sensitivity::Sensitive),
+                ],
+            ),
+            (
+                "Stop",
+                None,
+                &[
+                    ("session_id", Sensitivity::Sensitive),
+                    ("transcript_path", Sensitivity::Forbidden),
+                    ("cwd", Sensitivity::Sensitive),
+                    ("hook_event_name", Sensitivity::Public),
+                    ("model", Sensitivity::Public),
+                    ("permission_mode", Sensitivity::Public),
+                    ("turn_id", Sensitivity::Sensitive),
+                    ("stop_hook_active", Sensitivity::Public),
+                    ("last_assistant_message", Sensitivity::Sensitive),
+                ],
+            ),
+        ];
+
+        for (source_event, matcher_target, fields) in cases {
+            let hook = hook(&catalog, source_event);
+
+            assert_eq!(
+                hook.supports_matcher,
+                matcher_target.is_some(),
+                "{source_event}"
+            );
+            assert_eq!(
+                hook.matcher_target.as_deref(),
+                matcher_target,
+                "{source_event}"
+            );
+            assert_eq!(hook.input_fields.len(), fields.len(), "{source_event}");
+            for (actual, (name, sensitivity)) in hook.input_fields.iter().zip(fields) {
+                assert_eq!(actual.name, *name, "{source_event}");
+                assert_eq!(actual.sensitivity, *sensitivity, "{source_event}.{name}");
+                assert!(!actual.persist_by_default, "{source_event}.{name}");
+            }
+        }
     }
 
     #[test]
