@@ -2,6 +2,7 @@ pub mod actions;
 pub mod error;
 pub mod events;
 pub mod model;
+pub mod projects;
 
 use tauri::Manager;
 

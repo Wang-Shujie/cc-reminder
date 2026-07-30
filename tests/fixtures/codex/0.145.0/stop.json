@@ -1,0 +1,11 @@
+{
+  "session_id": "stop-session-id",
+  "transcript_path": "/tmp/stop.jsonl",
+  "cwd": "/workspace/demo-app",
+  "hook_event_name": "Stop",
+  "model": "gpt-5-codex",
+  "permission_mode": "ask",
+  "turn_id": "stop-turn-id",
+  "stop_hook_active": true,
+  "last_assistant_message": "private completion text"
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "claude-stop-session-id",
+  "transcript_path": "/tmp/claude-stop.jsonl",
+  "cwd": "/workspace/claude-app",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "private stop text"
+}
