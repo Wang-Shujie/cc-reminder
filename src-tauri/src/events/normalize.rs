@@ -13,7 +13,9 @@ use crate::actions::new_v1_action_fields;
 use crate::error::{AppError, ErrorDomain};
 use crate::events::catalog::{Sensitivity, catalog_for};
 use crate::model::{AgentKind, EventEnvelope, ProjectId, ScalarValue, Severity};
-use crate::projects::{PathPlatform, ProjectMatch, ProjectRegistration, resolve_project};
+use crate::projects::{
+    PathPlatform, ProjectMatch, ProjectRegistration, path_leaf, resolve_project,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CapturedHookEvent {
@@ -129,8 +131,12 @@ pub fn normalize_event(
         .cwd
         .as_deref()
         .map(|cwd| resolve_project(cwd, &context.projects, context.platform));
-    let (project_id, project_display_name, unmatched_cwd_fingerprint) =
-        project_fields(project, event.cwd.as_deref(), &context.correlation_key);
+    let (project_id, project_display_name, unmatched_cwd_fingerprint) = project_fields(
+        project,
+        event.cwd.as_deref(),
+        context.platform,
+        &context.correlation_key,
+    );
     let (correlation_id, action_id, action_capabilities) = new_v1_action_fields();
 
     Ok(EventEnvelope {
@@ -166,6 +172,7 @@ pub fn normalize_event(
 fn project_fields(
     project: Option<ProjectMatch>,
     cwd: Option<&Path>,
+    platform: PathPlatform,
     key: &[u8; 32],
 ) -> (Option<ProjectId>, Option<String>, Option<String>) {
     match project {
@@ -174,10 +181,7 @@ fn project_fields(
             display_name,
         }) => (Some(project_id), Some(display_name), None),
         Some(ProjectMatch::Unmatched) | None => {
-            let display_name = cwd
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .map(str::to_owned);
+            let display_name = cwd.and_then(|path| path_leaf(path, platform));
             let fingerprint = cwd.map(|path| reference(key, b"cwd", &path.to_string_lossy()));
             (None, display_name, fingerprint)
         }
@@ -319,6 +323,28 @@ mod tests {
                 .unwrap()
                 .contains("/Users/alice")
         );
+    }
+
+    #[test]
+    fn unmatched_windows_cwd_never_exposes_the_full_path_as_display_name() {
+        let event = normalize_event(
+            capture_hook_json(
+                AgentKind::Codex,
+                "PermissionRequest",
+                Version::new(0, 145, 0),
+                serde_json::json!({ "cwd": "C:\\Users\\alice\\secret\\client" }),
+            )
+            .unwrap(),
+            &NormalizeContext {
+                correlation_key: [11_u8; 32],
+                projects: Vec::new(),
+                platform: PathPlatform::Windows,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(event.project_display_name.as_deref(), Some("client"));
+        assert!(!event.project_display_name.unwrap().contains("Users"));
     }
 
     fn context_with_key(key: [u8; 32]) -> NormalizeContext {

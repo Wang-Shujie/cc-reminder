@@ -61,7 +61,7 @@ pub fn resolve_project(
                 .map(move |root| (project, normalized(root, platform)))
         })
         .filter(|(_, root)| is_prefix(root, &cwd))
-        .max_by_key(|(_, root)| root.len())
+        .max_by_key(|(_, root)| root.segments.len())
         .map(|(project, _)| ProjectMatch::Matched {
             project_id: project.id,
             display_name: project.display_name.clone(),
@@ -69,20 +69,114 @@ pub fn resolve_project(
         .unwrap_or(ProjectMatch::Unmatched)
 }
 
-fn normalized(path: &Path, platform: PathPlatform) -> Vec<String> {
-    let path = path.to_string_lossy();
-    let path = match platform {
-        PathPlatform::Unix => path.into_owned(),
-        PathPlatform::Windows => path.replace('\\', "/").to_ascii_lowercase(),
-    };
-    path.split('/')
-        .filter(|segment| !segment.is_empty() && *segment != ".")
-        .map(str::to_owned)
-        .collect()
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NormalizedPath {
+    anchor: PathAnchor,
+    segments: Vec<String>,
 }
 
-fn is_prefix(root: &[String], path: &[String]) -> bool {
-    root.len() <= path.len() && root.iter().zip(path).all(|(left, right)| left == right)
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PathAnchor {
+    Relative,
+    UnixRoot,
+    WindowsRoot,
+    WindowsDrive { drive: String, absolute: bool },
+    WindowsUnc { server: String, share: String },
+}
+
+pub(crate) fn path_leaf(path: &Path, platform: PathPlatform) -> Option<String> {
+    normalized(path, platform).segments.last().cloned()
+}
+
+fn normalized(path: &Path, platform: PathPlatform) -> NormalizedPath {
+    match platform {
+        PathPlatform::Unix => {
+            let path = path.to_string_lossy();
+            let anchor = if path.starts_with('/') {
+                PathAnchor::UnixRoot
+            } else {
+                PathAnchor::Relative
+            };
+            NormalizedPath {
+                segments: normalized_segments(&path, &anchor),
+                anchor,
+            }
+        }
+        PathPlatform::Windows => normalized_windows(path),
+    }
+}
+
+fn normalized_windows(path: &Path) -> NormalizedPath {
+    let mut path = path.to_string_lossy().replace('\\', "/").to_lowercase();
+    if let Some(rest) = path.strip_prefix("//?/unc/") {
+        path = format!("//{rest}");
+    } else if let Some(rest) = path.strip_prefix("//?/") {
+        path = rest.to_owned();
+    }
+
+    let (anchor, remainder) = if let Some(rest) = path.strip_prefix("//") {
+        let mut components = rest.split('/').filter(|segment| !segment.is_empty());
+        let server = components.next().unwrap_or_default().to_owned();
+        let share = components.next().unwrap_or_default().to_owned();
+        let consumed = server.len() + share.len() + usize::from(!server.is_empty()) + 2;
+        (
+            PathAnchor::WindowsUnc { server, share },
+            path.get(consumed..).unwrap_or_default(),
+        )
+    } else if path.as_bytes().get(1) == Some(&b':') {
+        let drive = path[..2].to_owned();
+        let remainder = &path[2..];
+        let absolute = remainder.starts_with('/');
+        (
+            PathAnchor::WindowsDrive { drive, absolute },
+            remainder.trim_start_matches('/'),
+        )
+    } else if let Some(rest) = path.strip_prefix('/') {
+        (PathAnchor::WindowsRoot, rest)
+    } else {
+        (PathAnchor::Relative, path.as_str())
+    };
+
+    NormalizedPath {
+        segments: normalized_segments(remainder, &anchor),
+        anchor,
+    }
+}
+
+fn normalized_segments(path: &str, anchor: &PathAnchor) -> Vec<String> {
+    let mut segments = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." if segments.last().is_some_and(|last| last != "..") => {
+                segments.pop();
+            }
+            ".." if matches!(
+                anchor,
+                PathAnchor::Relative
+                    | PathAnchor::WindowsDrive {
+                        absolute: false,
+                        ..
+                    }
+            ) =>
+            {
+                segments.push(segment.to_owned())
+            }
+            ".." => {}
+            _ => segments.push(segment.to_owned()),
+        }
+    }
+    segments
+}
+
+fn is_prefix(root: &NormalizedPath, path: &NormalizedPath) -> bool {
+    root.anchor == path.anchor
+        && root.segments.len() <= path.segments.len()
+        && root
+            .segments
+            .iter()
+            .zip(&path.segments)
+            .all(|(left, right)| left == right)
 }
 
 #[cfg(test)]
@@ -183,6 +277,78 @@ mod tests {
             ),
             project.id,
         );
+    }
+
+    #[test]
+    fn parent_segments_cannot_escape_into_a_registered_root() {
+        let project = registration("/repo/app", &[]);
+
+        assert!(matches!(
+            resolve_project(
+                Path::new("/repo/app/../secret"),
+                &[project],
+                PathPlatform::Unix,
+            ),
+            ProjectMatch::Unmatched
+        ));
+    }
+
+    #[test]
+    fn absolute_and_relative_paths_do_not_share_an_anchor() {
+        let project = registration("/repo/app", &[]);
+
+        assert!(matches!(
+            resolve_project(Path::new("repo/app/src"), &[project], PathPlatform::Unix),
+            ProjectMatch::Unmatched
+        ));
+    }
+
+    #[test]
+    fn windows_verbatim_drive_matches_an_ordinary_drive_path() {
+        let project = registration(r"\\?\C:\Repos\App", &[]);
+
+        assert_match(
+            resolve_project(
+                Path::new(r"c:\repos\app\src"),
+                std::slice::from_ref(&project),
+                PathPlatform::Windows,
+            ),
+            project.id,
+        );
+    }
+
+    #[test]
+    fn windows_verbatim_unc_matches_an_ordinary_unc_path() {
+        let project = registration(r"\\?\UNC\server\share\app", &[]);
+
+        assert_match(
+            resolve_project(
+                Path::new(r"\\server\share\app\src"),
+                std::slice::from_ref(&project),
+                PathPlatform::Windows,
+            ),
+            project.id,
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn registered_windows_root_matches_non_verbatim_hook_path() {
+        let root = std::env::temp_dir().join(format!("cc-reminder-resolver-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&root).unwrap();
+        let project =
+            ProjectRegistration::new(Uuid::now_v7(), "app".into(), root.clone(), Vec::new())
+                .unwrap();
+
+        assert_match(
+            resolve_project(
+                &root.join("src"),
+                std::slice::from_ref(&project),
+                PathPlatform::Windows,
+            ),
+            project.id,
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn registration(root: &str, aliases: &[&str]) -> ProjectRegistration {
