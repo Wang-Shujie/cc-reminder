@@ -326,13 +326,13 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_windows_cwd_never_exposes_the_full_path_as_display_name() {
+    fn unmatched_windows_cwd_preserves_leaf_case_without_exposing_the_full_path() {
         let event = normalize_event(
             capture_hook_json(
                 AgentKind::Codex,
                 "PermissionRequest",
                 Version::new(0, 145, 0),
-                serde_json::json!({ "cwd": "C:\\Users\\alice\\secret\\client" }),
+                serde_json::json!({ "cwd": "C:\\Work\\MyProject" }),
             )
             .unwrap(),
             &NormalizeContext {
@@ -343,8 +343,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(event.project_display_name.as_deref(), Some("client"));
-        assert!(!event.project_display_name.unwrap().contains("Users"));
+        assert_eq!(event.project_display_name.as_deref(), Some("MyProject"));
+        assert!(!event.project_display_name.unwrap().contains("Work"));
     }
 
     fn context_with_key(key: [u8; 32]) -> NormalizeContext {

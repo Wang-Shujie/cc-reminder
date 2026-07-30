@@ -85,7 +85,10 @@ enum PathAnchor {
 }
 
 pub(crate) fn path_leaf(path: &Path, platform: PathPlatform) -> Option<String> {
-    normalized(path, platform).segments.last().cloned()
+    match platform {
+        PathPlatform::Unix => normalized(path, platform).segments.last().cloned(),
+        PathPlatform::Windows => normalized_windows(path, false).segments.last().cloned(),
+    }
 }
 
 fn normalized(path: &Path, platform: PathPlatform) -> NormalizedPath {
@@ -102,12 +105,13 @@ fn normalized(path: &Path, platform: PathPlatform) -> NormalizedPath {
                 anchor,
             }
         }
-        PathPlatform::Windows => normalized_windows(path),
+        PathPlatform::Windows => normalized_windows(path, true),
     }
 }
 
-fn normalized_windows(path: &Path) -> NormalizedPath {
-    let mut path = path.to_string_lossy().replace('\\', "/").to_lowercase();
+fn normalized_windows(path: &Path, fold_case: bool) -> NormalizedPath {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let mut path = if fold_case { path.to_lowercase() } else { path };
     if let Some(rest) = path.strip_prefix("//?/unc/") {
         path = format!("//{rest}");
     } else if let Some(rest) = path.strip_prefix("//?/") {
