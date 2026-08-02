@@ -5,6 +5,7 @@ pub mod model;
 pub mod projects;
 pub mod rules;
 pub mod security;
+pub mod storage;
 
 use tauri::Manager;
 
