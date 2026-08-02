@@ -4,6 +4,7 @@ pub mod events;
 pub mod model;
 pub mod projects;
 pub mod rules;
+pub mod security;
 
 use tauri::Manager;
 

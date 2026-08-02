@@ -13,7 +13,9 @@ use crate::model::{
 
 const MAX_RULE_LIST_ITEMS: usize = 100;
 const MAX_RULE_VALUE_BYTES: usize = 256;
-const MAX_TEMPLATE_BYTES: usize = 4_000;
+const MAX_REDACTION_PATTERNS: usize = 32;
+const MAX_REDACTION_PATTERN_CHARS: usize = 512;
+const MAX_TEMPLATE_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredGlobalRule {
@@ -136,7 +138,7 @@ pub fn validate_rule(rule: &RuleConfig) -> Result<(), AppError> {
     ];
     let bounded_strings = filter_values.into_iter().all(valid_rule_strings)
         && valid_rule_strings(&rule.privacy.allowed_sensitive_fields)
-        && valid_rule_strings(&rule.privacy.extra_redaction_patterns)
+        && valid_redaction_patterns(&rule.privacy.extra_redaction_patterns)
         && rule.targets.iter().all(|target| {
             target
                 .template
@@ -171,6 +173,13 @@ fn valid_rule_strings(values: &[String]) -> bool {
         && values
             .iter()
             .all(|value| value.len() <= MAX_RULE_VALUE_BYTES)
+}
+
+fn valid_redaction_patterns(values: &[String]) -> bool {
+    values.len() <= MAX_REDACTION_PATTERNS
+        && values
+            .iter()
+            .all(|value| value.chars().count() <= MAX_REDACTION_PATTERN_CHARS)
 }
 
 pub fn default_rule(agent: AgentKind, event: &str) -> RuleConfig {
@@ -605,17 +614,33 @@ mod tests {
         assert_rule_invalid(&rule);
         rule.privacy.allowed_sensitive_fields = too_long.clone();
         assert_rule_invalid(&rule);
+    }
 
-        let mut rule = baseline.clone();
-        rule.privacy.extra_redaction_patterns = too_many;
-        assert_rule_invalid(&rule);
-        rule.privacy.extra_redaction_patterns = too_long;
-        assert_rule_invalid(&rule);
-
-        let mut rule = baseline;
+    #[test]
+    fn validation_accepts_task_five_inclusive_privacy_bounds() {
+        let mut rule = default_rule(AgentKind::Codex, "Stop");
+        rule.privacy.extra_redaction_patterns = vec!["密".repeat(512); 32];
         rule.targets = vec![TargetConfig {
             channel_id: Uuid::from_u128(99),
-            template: Some("x".repeat(4_001)),
+            template: Some("x".repeat(16 * 1024)),
+        }];
+
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn validation_rejects_task_five_exclusive_privacy_bounds() {
+        let mut rule = default_rule(AgentKind::Codex, "Stop");
+        rule.privacy.extra_redaction_patterns = vec!["safe".into(); 33];
+        assert_rule_invalid(&rule);
+
+        rule.privacy.extra_redaction_patterns = vec!["密".repeat(513)];
+        assert_rule_invalid(&rule);
+
+        rule.privacy.extra_redaction_patterns.clear();
+        rule.targets = vec![TargetConfig {
+            channel_id: Uuid::from_u128(99),
+            template: Some("x".repeat(16 * 1024 + 1)),
         }];
         assert_rule_invalid(&rule);
     }

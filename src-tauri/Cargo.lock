@@ -439,6 +439,7 @@ dependencies = [
  "chrono",
  "hex",
  "hmac",
+ "regex",
  "semver",
  "serde",
  "serde_json",
