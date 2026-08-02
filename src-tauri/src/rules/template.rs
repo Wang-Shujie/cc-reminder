@@ -6,17 +6,12 @@ use crate::model::{EventEnvelope, NotificationDocument, ScalarValue, Severity};
 use crate::security::redact::Redactor;
 
 const MAX_TEMPLATE_BYTES: usize = 16 * 1024;
-const TEMPLATE_FIELDS: [&str; 11] = [
+const BASE_TEMPLATE_FIELDS: [&str; 6] = [
     "agent.name",
     "agent.version",
     "project.name",
     "event.name",
-    "event.label",
-    "event.status",
     "event.severity",
-    "event.summary",
-    "event.duration",
-    "event.tool_name",
     "event.occurred_at",
 ];
 
@@ -46,6 +41,7 @@ pub fn build_template_context(event: &EventEnvelope, allowed_fields: &[String]) 
         ),
         ("event.occurred_at".into(), event.occurred_at.to_rfc3339()),
     ]);
+    let mut authorized = BASE_TEMPLATE_FIELDS.into_iter().collect::<BTreeSet<_>>();
     if let Some(project) = &event.project_display_name {
         values.insert("project.name".into(), project.clone());
     }
@@ -58,38 +54,46 @@ pub fn build_template_context(event: &EventEnvelope, allowed_fields: &[String]) 
     {
         values.insert("event.label".into(), hook.label_zh);
         values.insert("event.status".into(), hook.phase);
+        authorized.extend(["event.label", "event.status"]);
 
         for (field, path) in [
             ("duration", "event.duration"),
             ("tool_name", "event.tool_name"),
         ] {
-            if hook
+            let is_public = hook
                 .input_fields
                 .iter()
-                .any(|input| input.name == field && input.sensitivity == Sensitivity::Public)
-                && let Some(value) = event.public_fields.get(field).and_then(scalar_text)
-            {
-                values.insert(path.into(), value);
+                .any(|input| input.name == field && input.sensitivity == Sensitivity::Public);
+            if is_public {
+                authorized.insert(path);
+                if let Some(value) = event.public_fields.get(field).and_then(scalar_text) {
+                    values.insert(path.into(), value);
+                }
             }
         }
 
-        let summary_is_selected = allowed_fields
-            .iter()
-            .any(|field| field == "summary" || field == "event.summary");
-        if summary_is_selected
-            && hook
-                .input_fields
-                .iter()
-                .any(|input| input.name == "summary" && input.sensitivity == Sensitivity::Public)
-            && let Some(value) = event.public_fields.get("summary").and_then(scalar_text)
-        {
-            values.insert("event.summary".into(), value);
+        let summary_source = hook.input_fields.iter().find(|input| {
+            matches!(
+                input.name.as_str(),
+                "summary" | "last_assistant_message" | "error"
+            ) && input.sensitivity != Sensitivity::Forbidden
+                && allowed_fields.iter().any(|field| {
+                    field == &input.name || field == "summary" || field == "event.summary"
+                })
+        });
+        if let Some(source) = summary_source {
+            authorized.insert("event.summary");
+            if source.sensitivity == Sensitivity::Public
+                && let Some(value) = event.public_fields.get(&source.name).and_then(scalar_text)
+            {
+                values.insert("event.summary".into(), value);
+            }
         }
     }
 
     TemplateContext {
         values,
-        authorized: TEMPLATE_FIELDS.into_iter().collect(),
+        authorized,
         severity: event.severity,
     }
 }
@@ -340,23 +344,40 @@ mod tests {
     }
 
     #[test]
+    fn production_context_authorizes_summary_only_when_selected_and_catalogued() {
+        let event = stop_event();
+        let unselected = build_template_context(&event, &[]);
+        let error =
+            render_document("{{event.summary}}", &unselected, &redactor(), 500).unwrap_err();
+        assert_eq!(error.code, "configuration.template_field_not_allowed");
+
+        let selected = build_template_context(&event, &["last_assistant_message".into()]);
+        assert_eq!(
+            render_document("A{{event.summary}}B", &selected, &redactor(), 500)
+                .unwrap()
+                .body,
+            "AB"
+        );
+
+        let unsupported =
+            build_template_context(&permission_event(), &["last_assistant_message".into()]);
+        let error =
+            render_document("{{event.summary}}", &unsupported, &redactor(), 500).unwrap_err();
+        assert_eq!(error.code, "configuration.template_field_not_allowed");
+    }
+
+    #[test]
     fn context_uses_only_catalog_public_fields_and_builds_stable_facts() {
         let event = permission_event();
         let context = build_template_context(
             &event,
             &["summary".into(), "full_prompt".into(), "tool_input".into()],
         );
-        let document = render_document(
-            "{{event.tool_name}}|{{event.summary}}",
-            &context,
-            &redactor(),
-            500,
-        )
-        .unwrap();
+        let document = render_document("{{event.tool_name}}", &context, &redactor(), 500).unwrap();
 
         assert_eq!(document.title, "权限请求");
         assert_eq!(document.severity, Severity::Warning);
-        assert_eq!(document.body, "Bash|");
+        assert_eq!(document.body, "Bash");
         assert_eq!(
             document.facts,
             vec![
@@ -368,9 +389,10 @@ mod tests {
             ]
         );
 
-        let error =
-            render_document("{{event.full_prompt}}", &context, &redactor(), 500).unwrap_err();
-        assert_eq!(error.code, "configuration.template_field_not_allowed");
+        for template in ["{{event.summary}}", "{{event.full_prompt}}"] {
+            let error = render_document(template, &context, &redactor(), 500).unwrap_err();
+            assert_eq!(error.code, "configuration.template_field_not_allowed");
+        }
     }
 
     #[test]
@@ -437,5 +459,13 @@ mod tests {
             action_id: None,
             action_capabilities: Vec::new(),
         }
+    }
+
+    fn stop_event() -> EventEnvelope {
+        let mut event = permission_event();
+        event.source_event = "Stop".into();
+        event.category = EventCategory::Completion;
+        event.public_fields.clear();
+        event
     }
 }

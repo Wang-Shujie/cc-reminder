@@ -9,7 +9,7 @@ const REPLACEMENT: &str = "[REDACTED]";
 
 const MANDATORY_PATTERN: &str = concat!(
     r"(?is:-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----)",
-    r"|(?i:\bAuthorization\s*:\s*(?:Bearer\s+)?[^\s,;]+)",
+    r"|(?i:\bAuthorization[ \t]*:[ \t]*[^\r\n]+)",
     r"|(?i:\bBearer\s+[a-z0-9._~+/-]{10,}={0,2})",
     r"|(?i:\bsk-(?:ant-)?[a-z0-9_-]{10,})",
     r"|(?i:\b(?:gh[pousr]_[a-z0-9]{10,}|github_pat_[a-z0-9_]{10,}))",
@@ -22,7 +22,8 @@ const MANDATORY_PATTERN: &str = concat!(
 
 #[derive(Debug)]
 pub struct Redactor {
-    pattern: Regex,
+    mandatory: Regex,
+    custom: Option<Regex>,
 }
 
 impl Redactor {
@@ -42,20 +43,29 @@ impl Redactor {
             }
         }
 
-        let mut combined = String::from(MANDATORY_PATTERN);
-        for pattern in patterns {
-            combined.push_str("|(?:");
-            combined.push_str(pattern);
-            combined.push(')');
-        }
+        let custom = if patterns.is_empty() {
+            None
+        } else {
+            let combined = patterns
+                .iter()
+                .map(|pattern| format!("(?:{pattern})"))
+                .collect::<Vec<_>>()
+                .join("|");
+            Some(bounded_regex(&combined)?)
+        };
 
         Ok(Self {
-            pattern: bounded_regex(&combined)?,
+            mandatory: bounded_regex(MANDATORY_PATTERN)?,
+            custom,
         })
     }
 
     pub fn redact(&self, input: &str) -> String {
-        self.pattern.replace_all(input, REPLACEMENT).into_owned()
+        let mandatory = self.mandatory.replace_all(input, REPLACEMENT);
+        match &self.custom {
+            Some(custom) => custom.replace_all(&mandatory, REPLACEMENT).into_owned(),
+            None => mandatory.into_owned(),
+        }
     }
 }
 
@@ -122,6 +132,24 @@ mod tests {
             assert!(!output.contains(secret), "secret family leaked: {secret}");
         }
         assert!(output.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_complete_authorization_header_for_any_scheme() {
+        let output = Redactor::compile(&[])
+            .unwrap()
+            .redact("credentials: Authorization: Basic Zm9vOmJhcg==\nnext: visible");
+
+        assert_eq!(output, "credentials: [REDACTED]\nnext: visible");
+    }
+
+    #[test]
+    fn custom_overlap_cannot_weaken_mandatory_redaction() {
+        let output = Redactor::compile(&["prefix Authorization: Bearer a".into()])
+            .unwrap()
+            .redact("prefix Authorization: Bearer abc.def.ghi");
+
+        assert_eq!(output, "prefix [REDACTED]");
     }
 
     #[test]
