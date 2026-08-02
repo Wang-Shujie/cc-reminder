@@ -20,7 +20,7 @@ use crate::model::{
 use super::db::{Database, storage_error};
 
 const MAX_HISTORY_PAGE_SIZE: u16 = 200;
-const MAX_INGRESS_BATCH_SIZE: usize = 500;
+const MAX_INGRESS_BATCH_SIZE: usize = 200;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +29,18 @@ pub enum EventProcessingOutcome {
     Suppressed,
     Expired,
     NoTargets,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EventOutcomeReasonCode {
+    UnsupportedCapability,
+    Disabled,
+    FilterMismatch,
+    GlobalPause,
+    QuietHours,
+    Cooldown,
+    WindowLimit,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,7 +117,7 @@ pub struct HistoryItem {
     pub action_id: Option<String>,
     pub action_capabilities: Vec<ActionCapability>,
     pub processing_outcome: EventProcessingOutcome,
-    pub outcome_reason_code: Option<String>,
+    pub outcome_reason_code: Option<EventOutcomeReasonCode>,
     pub delivery_job_id: Option<Uuid>,
     pub channel_id: Option<ChannelId>,
     pub document: Option<NotificationDocument>,
@@ -203,7 +215,7 @@ impl EventRepository {
         event: &EventEnvelope,
         encrypted_fields: Option<&EncryptedFieldMap>,
         outcome: EventProcessingOutcome,
-        outcome_reason_code: Option<&str>,
+        outcome_reason_code: Option<EventOutcomeReasonCode>,
     ) -> Result<(), AppError> {
         let (sensitive_blob_id, sensitive_fields_blob) =
             match (event.encrypted_sensitive_fields.as_ref(), encrypted_fields) {
@@ -220,6 +232,7 @@ impl EventRepository {
                 }
             };
         let connection = self.database.connect()?;
+        let outcome_reason_code = outcome_reason_code.as_ref().map(db_text).transpose()?;
         connection
             .execute(
                 "INSERT OR IGNORE INTO events (
@@ -312,7 +325,7 @@ impl EventRepository {
                  LIMIT ?10 OFFSET ?11",
             )
             .map_err(|_| query_error())?;
-        let raw_rows = statement
+        let mut raw_rows = statement
             .query_map(
                 params![
                     filter.occurred_from.map(|value| value.to_rfc3339()),
@@ -324,7 +337,7 @@ impl EventRepository {
                     processing_outcome,
                     delivery_filter_kind,
                     delivery_state,
-                    i64::from(page.limit),
+                    i64::from(page.limit) + 1,
                     i64::from(page.offset),
                 ],
                 |row| {
@@ -360,12 +373,13 @@ impl EventRepository {
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| query_error())?;
+        let has_more = raw_rows.len() > usize::from(page.limit);
+        raw_rows.truncate(usize::from(page.limit));
         let mut items = Vec::with_capacity(raw_rows.len());
         for row in raw_rows {
             items.push(history_item(&connection, row)?);
         }
-        let next_offset = (items.len() == usize::from(page.limit))
-            .then_some(page.offset.saturating_add(u32::from(page.limit)));
+        let next_offset = has_more.then_some(page.offset.saturating_add(u32::from(page.limit)));
         Ok(HistoryPage { items, next_offset })
     }
 }
@@ -430,7 +444,11 @@ fn history_item(
         action_capabilities: serde_json::from_str(&row.action_capabilities_json)
             .map_err(|_| stored_data_error())?,
         processing_outcome: parse_db_text(&row.processing_outcome)?,
-        outcome_reason_code: row.outcome_reason_code,
+        outcome_reason_code: row
+            .outcome_reason_code
+            .as_deref()
+            .map(parse_db_text)
+            .transpose()?,
         delivery_job_id,
         channel_id: row.channel_id.as_deref().map(parse_uuid).transpose()?,
         document: row
@@ -568,8 +586,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DeliveryStatus, EncryptedField, EventProcessingOutcome, EventRepository, HistoryFilter,
-        PageRequest,
+        DeliveryStatus, EncryptedField, EventOutcomeReasonCode, EventProcessingOutcome,
+        EventRepository, HistoryFilter, PageRequest,
     };
     use crate::events::normalize::SafeIngressEvent;
     use crate::model::{
@@ -593,6 +611,22 @@ mod tests {
         assert!(repo.take_ingress_batch(10).unwrap().is_empty());
         let bytes = std::fs::read(repo.database_path()).unwrap();
         assert!(!String::from_utf8_lossy(&bytes).contains("raw_prompt"));
+    }
+
+    #[test]
+    fn ingress_batch_accepts_two_hundred() {
+        let (_file, repo) = test_repository();
+
+        assert!(repo.take_ingress_batch(200).unwrap().is_empty());
+    }
+
+    #[test]
+    fn ingress_batch_rejects_two_hundred_one() {
+        let (_file, repo) = test_repository();
+
+        let error = repo.take_ingress_batch(201).unwrap_err();
+
+        assert_eq!(error.code, "storage.invalid_pagination");
     }
 
     #[test]
@@ -657,7 +691,7 @@ mod tests {
             &event,
             None,
             EventProcessingOutcome::Suppressed,
-            Some("quiet_hours"),
+            Some(EventOutcomeReasonCode::QuietHours),
         )
         .unwrap();
 
@@ -671,11 +705,20 @@ mod tests {
             EventProcessingOutcome::Suppressed
         );
         assert_eq!(
-            page.items[0].outcome_reason_code.as_deref(),
-            Some("quiet_hours")
+            page.items[0].outcome_reason_code,
+            Some(EventOutcomeReasonCode::QuietHours)
         );
         assert_eq!(page.items[0].delivery_status, DeliveryStatus::NotQueued);
         assert!(!format!("{page:?}").contains("sensitive_fields_blob"));
+    }
+
+    #[test]
+    fn outcome_reason_codes_are_closed_and_serialize_stably() {
+        assert_eq!(
+            serde_json::to_string(&EventOutcomeReasonCode::QuietHours).unwrap(),
+            "\"quiet_hours\""
+        );
+        assert!(serde_json::from_str::<EventOutcomeReasonCode>("\"raw rule text\"").is_err());
     }
 
     #[test]
@@ -691,6 +734,25 @@ mod tests {
 
         assert_eq!(zero.code, "storage.invalid_pagination");
         assert_eq!(too_large.code, "storage.invalid_pagination");
+    }
+
+    #[test]
+    fn history_exact_final_page_has_no_next_offset() {
+        let (_file, repo) = test_repository();
+        repo.insert_event(
+            &event_fixture(),
+            None,
+            EventProcessingOutcome::Suppressed,
+            Some(EventOutcomeReasonCode::Disabled),
+        )
+        .unwrap();
+
+        let page = repo
+            .list_history(&HistoryFilter::default(), PageRequest::first(1))
+            .unwrap();
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.next_offset, None);
     }
 
     fn test_repository() -> (NamedTempFile, EventRepository) {

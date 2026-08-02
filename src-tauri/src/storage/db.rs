@@ -89,7 +89,6 @@ fn prepare_database_path(path: &Path) -> Result<(), AppError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .filter(|parent| !parent.exists())
     {
         ensure_private_directory(parent)?;
         #[cfg(windows)]
@@ -189,7 +188,10 @@ pub(crate) fn storage_error(code: &str, message: &str) -> AppError {
 mod tests {
     use std::collections::BTreeSet;
 
-    use tempfile::NamedTempFile;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    use tempfile::{NamedTempFile, tempdir};
 
     use super::{Database, MIGRATIONS, apply_migrations};
 
@@ -290,5 +292,26 @@ mod tests {
         assert_eq!(busy_timeout, 20);
         assert_eq!(foreign_keys, 1);
         assert_eq!(synchronous, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_database_hardens_an_existing_parent_directory() {
+        let root = tempdir().unwrap();
+        let directory = root.path().join("database");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = directory.join("cc-reminder.sqlite3");
+
+        Database::open(&path).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

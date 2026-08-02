@@ -7,6 +7,14 @@ pub fn ensure_private_directory(path: &Path) -> Result<(), AppError> {
     use std::os::unix::fs::PermissionsExt;
 
     std::fs::create_dir_all(path).map_err(|_| permission_error())?;
+    let mode = std::fs::metadata(path)
+        .map_err(|_| permission_error())?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode == 0o700 {
+        return Ok(());
+    }
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
         .map_err(|_| permission_error())
 }
