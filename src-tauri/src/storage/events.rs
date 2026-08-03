@@ -582,7 +582,7 @@ mod tests {
     use rusqlite::{Connection, params};
     use semver::Version;
     use serde_json::json;
-    use tempfile::NamedTempFile;
+    use tempfile::{TempDir, tempdir};
     use uuid::Uuid;
 
     use super::{
@@ -755,15 +755,19 @@ mod tests {
         assert_eq!(page.next_offset, None);
     }
 
-    fn test_repository() -> (NamedTempFile, EventRepository) {
-        let file = NamedTempFile::new().unwrap();
-        let database = Database::open(file.path()).unwrap();
+    fn test_repository() -> (TempDir, EventRepository) {
+        let root = tempdir().unwrap();
+        let path = root
+            .path()
+            .join("com.ccreminder.app")
+            .join("cc-reminder.sqlite3");
+        let database = Database::open(&path).unwrap();
         let repository = EventRepository::new(database);
-        (file, repository)
+        (root, repository)
     }
 
-    fn repository_with_succeeded_delivery() -> (NamedTempFile, EventRepository) {
-        let (file, repo) = test_repository();
+    fn repository_with_succeeded_delivery() -> (TempDir, EventRepository) {
+        let (root, repo) = test_repository();
         let event = event_fixture();
         repo.insert_event(&event, None, EventProcessingOutcome::Queued, None)
             .unwrap();
@@ -819,7 +823,7 @@ mod tests {
                 params![attempt_id.to_string(), job_id.to_string(), now],
             )
             .unwrap();
-        (file, repo)
+        (root, repo)
     }
 
     fn safe_ingress_with_summary(summary: &str) -> SafeIngressEvent {

@@ -86,14 +86,24 @@ impl Database {
 }
 
 fn prepare_database_path(path: &Path) -> Result<(), AppError> {
-    if let Some(parent) = path
+    let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if path.file_name().and_then(|name| name.to_str()) != Some("cc-reminder.sqlite3")
+        || parent
+            .and_then(|directory| directory.file_name())
+            .and_then(|name| name.to_str())
+            != Some("com.ccreminder.app")
     {
-        ensure_private_directory(parent)?;
-        #[cfg(windows)]
-        ensure_current_user_dacl(parent)?;
+        return Err(storage_error(
+            "storage.invalid_database_path",
+            "database path is invalid",
+        ));
     }
+    let parent = parent.expect("validated database parent");
+    ensure_private_directory(parent)?;
+    #[cfg(windows)]
+    ensure_current_user_dacl(parent)?;
     ensure_private_file(path)?;
     ensure_current_user_dacl(path)
 }
@@ -191,14 +201,21 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    use tempfile::{NamedTempFile, tempdir};
+    use tempfile::{TempDir, tempdir};
 
     use super::{Database, MIGRATIONS, apply_migrations};
 
+    fn database_path(root: &TempDir) -> std::path::PathBuf {
+        root.path()
+            .join("com.ccreminder.app")
+            .join("cc-reminder.sqlite3")
+    }
+
     #[test]
     fn migration_creates_every_v1_table_and_enables_wal() {
-        let file = NamedTempFile::new().unwrap();
-        let db = Database::open(file.path()).unwrap();
+        let root = tempdir().unwrap();
+        let path = database_path(&root);
+        let db = Database::open(&path).unwrap();
         let tables = db.table_names().unwrap();
 
         assert_eq!(
@@ -240,18 +257,19 @@ mod tests {
 
     #[test]
     fn applying_migrations_twice_is_idempotent() {
-        let file = NamedTempFile::new().unwrap();
-        Database::open(file.path()).unwrap();
+        let root = tempdir().unwrap();
+        let path = database_path(&root);
+        Database::open(&path).unwrap();
 
-        let reopened = Database::open(file.path()).unwrap();
+        let reopened = Database::open(&path).unwrap();
 
         assert_eq!(reopened.schema_version().unwrap(), 1);
     }
 
     #[test]
     fn invalid_migration_rolls_back_its_schema_and_version_row() {
-        let file = NamedTempFile::new().unwrap();
-        let db = Database::open(file.path()).unwrap();
+        let root = tempdir().unwrap();
+        let db = Database::open(&database_path(&root)).unwrap();
         let mut connection = db.connect().unwrap();
         let mut migrations = MIGRATIONS.to_vec();
         migrations.push((
@@ -272,13 +290,14 @@ mod tests {
 
     #[test]
     fn ingress_writer_refuses_an_unmigrated_database_and_uses_twenty_ms_timeout() {
-        let file = NamedTempFile::new().unwrap();
+        let root = tempdir().unwrap();
+        let path = database_path(&root);
 
-        let error = Database::open_ingress_writer(file.path()).unwrap_err();
+        let error = Database::open_ingress_writer(&path).unwrap_err();
         assert_eq!(error.code, "storage.schema_unavailable");
 
-        Database::open(file.path()).unwrap();
-        let writer = Database::open_ingress_writer(file.path()).unwrap();
+        Database::open(&path).unwrap();
+        let writer = Database::open_ingress_writer(&path).unwrap();
         let busy_timeout: i64 = writer
             .pragma_query_value(None, "busy_timeout", |row| row.get(0))
             .unwrap();
@@ -296,9 +315,44 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn database_opens_reject_shared_parents_without_hardening_them() {
+        let root = tempdir().unwrap();
+        let shared_directory = root.path().join("shared");
+        std::fs::create_dir(&shared_directory).unwrap();
+        std::fs::set_permissions(&shared_directory, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let path = shared_directory.join("cc-reminder.sqlite3");
+
+        let error = Database::open(&path).unwrap_err();
+        assert_eq!(error.code, "storage.invalid_database_path");
+        assert!(!error.message.contains(&path.display().to_string()));
+        assert_eq!(
+            std::fs::metadata(&shared_directory)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+
+        let error = Database::open_ingress_writer(&path).unwrap_err();
+        assert_eq!(error.code, "storage.invalid_database_path");
+        assert!(!error.message.contains(&path.display().to_string()));
+        assert_eq!(
+            std::fs::metadata(&shared_directory)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn opening_database_hardens_an_existing_parent_directory() {
         let root = tempdir().unwrap();
-        let directory = root.path().join("database");
+        let directory = root.path().join("com.ccreminder.app");
         std::fs::create_dir(&directory).unwrap();
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
         let path = directory.join("cc-reminder.sqlite3");
