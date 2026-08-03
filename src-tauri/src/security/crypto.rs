@@ -3,6 +3,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
+use std::sync::Mutex;
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
@@ -24,6 +25,7 @@ const TAG_BYTES: usize = 16;
 const MAX_ENCRYPTED_FIELDS: usize = 256;
 const MAX_FIELD_NAME_BYTES: usize = 256;
 const MAX_FIELD_PLAINTEXT_BYTES: usize = 1_048_576;
+static DATA_KEY_INIT_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone)]
 pub struct FieldCipher {
@@ -123,6 +125,12 @@ impl FieldCipher {
     }
 
     fn load_or_create_with_store(store: &CredentialStore) -> Result<Self, AppError> {
+        let _guard = DATA_KEY_INIT_LOCK.lock().map_err(|_| {
+            crypto_error(
+                "security.data_key_unavailable",
+                "data encryption key is unavailable",
+            )
+        })?;
         match store.get_named_secret(DATA_KEY_USERNAME) {
             Ok(secret) => Self::from_stored_key(secret),
             Err(error) if error.code == "secret_store.not_found" => {
@@ -259,36 +267,82 @@ pub struct CorrelationKey {
 
 impl CorrelationKey {
     pub fn load_or_create(data_dir: &Path) -> Result<Self, AppError> {
+        validate_data_directory(data_dir)?;
         ensure_private_directory(data_dir)?;
         ensure_current_user_dacl(data_dir)?;
         let path = data_dir.join(CORRELATION_KEY_FILE);
-        match private_new_file(&path) {
-            Ok(mut file) => {
+        match read_correlation_key(&path) {
+            Ok(key) => {
                 ensure_current_user_dacl(&path)?;
-                let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
-                fill_random(&mut key[..])?;
-                file.write_all(&key[..]).map_err(|_| correlation_error())?;
-                file.sync_all().map_err(|_| correlation_error())?;
-                Ok(Self { key })
+                return Ok(Self { key });
             }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                ensure_current_user_dacl(&path)?;
-                let mut file = File::open(&path).map_err(|_| correlation_error())?;
-                if file.metadata().map_err(|_| correlation_error())?.len() != KEY_BYTES as u64 {
-                    return Err(correlation_error());
-                }
-                let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
-                file.read_exact(&mut key[..])
-                    .map_err(|_| correlation_error())?;
-                Ok(Self { key })
-            }
-            Err(_) => Err(correlation_error()),
+            Err(error) if error.kind() != ErrorKind::NotFound => return Err(correlation_error()),
+            Err(_) => {}
+        }
+
+        let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
+        fill_random(&mut key[..])?;
+        let published = publish_correlation_key_with(data_dir, &path, &key[..], |file, key| {
+            file.write_all(key)
+        });
+        match published {
+            Ok(()) => Ok(Self { key }),
+            Err(_) => read_correlation_key(&path)
+                .map(|key| Self { key })
+                .map_err(|_| correlation_error()),
         }
     }
 
     pub fn expose_for_hmac(&self) -> &[u8; KEY_BYTES] {
         &self.key
     }
+}
+
+fn validate_data_directory(data_dir: &Path) -> Result<(), AppError> {
+    if data_dir.file_name().and_then(|name| name.to_str()) == Some("com.ccreminder.app") {
+        Ok(())
+    } else {
+        Err(crypto_error(
+            "security.invalid_data_directory",
+            "application data directory is invalid",
+        ))
+    }
+}
+
+fn read_correlation_key(path: &Path) -> std::io::Result<Zeroizing<[u8; KEY_BYTES]>> {
+    let mut file = File::open(path)?;
+    if file.metadata()?.len() != KEY_BYTES as u64 {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid correlation key length",
+        ));
+    }
+    let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
+    file.read_exact(&mut key[..])?;
+    Ok(key)
+}
+
+fn publish_correlation_key_with<F>(
+    data_dir: &Path,
+    final_path: &Path,
+    key: &[u8],
+    write_key: F,
+) -> Result<(), AppError>
+where
+    F: FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+{
+    let temporary_path = data_dir.join(format!(".correlation-{}.tmp", Uuid::now_v7()));
+    let result = (|| -> Result<(), AppError> {
+        let mut file = private_new_file(&temporary_path).map_err(|_| correlation_error())?;
+        ensure_current_user_dacl(&temporary_path)?;
+        write_key(&mut file, key).map_err(|_| correlation_error())?;
+        file.sync_all().map_err(|_| correlation_error())?;
+        drop(file);
+        std::fs::hard_link(&temporary_path, final_path).map_err(|_| correlation_error())?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&temporary_path);
+    result
 }
 
 #[cfg(unix)]
@@ -400,11 +454,14 @@ mod tests {
     use std::collections::BTreeMap;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+    use std::time::Duration;
 
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    use super::{CorrelationKey, FieldCipher};
+    use super::{CorrelationKey, FieldCipher, publish_correlation_key_with};
     use crate::security::credentials::CredentialStore;
 
     #[test]
@@ -548,6 +605,45 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_data_key_initialization_returns_compatible_ciphers() {
+        let store = CredentialStore::delayed_memory_for_test(Duration::from_millis(50));
+        let start = Arc::new(Barrier::new(3));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let store = store.clone();
+                let start = Arc::clone(&start);
+                thread::spawn(move || {
+                    start.wait();
+                    FieldCipher::load_or_create_with_store(&store).unwrap()
+                })
+            })
+            .collect();
+        start.wait();
+        let mut ciphers = handles.into_iter().map(|handle| handle.join().unwrap());
+        let first = ciphers.next().unwrap();
+        let second = ciphers.next().unwrap();
+        let event_id = Uuid::now_v7();
+        let encrypted = first
+            .encrypt_fields(
+                event_id,
+                &BTreeMap::from([("prompt".to_owned(), "secret text".to_owned())]),
+            )
+            .unwrap();
+
+        assert_eq!(
+            second.decrypt_fields(event_id, &encrypted).unwrap()["prompt"],
+            "secret text"
+        );
+        assert_eq!(
+            FieldCipher::load_or_create_with_store(&store)
+                .unwrap()
+                .decrypt_fields(event_id, &encrypted)
+                .unwrap()["prompt"],
+            "secret text"
+        );
+    }
+
+    #[test]
     fn snapshots_round_trip_only_with_matching_snapshot_aad() {
         let cipher = FieldCipher::from_key([8_u8; 32]);
         let snapshot_id = Uuid::now_v7();
@@ -564,21 +660,22 @@ mod tests {
 
     #[test]
     fn correlation_key_file_is_random_and_not_credential_encryption_material() {
-        let directory = tempdir().unwrap();
-        let first = CorrelationKey::load_or_create(directory.path()).unwrap();
-        let second = CorrelationKey::load_or_create(directory.path()).unwrap();
+        let root = tempdir().unwrap();
+        let directory = root.path().join("com.ccreminder.app");
+        let first = CorrelationKey::load_or_create(&directory).unwrap();
+        let second = CorrelationKey::load_or_create(&directory).unwrap();
 
         assert_eq!(first.expose_for_hmac(), second.expose_for_hmac());
         assert_ne!(first.expose_for_hmac(), &[0_u8; 32]);
         assert_eq!(
-            std::fs::read(directory.path().join("correlation.key"))
+            std::fs::read(directory.join("correlation.key"))
                 .unwrap()
                 .len(),
             32
         );
         #[cfg(unix)]
         assert_eq!(
-            std::fs::metadata(directory.path().join("correlation.key"))
+            std::fs::metadata(directory.join("correlation.key"))
                 .unwrap()
                 .permissions()
                 .mode()
@@ -606,5 +703,48 @@ mod tests {
             std::fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777,
             0o700
         );
+    }
+
+    #[test]
+    fn correlation_key_rejects_shared_directory_without_changing_permissions() {
+        let root = tempdir().unwrap();
+        let shared = root.path().join("shared");
+        std::fs::create_dir(&shared).unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let error = match CorrelationKey::load_or_create(&shared) {
+            Ok(_) => panic!("shared directory must be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "security.invalid_data_directory");
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(&shared).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert!(!shared.join("correlation.key").exists());
+    }
+
+    #[test]
+    fn failed_correlation_key_write_does_not_publish_a_partial_file() {
+        let root = tempdir().unwrap();
+        let data_dir = root.path().join("com.ccreminder.app");
+        std::fs::create_dir(&data_dir).unwrap();
+        let final_path = data_dir.join("correlation.key");
+
+        let error =
+            publish_correlation_key_with(&data_dir, &final_path, &[17_u8; 32], |file, key| {
+                use std::io::Write;
+
+                file.write_all(&key[..8])?;
+                Err(std::io::Error::other("injected write failure"))
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code, "security.correlation_key_unavailable");
+        assert!(!final_path.exists());
+        assert_eq!(std::fs::read_dir(data_dir).unwrap().count(), 0);
     }
 }
