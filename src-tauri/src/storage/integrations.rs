@@ -15,6 +15,12 @@ use crate::model::{
 use super::db::{Database, storage_error};
 
 const MAX_SNAPSHOTS_PER_AGENT: usize = 5;
+const MAX_HOOKS_PER_AGENT: usize = 128;
+const MAX_HOOK_TEXT_BYTES: usize = 512;
+const MAX_SNAPSHOT_CIPHERTEXT_BYTES: usize = 1024 * 1024;
+const MAX_SNAPSHOT_NONCE_BYTES: usize = 64;
+const MAX_SNAPSHOT_AAD_BYTES: usize = 512;
+const MAX_SNAPSHOT_SOURCE_HASH_BYTES: usize = 128;
 
 #[derive(Clone, Debug)]
 pub struct IntegrationRepository {
@@ -75,9 +81,15 @@ impl IntegrationRepository {
         agent: AgentKind,
         hooks: &[HookInstallationRecord],
     ) -> Result<(), AppError> {
-        if hooks
-            .iter()
-            .any(|hook| hook.agent != agent || hook.source_event.is_empty())
+        if hooks.len() > MAX_HOOKS_PER_AGENT
+            || hooks.iter().any(|hook| {
+                hook.agent != agent
+                    || !valid_hook_text(&hook.source_event)
+                    || !valid_hook_text(&hook.command_fingerprint)
+                    || !valid_hook_text(&hook.definition_fingerprint)
+                    || !valid_hook_text(&hook.helper_version)
+                    || !valid_hook_text(&hook.config_hash)
+            })
         {
             return Err(storage_error(
                 "storage.invalid_hook",
@@ -126,14 +138,21 @@ impl IntegrationRepository {
             .prepare(
                 "SELECT agent, source_event, command_fingerprint, definition_fingerprint,
                     helper_version, config_hash, trust_status, health_status, last_seen_at
-                 FROM hook_installations WHERE agent = ?1 ORDER BY source_event",
+                 FROM hook_installations WHERE agent = ?1 ORDER BY source_event LIMIT 129",
             )
             .map_err(|_| query_error())?;
-        statement
+        let hooks = statement
             .query_map([agent.as_str()], hook_row)
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| stored_data_error())
+            .map_err(|_| stored_data_error())?;
+        if hooks.len() > MAX_HOOKS_PER_AGENT {
+            return Err(storage_error(
+                "storage.list_limit_exceeded",
+                "hook list is too large",
+            ));
+        }
+        Ok(hooks)
     }
 
     pub fn mark_hook_seen(
@@ -171,7 +190,15 @@ impl IntegrationRepository {
     }
 
     pub fn save_snapshot(&self, snapshot: &ConfigSnapshotRecord) -> Result<(), AppError> {
-        if snapshot.ciphertext.is_empty() || snapshot.nonce.is_empty() || snapshot.aad.is_empty() {
+        if snapshot.ciphertext.is_empty()
+            || snapshot.ciphertext.len() > MAX_SNAPSHOT_CIPHERTEXT_BYTES
+            || snapshot.nonce.is_empty()
+            || snapshot.nonce.len() > MAX_SNAPSHOT_NONCE_BYTES
+            || snapshot.aad.is_empty()
+            || snapshot.aad.len() > MAX_SNAPSHOT_AAD_BYTES
+            || snapshot.source_hash.is_empty()
+            || snapshot.source_hash.len() > MAX_SNAPSHOT_SOURCE_HASH_BYTES
+        {
             return Err(storage_error(
                 "storage.invalid_snapshot",
                 "encrypted snapshot is invalid",
@@ -239,6 +266,10 @@ impl IntegrationRepository {
             .map_err(|_| query_error())?;
         usize::try_from(count).map_err(|_| stored_data_error())
     }
+}
+
+fn valid_hook_text(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_HOOK_TEXT_BYTES
 }
 
 fn insert_hook(
@@ -478,6 +509,28 @@ mod tests {
         }
 
         assert_eq!(repository.snapshot_count(AgentKind::ClaudeCode).unwrap(), 5);
+    }
+
+    #[test]
+    fn hook_replacement_and_snapshot_writes_reject_unbounded_input() {
+        let (_root, repository) = test_integration_repository();
+        let hooks = (0..129)
+            .map(|index| hook(&format!("Event{index}")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            repository
+                .replace_hooks(AgentKind::Codex, &hooks)
+                .unwrap_err()
+                .code,
+            "storage.invalid_hook"
+        );
+
+        let mut snapshot = encrypted_snapshot_fixture();
+        snapshot.ciphertext = vec![0; 1_048_577];
+        assert_eq!(
+            repository.save_snapshot(&snapshot).unwrap_err().code,
+            "storage.invalid_snapshot"
+        );
     }
 
     fn test_integration_repository() -> (TempDir, IntegrationRepository) {

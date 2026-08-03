@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -16,7 +17,7 @@ use crate::model::{
     ProjectCacheHealth, ProjectId, ProjectMatchCacheFile, ProjectMatchCacheProject,
     ProjectPathKind, ProjectPathRecord, ProjectRecord, RuleConfig, RulePatch,
 };
-use crate::rules::{StoredGlobalRule, StoredRulePatch, default_rule, validate_rule};
+use crate::rules::{StoredGlobalRule, StoredRulePatch, default_rule, resolve_rule, validate_rule};
 use crate::security::permissions::ensure_private_file;
 
 use super::db::{Database, storage_error};
@@ -26,6 +27,15 @@ const PROJECT_CACHE_HEALTH_KEY: &str = "project_path_cache_health";
 const CACHE_FILE_NAME: &str = "project-paths.json";
 const MAX_PROJECT_CACHE_BYTES: usize = 1024 * 1024;
 const MAX_RETENTION_DAYS: u16 = 3650;
+const MAX_CATALOGS: usize = 2;
+const MAX_HOOKS_PER_CATALOG: usize = 64;
+const MAX_SOURCE_EVENT_BYTES: usize = 128;
+const MAX_CONFIG_LIST_ITEMS: usize = 200;
+const MAX_EFFECTIVE_RULE_ROWS: usize = 10_000;
+const MAX_PROJECT_NAME_BYTES: usize = 256;
+const MAX_PROJECT_PATH_BYTES: usize = 4_096;
+const MAX_CHANNEL_NAME_BYTES: usize = 256;
+const MAX_CREDENTIAL_REF_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlobalRuleSeedReport {
@@ -50,6 +60,20 @@ impl ConfigRepository {
         &self,
         catalogs: &[CapabilityCatalog],
     ) -> Result<GlobalRuleSeedReport, AppError> {
+        if catalogs.len() > MAX_CATALOGS
+            || catalogs.iter().any(|catalog| {
+                catalog.hooks.len() > MAX_HOOKS_PER_CATALOG
+                    || catalog
+                        .hooks
+                        .iter()
+                        .any(|hook| !valid_source_event(&hook.source_event))
+            })
+        {
+            return Err(configuration_error(
+                "catalog_invalid",
+                "capability catalog is invalid",
+            ));
+        }
         let mut connection = self.database.connect()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -85,14 +109,15 @@ impl ConfigRepository {
         let mut statement = connection
             .prepare(
                 "SELECT id, agent, source_event, version, config_json
-                 FROM global_rules ORDER BY agent, source_event",
+                 FROM global_rules ORDER BY agent, source_event LIMIT 201",
             )
             .map_err(|_| query_error())?;
-        statement
+        let rules = statement
             .query_map([], global_rule_row)
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| stored_data_error())
+            .map_err(|_| stored_data_error())?;
+        bounded_list(rules)
     }
 
     pub fn get_global_rule(
@@ -232,7 +257,10 @@ impl ConfigRepository {
     }
 
     pub fn save_project(&self, project: &ProjectRecord) -> Result<(), AppError> {
-        if project.name.trim().is_empty() || project.canonical_root.as_os_str().is_empty() {
+        if project.name.trim().is_empty()
+            || project.name.len() > MAX_PROJECT_NAME_BYTES
+            || !valid_project_path(&project.canonical_root)
+        {
             return Err(configuration_error("project_invalid", "project is invalid"));
         }
         let mut connection = self.database.connect()?;
@@ -287,13 +315,14 @@ impl ConfigRepository {
     pub fn list_projects(&self) -> Result<Vec<ProjectRecord>, AppError> {
         let connection = self.database.connect()?;
         let mut statement = connection
-            .prepare("SELECT id, name, canonical_root, worktree_mode, created_at, updated_at FROM projects ORDER BY name, id")
+            .prepare("SELECT id, name, canonical_root, worktree_mode, created_at, updated_at FROM projects ORDER BY name, id LIMIT 201")
             .map_err(|_| query_error())?;
-        statement
+        let projects = statement
             .query_map([], project_row)
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| stored_data_error())
+            .map_err(|_| stored_data_error())?;
+        bounded_list(projects)
     }
 
     pub fn delete_project(&self, project_id: ProjectId) -> Result<(), AppError> {
@@ -316,7 +345,7 @@ impl ConfigRepository {
     }
 
     pub fn save_project_path(&self, path: &ProjectPathRecord) -> Result<(), AppError> {
-        if path.canonical_path.as_os_str().is_empty() {
+        if !valid_project_path(&path.canonical_path) {
             return Err(configuration_error(
                 "path_invalid",
                 "project path is invalid",
@@ -343,13 +372,14 @@ impl ConfigRepository {
     ) -> Result<Vec<ProjectPathRecord>, AppError> {
         let connection = self.database.connect()?;
         let mut statement = connection.prepare(
-            "SELECT id, project_id, canonical_path, kind FROM project_paths WHERE project_id = ?1 ORDER BY canonical_path",
+            "SELECT id, project_id, canonical_path, kind FROM project_paths WHERE project_id = ?1 ORDER BY canonical_path LIMIT 201",
         ).map_err(|_| query_error())?;
-        statement
+        let paths = statement
             .query_map([project_id.to_string()], project_path_row)
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| stored_data_error())
+            .map_err(|_| stored_data_error())?;
+        bounded_list(paths)
     }
 
     pub fn delete_project_path(&self, path_id: Uuid) -> Result<(), AppError> {
@@ -423,13 +453,14 @@ impl ConfigRepository {
         let connection = self.database.connect()?;
         let mut statement = connection.prepare(
             "SELECT id, kind, name, credential_ref, public_config_json, health_status, paused_reason_code,
-                consecutive_auth_failures, last_succeeded_at, next_allowed_at FROM channels ORDER BY name, id",
+                consecutive_auth_failures, last_succeeded_at, next_allowed_at FROM channels ORDER BY name, id LIMIT 201",
         ).map_err(|_| query_error())?;
-        statement
+        let channels = statement
             .query_map([], channel_row)
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| stored_data_error())
+            .map_err(|_| stored_data_error())?;
+        bounded_list(channels)
     }
 
     pub fn delete_channel(&self, channel_id: ChannelId) -> Result<(), AppError> {
@@ -508,6 +539,16 @@ impl ConfigRepository {
     }
 
     fn write_project_cache(&self) -> Result<(), AppError> {
+        let result = self.write_project_cache_file();
+        self.set_project_cache_health(if result.is_ok() {
+            ProjectCacheHealth::Healthy
+        } else {
+            ProjectCacheHealth::RegenerationFailed
+        })?;
+        result
+    }
+
+    fn write_project_cache_file(&self) -> Result<(), AppError> {
         let connection = self.database.connect()?;
         let projects = list_cache_projects(&connection)?;
         let bytes = serde_json::to_vec(&ProjectMatchCacheFile {
@@ -540,11 +581,6 @@ impl ConfigRepository {
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
-        self.set_project_cache_health(if result.is_ok() {
-            ProjectCacheHealth::Healthy
-        } else {
-            ProjectCacheHealth::RegenerationFailed
-        })?;
         result
     }
 
@@ -607,6 +643,10 @@ fn validate_capability(
             "rule capability is not catalogued",
         ))
     }
+}
+
+fn valid_source_event(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_SOURCE_EVENT_BYTES
 }
 
 fn validate_patch(patch: &RulePatch) -> Result<(), AppError> {
@@ -691,15 +731,29 @@ fn channel_exists(connection: &Connection, channel_id: ChannelId) -> Result<bool
 
 fn channel_is_targeted(connection: &Connection, channel_id: ChannelId) -> Result<bool, AppError> {
     let id = channel_id.to_string();
-    let configs = connection
-        .prepare("SELECT config_json FROM global_rules")
+    let globals = connection
+        .prepare("SELECT agent, source_event, config_json FROM global_rules ORDER BY agent, source_event LIMIT 10001")
         .map_err(|_| query_error())?
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
         .map_err(|_| query_error())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| query_error())?;
-    for config in configs {
+    if globals.len() > MAX_EFFECTIVE_RULE_ROWS {
+        return Err(configuration_error(
+            "list_limit_exceeded",
+            "configuration list is too large",
+        ));
+    }
+    let mut rules = BTreeMap::new();
+    for (agent, source_event, config) in globals {
         let config: RuleConfig = serde_json::from_str(&config).map_err(|_| stored_data_error())?;
+        let agent: AgentKind = db_parse(&agent)?;
         if config.enabled
             && config
                 .targets
@@ -708,21 +762,40 @@ fn channel_is_targeted(connection: &Connection, channel_id: ChannelId) -> Result
         {
             return Ok(true);
         }
+        rules.insert((agent, source_event), config);
     }
     let patches = connection
-        .prepare("SELECT patch_json FROM project_rule_overrides")
+        .prepare("SELECT agent, source_event, patch_json FROM project_rule_overrides ORDER BY agent, source_event LIMIT 10001")
         .map_err(|_| query_error())?
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
         .map_err(|_| query_error())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| query_error())?;
-    for patch in patches {
+    if patches.len() > MAX_EFFECTIVE_RULE_ROWS {
+        return Err(configuration_error(
+            "list_limit_exceeded",
+            "configuration list is too large",
+        ));
+    }
+    for (agent, source_event, patch) in patches {
         let patch: RulePatch = serde_json::from_str(&patch).map_err(|_| stored_data_error())?;
-        if patch.targets.as_ref().is_some_and(|targets| {
-            targets
+        let agent: AgentKind = db_parse(&agent)?;
+        let global = rules
+            .get(&(agent, source_event))
+            .ok_or_else(stored_data_error)?;
+        let effective = resolve_rule(global, Some(&patch));
+        if effective.enabled
+            && effective
+                .targets
                 .iter()
                 .any(|target| target.channel_id.to_string() == id)
-        }) {
+        {
             return Ok(true);
         }
     }
@@ -756,6 +829,7 @@ fn validate_channel(channel: &ChannelRecord) -> Result<(), AppError> {
             | (ChannelKind::WeCom, ChannelPublicConfig::WeCom)
     );
     if channel.name.trim().is_empty()
+        || channel.name.len() > MAX_CHANNEL_NAME_BYTES
         || !kind_matches
         || !valid_credential_ref(&channel.credential_ref)
     {
@@ -767,8 +841,27 @@ fn validate_channel(channel: &ChannelRecord) -> Result<(), AppError> {
 fn valid_credential_ref(value: &str) -> bool {
     value.starts_with("cc-reminder/channel/")
         && value.len() > "cc-reminder/channel/".len()
+        && value.len() <= MAX_CREDENTIAL_REF_BYTES
         && !value.contains(char::is_whitespace)
         && !value.contains('=')
+}
+
+fn valid_project_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path
+            .to_str()
+            .is_some_and(|value| value.len() <= MAX_PROJECT_PATH_BYTES)
+}
+
+fn bounded_list<T>(items: Vec<T>) -> Result<Vec<T>, AppError> {
+    if items.len() > MAX_CONFIG_LIST_ITEMS {
+        Err(configuration_error(
+            "list_limit_exceeded",
+            "configuration list is too large",
+        ))
+    } else {
+        Ok(items)
+    }
 }
 
 fn validate_settings(settings: &AppSettings) -> Result<(), AppError> {
@@ -997,6 +1090,7 @@ mod tests {
     use std::path::PathBuf;
 
     use chrono::{TimeZone, Utc};
+    use rusqlite::params;
     use tempfile::{TempDir, tempdir};
     use uuid::Uuid;
 
@@ -1071,6 +1165,20 @@ mod tests {
                 .unwrap()
                 .config
                 .enabled
+        );
+    }
+
+    #[test]
+    fn catalog_seed_rejects_unbounded_catalog_input() {
+        let (_root, repository) = test_config_repository();
+        let catalog = verified_catalogs().pop().unwrap();
+
+        assert_eq!(
+            repository
+                .ensure_global_rules(&vec![catalog; 3])
+                .unwrap_err()
+                .code,
+            "configuration.catalog_invalid"
         );
     }
 
@@ -1246,6 +1354,35 @@ mod tests {
     }
 
     #[test]
+    fn oversized_cache_records_regeneration_failure() {
+        let (_root, repository) = test_config_repository();
+        let project = project_record();
+        repository.save_project(&project).unwrap();
+        let connection = rusqlite::Connection::open(repository.database_path()).unwrap();
+        for index in 0..270 {
+            connection
+                .execute(
+                    "INSERT INTO project_paths (id, project_id, canonical_path, kind) VALUES (?1, ?2, ?3, 'alias')",
+                    params![
+                        Uuid::now_v7().to_string(),
+                        project.id.to_string(),
+                        format!("/work/{index}-{}", "x".repeat(4_080)),
+                    ],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            repository.regenerate_project_cache().unwrap_err().code,
+            "storage.project_cache_too_large"
+        );
+        assert_eq!(
+            repository.project_cache_health().unwrap(),
+            crate::model::ProjectCacheHealth::RegenerationFailed
+        );
+    }
+
+    #[test]
     fn channel_storage_accepts_only_public_config_and_opaque_credential_reference() {
         let (_root, repository) = test_config_repository();
         repository
@@ -1301,6 +1438,40 @@ mod tests {
                         channel_id: channel.id,
                         template: None,
                     }]),
+                    ..RulePatch::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            repository.delete_channel(channel.id).unwrap_err().code,
+            "configuration.channel_in_use"
+        );
+    }
+
+    #[test]
+    fn inherited_target_on_project_enablement_prevents_channel_deletion() {
+        let (_root, repository) = seeded_config_repository();
+        let project = project_record();
+        let channel = channel_record("cc-reminder/channel/fake-id");
+        repository.save_project(&project).unwrap();
+        repository.save_channel(&channel).unwrap();
+        let mut global = repository
+            .get_global_rule(AgentKind::Codex, "Stop")
+            .unwrap();
+        global.config.enabled = false;
+        global.config.targets = vec![crate::model::TargetConfig {
+            channel_id: channel.id,
+            template: None,
+        }];
+        repository.save_global_rule(&global).unwrap();
+        repository
+            .save_project_patch(
+                project.id,
+                AgentKind::Codex,
+                "Stop",
+                &RulePatch {
+                    enabled: Some(true),
                     ..RulePatch::default()
                 },
             )
