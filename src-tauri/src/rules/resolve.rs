@@ -17,7 +17,7 @@ const MAX_REDACTION_PATTERNS: usize = 32;
 const MAX_REDACTION_PATTERN_CHARS: usize = 512;
 const MAX_TEMPLATE_BYTES: usize = 16 * 1024;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct StoredGlobalRule {
     pub id: RuleId,
     pub agent: AgentKind,
@@ -26,7 +26,7 @@ pub struct StoredGlobalRule {
     pub config: RuleConfig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct StoredRulePatch {
     pub project_id: ProjectId,
     pub agent: AgentKind,

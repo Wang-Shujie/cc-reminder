@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use semver::Version;
@@ -192,6 +193,202 @@ pub struct RulePatch {
         deserialize_with = "deserialize_double_option"
     )]
     pub quiet_hours: Option<Option<QuietHours>>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelKind {
+    DingTalk,
+    WeCom,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ChannelPublicConfig {
+    DingTalk { keyword_prefix: Option<String> },
+    WeCom,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelHealth {
+    Unknown,
+    Healthy,
+    PausedAuthentication,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustStatus {
+    NotRequired,
+    NeedsUserConfirmation,
+    ObservedWorking,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallationHealth {
+    Unknown,
+    Healthy,
+    NeedsRepair,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Locale {
+    ZhCn,
+    En,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchField {
+    Enabled,
+    Targets,
+    Filters,
+    Privacy,
+    Delivery,
+    QuietHours,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeMode {
+    Alias,
+    Separate,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPathKind {
+    Root,
+    Alias,
+    Worktree,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectRecord {
+    pub id: ProjectId,
+    pub name: String,
+    pub canonical_root: PathBuf,
+    pub worktree_mode: WorktreeMode,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectPathRecord {
+    pub id: Uuid,
+    pub project_id: ProjectId,
+    pub canonical_path: PathBuf,
+    pub kind: ProjectPathKind,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectMatchCacheProject {
+    pub id: ProjectId,
+    pub display_name: String,
+    pub canonical_paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectMatchCacheFile {
+    pub version: u8,
+    pub projects: Vec<ProjectMatchCacheProject>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectCacheHealth {
+    Healthy,
+    RegenerationFailed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChannelRecord {
+    pub id: ChannelId,
+    pub kind: ChannelKind,
+    pub name: String,
+    pub credential_ref: String,
+    pub public_config: ChannelPublicConfig,
+    pub health_status: ChannelHealth,
+    pub paused_reason_code: Option<String>,
+    pub consecutive_auth_failures: u8,
+    pub last_succeeded_at: Option<DateTime<Utc>>,
+    pub next_allowed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AppSettings {
+    pub autostart: bool,
+    pub close_to_tray: bool,
+    pub locale: Locale,
+    pub theme: Theme,
+    pub event_retention_days: u16,
+    pub log_retention_days: u16,
+    pub notification_pause: Option<NotificationPause>,
+    pub debug_until: Option<DateTime<Utc>>,
+    pub onboarding_completed: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            autostart: false,
+            close_to_tray: true,
+            locale: Locale::ZhCn,
+            theme: Theme::System,
+            event_retention_days: 30,
+            log_retention_days: 7,
+            notification_pause: None,
+            debug_until: None,
+            onboarding_completed: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentInstallationRecord {
+    pub agent: AgentKind,
+    pub version: Option<Version>,
+    pub capability_verification: crate::events::catalog::CatalogVerification,
+    pub health_status: InstallationHealth,
+    pub last_checked_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HookInstallationRecord {
+    pub agent: AgentKind,
+    pub source_event: String,
+    pub command_fingerprint: String,
+    pub definition_fingerprint: String,
+    pub helper_version: String,
+    pub config_hash: String,
+    pub trust_status: TrustStatus,
+    pub health_status: InstallationHealth,
+    pub last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfigSnapshotRecord {
+    pub id: Uuid,
+    pub agent: AgentKind,
+    pub ciphertext: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub aad: String,
+    pub source_hash: String,
+    pub file_mode: Option<u32>,
+    pub created_at: DateTime<Utc>,
 }
 
 fn deserialize_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
