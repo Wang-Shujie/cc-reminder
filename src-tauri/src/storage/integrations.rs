@@ -243,11 +243,32 @@ impl IntegrationRepository {
     /// This is the explicit installer recovery read; normal status DTOs omit ciphertext.
     pub fn latest_snapshot(&self, agent: AgentKind) -> Result<ConfigSnapshotRecord, AppError> {
         let connection = self.database.connect()?;
+        let snapshot_id = connection
+            .query_row(
+                "SELECT id, length(hook_subtree_ciphertext), length(nonce), length(aad), length(source_hash)
+                 FROM config_snapshots WHERE agent = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
+                [agent.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| query_error())?
+            .ok_or_else(not_found)?;
+        if !snapshot_lengths_are_valid(snapshot_id.1, snapshot_id.2, snapshot_id.3, snapshot_id.4) {
+            return Err(invalid_snapshot());
+        }
         connection
             .query_row(
                 "SELECT id, agent, hook_subtree_ciphertext, nonce, aad, source_hash, file_mode, created_at
-                 FROM config_snapshots WHERE agent = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
-                [agent.as_str()],
+                 FROM config_snapshots WHERE id = ?1",
+                [snapshot_id.0],
                 snapshot_row,
             )
             .optional()
@@ -270,6 +291,15 @@ impl IntegrationRepository {
 
 fn valid_hook_text(value: &str) -> bool {
     !value.is_empty() && value.len() <= MAX_HOOK_TEXT_BYTES
+}
+
+fn snapshot_lengths_are_valid(ciphertext: i64, nonce: i64, aad: i64, source_hash: i64) -> bool {
+    usize::try_from(ciphertext)
+        .is_ok_and(|value| (1..=MAX_SNAPSHOT_CIPHERTEXT_BYTES).contains(&value))
+        && usize::try_from(nonce).is_ok_and(|value| (1..=MAX_SNAPSHOT_NONCE_BYTES).contains(&value))
+        && usize::try_from(aad).is_ok_and(|value| (1..=MAX_SNAPSHOT_AAD_BYTES).contains(&value))
+        && usize::try_from(source_hash)
+            .is_ok_and(|value| (1..=MAX_SNAPSHOT_SOURCE_HASH_BYTES).contains(&value))
 }
 
 fn insert_hook(
@@ -393,6 +423,9 @@ fn stored_result<T>(value: Result<T, AppError>) -> rusqlite::Result<T> {
 fn not_found() -> AppError {
     storage_error("storage.not_found", "integration record was not found")
 }
+fn invalid_snapshot() -> AppError {
+    storage_error("storage.invalid_snapshot", "encrypted snapshot is invalid")
+}
 
 fn serialization_error() -> AppError {
     storage_error(
@@ -419,6 +452,7 @@ fn write_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, TimeZone, Utc};
+    use rusqlite::params;
     use tempfile::{TempDir, tempdir};
     use uuid::Uuid;
 
@@ -529,6 +563,32 @@ mod tests {
         snapshot.ciphertext = vec![0; 1_048_577];
         assert_eq!(
             repository.save_snapshot(&snapshot).unwrap_err().code,
+            "storage.invalid_snapshot"
+        );
+    }
+
+    #[test]
+    fn recovery_read_rejects_oversized_legacy_snapshot_fields() {
+        let (_root, repository) = test_integration_repository();
+        let connection = rusqlite::Connection::open(repository.database_path()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO config_snapshots (
+                    id, agent, config_path, hook_subtree_ciphertext, nonce, aad, source_hash, created_at
+                 ) VALUES (?1, 'claude-code', 'managed', ?2, X'01', 'aad', 'hash', ?3)",
+                params![
+                    Uuid::now_v7().to_string(),
+                    vec![0_u8; 1_048_577],
+                    now().to_rfc3339(),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .latest_snapshot(AgentKind::ClaudeCode)
+                .unwrap_err()
+                .code,
             "storage.invalid_snapshot"
         );
     }

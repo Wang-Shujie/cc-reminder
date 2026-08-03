@@ -36,6 +36,8 @@ const MAX_PROJECT_NAME_BYTES: usize = 256;
 const MAX_PROJECT_PATH_BYTES: usize = 4_096;
 const MAX_CHANNEL_NAME_BYTES: usize = 256;
 const MAX_CREDENTIAL_REF_BYTES: usize = 256;
+const MAX_PROJECT_CACHE_PROJECTS: usize = MAX_CONFIG_LIST_ITEMS;
+const MAX_PROJECT_CACHE_PATHS_PER_PROJECT: usize = MAX_CONFIG_LIST_ITEMS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlobalRuleSeedReport {
@@ -883,23 +885,81 @@ fn validate_settings(settings: &AppSettings) -> Result<(), AppError> {
 fn list_cache_projects(connection: &Connection) -> Result<Vec<ProjectMatchCacheProject>, AppError> {
     let projects = {
         let mut statement = connection
-            .prepare("SELECT id, name FROM projects ORDER BY name, id")
+            .prepare("SELECT id, length(name) FROM projects ORDER BY name, id LIMIT 201")
             .map_err(|_| query_error())?;
         statement
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
             .map_err(|_| query_error())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| query_error())?
     };
-    projects.into_iter().map(|(id, display_name)| {
+    if projects.len() > MAX_PROJECT_CACHE_PROJECTS {
+        return Err(cache_too_large());
+    }
+    let mut cache_bytes = 2;
+    let mut cached = Vec::with_capacity(projects.len());
+    for (id, name_bytes) in projects {
+        reserve_cache_bytes(&mut cache_bytes, name_bytes)?;
         let project_id = parse_uuid(&id)?;
-        let mut statement = connection.prepare("SELECT canonical_path FROM project_paths WHERE project_id = ?1 ORDER BY canonical_path").map_err(|_| query_error())?;
-        let canonical_paths = statement.query_map([id], |row| row.get::<_, String>(0)).map_err(|_| query_error())?
-            .collect::<Result<Vec<_>, _>>().map_err(|_| query_error())?.into_iter().map(|path| Ok(path.into())).collect::<Result<Vec<_>, AppError>>()?;
-        Ok(ProjectMatchCacheProject { id: project_id, display_name, canonical_paths })
-    }).collect()
+        let display_name = connection
+            .query_row("SELECT name FROM projects WHERE id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .map_err(|_| query_error())?;
+        let paths = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, length(canonical_path) FROM project_paths
+                     WHERE project_id = ?1 ORDER BY canonical_path LIMIT 201",
+                )
+                .map_err(|_| query_error())?;
+            statement
+                .query_map([&id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|_| query_error())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| query_error())?
+        };
+        if paths.len() > MAX_PROJECT_CACHE_PATHS_PER_PROJECT {
+            return Err(cache_too_large());
+        }
+        let mut canonical_paths = Vec::with_capacity(paths.len());
+        for (path_id, path_bytes) in paths {
+            reserve_cache_bytes(&mut cache_bytes, path_bytes)?;
+            let path: String = connection
+                .query_row(
+                    "SELECT canonical_path FROM project_paths WHERE id = ?1",
+                    [&path_id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| query_error())?;
+            canonical_paths.push(path.into());
+        }
+        cached.push(ProjectMatchCacheProject {
+            id: project_id,
+            display_name,
+            canonical_paths,
+        });
+    }
+    Ok(cached)
+}
+
+fn reserve_cache_bytes(total: &mut usize, value_bytes: i64) -> Result<(), AppError> {
+    let value_bytes = usize::try_from(value_bytes).map_err(|_| cache_too_large())?;
+    let estimated = value_bytes
+        .checked_mul(6)
+        .and_then(|value| value.checked_add(64));
+    *total = total
+        .checked_add(estimated.ok_or_else(cache_too_large)?)
+        .ok_or_else(cache_too_large)?;
+    if *total > MAX_PROJECT_CACHE_BYTES {
+        Err(cache_too_large())
+    } else {
+        Ok(())
+    }
 }
 
 fn global_rule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredGlobalRule> {
@@ -1073,6 +1133,12 @@ fn cache_error() -> AppError {
     storage_error(
         "storage.project_cache_failed",
         "project cache could not be regenerated",
+    )
+}
+fn cache_too_large() -> AppError {
+    storage_error(
+        "storage.project_cache_too_large",
+        "project cache exceeds its size limit",
     )
 }
 fn map_path_error(_: rusqlite::Error) -> AppError {
@@ -1368,6 +1434,31 @@ mod tests {
                         project.id.to_string(),
                         format!("/work/{index}-{}", "x".repeat(4_080)),
                     ],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            repository.regenerate_project_cache().unwrap_err().code,
+            "storage.project_cache_too_large"
+        );
+        assert_eq!(
+            repository.project_cache_health().unwrap(),
+            crate::model::ProjectCacheHealth::RegenerationFailed
+        );
+    }
+
+    #[test]
+    fn cache_project_read_limit_records_regeneration_failure() {
+        let (_root, repository) = test_config_repository();
+        let connection = rusqlite::Connection::open(repository.database_path()).unwrap();
+        for index in 0..201 {
+            let id = Uuid::now_v7();
+            connection
+                .execute(
+                    "INSERT INTO projects (id, name, canonical_root, worktree_mode, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, 'alias', '2026-08-03T12:00:00Z', '2026-08-03T12:00:00Z')",
+                    params![id.to_string(), format!("project-{index}"), format!("/work/{index}")],
                 )
                 .unwrap();
         }
