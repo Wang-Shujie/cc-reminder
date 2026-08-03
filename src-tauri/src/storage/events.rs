@@ -16,6 +16,7 @@ use crate::model::{
     AgentKind, ChannelId, EventCategory, EventEnvelope, NotificationDocument, ProjectId,
     ScalarValue, Severity,
 };
+use crate::security::crypto::EncryptedFields;
 
 use super::db::{Database, storage_error};
 
@@ -42,14 +43,6 @@ pub enum EventOutcomeReasonCode {
     Cooldown,
     WindowLimit,
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EncryptedField {
-    pub nonce: Vec<u8>,
-    pub ciphertext: Vec<u8>,
-}
-
-pub type EncryptedFieldMap = BTreeMap<String, EncryptedField>;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -213,17 +206,18 @@ impl EventRepository {
     pub fn insert_event(
         &self,
         event: &EventEnvelope,
-        encrypted_fields: Option<&EncryptedFieldMap>,
+        encrypted_fields: Option<&EncryptedFields>,
         outcome: EventProcessingOutcome,
         outcome_reason_code: Option<EventOutcomeReasonCode>,
     ) -> Result<(), AppError> {
         let (sensitive_blob_id, sensitive_fields_blob) =
             match (event.encrypted_sensitive_fields.as_ref(), encrypted_fields) {
                 (None, None) => (None, None),
-                (Some(reference), Some(fields)) => (
-                    Some(reference.blob_id.to_string()),
-                    Some(serde_json::to_vec(fields).map_err(|_| serialization_error())?),
-                ),
+                (Some(reference), Some(fields))
+                    if reference == &fields.blob_ref() && event.id == fields.event_id() =>
+                {
+                    (Some(reference.blob_id.to_string()), Some(fields.to_blob()?))
+                }
                 _ => {
                     return Err(storage_error(
                         "storage.invalid_encrypted_fields",
@@ -586,13 +580,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DeliveryStatus, EncryptedField, EventOutcomeReasonCode, EventProcessingOutcome,
-        EventRepository, HistoryFilter, PageRequest,
+        DeliveryStatus, EventOutcomeReasonCode, EventProcessingOutcome, EventRepository,
+        HistoryFilter, PageRequest,
     };
     use crate::events::normalize::SafeIngressEvent;
-    use crate::model::{
-        AgentKind, EncryptedBlobRef, EventCategory, EventEnvelope, ScalarValue, Severity,
-    };
+    use crate::model::{AgentKind, EventCategory, EventEnvelope, ScalarValue, Severity};
+    use crate::security::crypto::FieldCipher;
     use crate::storage::db::Database;
 
     #[test]
@@ -633,15 +626,15 @@ mod tests {
     fn insert_event_serializes_only_typed_nonce_and_ciphertext_bytes() {
         let (_file, repo) = test_repository();
         let mut event = event_fixture();
-        let blob_id = Uuid::now_v7();
-        event.encrypted_sensitive_fields = Some(EncryptedBlobRef { blob_id });
-        let encrypted = BTreeMap::from([(
-            "prompt".to_owned(),
-            EncryptedField {
-                nonce: vec![1, 2, 3],
-                ciphertext: vec![9, 8, 7],
-            },
-        )]);
+        let cipher = FieldCipher::from_key([11_u8; 32]);
+        let encrypted = cipher
+            .encrypt_fields(
+                event.id,
+                &BTreeMap::from([("prompt".to_owned(), "plaintext".to_owned())]),
+            )
+            .unwrap();
+        let blob_id = encrypted.blob_ref().blob_id;
+        event.encrypted_sensitive_fields = Some(encrypted.blob_ref());
 
         repo.insert_event(
             &event,
@@ -660,8 +653,96 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored_blob_id, blob_id.to_string());
-        assert_eq!(stored_blob, serde_json::to_vec(&encrypted).unwrap());
+        assert_eq!(stored_blob, encrypted.to_blob().unwrap());
         assert!(!String::from_utf8_lossy(&stored_blob).contains("plaintext"));
+    }
+
+    #[test]
+    fn encrypted_sensitive_plaintext_is_absent_from_database_and_wal_bytes() {
+        const MARKER: &str = "known-sensitive-plaintext-4197";
+
+        let (_file, repo) = test_repository();
+        let cipher = FieldCipher::from_key([12_u8; 32]);
+        let mut event = event_fixture();
+        let encrypted = cipher
+            .encrypt_fields(
+                event.id,
+                &BTreeMap::from([("prompt".to_owned(), MARKER.to_owned())]),
+            )
+            .unwrap();
+        event.encrypted_sensitive_fields = Some(encrypted.blob_ref());
+
+        repo.insert_event(
+            &event,
+            Some(&encrypted),
+            EventProcessingOutcome::Queued,
+            None,
+        )
+        .unwrap();
+
+        let database_path = repo.database_path().to_owned();
+        drop(repo);
+        for path in [
+            database_path.clone(),
+            database_path.with_extension("sqlite3-wal"),
+        ] {
+            if path.exists() {
+                let bytes = std::fs::read(path).unwrap();
+                assert!(!String::from_utf8_lossy(&bytes).contains(MARKER));
+            }
+        }
+    }
+
+    #[test]
+    fn event_storage_rejects_ciphertext_bound_to_another_event() {
+        let (_file, repo) = test_repository();
+        let cipher = FieldCipher::from_key([13_u8; 32]);
+        let encrypted = cipher
+            .encrypt_fields(
+                Uuid::now_v7(),
+                &BTreeMap::from([("prompt".to_owned(), "secret".to_owned())]),
+            )
+            .unwrap();
+        let mut event = event_fixture();
+        event.encrypted_sensitive_fields = Some(encrypted.blob_ref());
+
+        let error = repo
+            .insert_event(
+                &event,
+                Some(&encrypted),
+                EventProcessingOutcome::Queued,
+                None,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "storage.invalid_encrypted_fields");
+    }
+
+    #[test]
+    fn event_storage_rejects_a_mismatched_encrypted_blob_reference() {
+        let (_file, repo) = test_repository();
+        let cipher = FieldCipher::from_key([14_u8; 32]);
+        let mut event = event_fixture();
+        let encrypted = cipher
+            .encrypt_fields(
+                event.id,
+                &BTreeMap::from([("prompt".to_owned(), "secret".to_owned())]),
+            )
+            .unwrap();
+        event.encrypted_sensitive_fields = Some(crate::model::EncryptedBlobRef {
+            blob_id: Uuid::now_v7(),
+        });
+
+        let error = repo
+            .insert_event(
+                &event,
+                Some(&encrypted),
+                EventProcessingOutcome::Queued,
+                None,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "storage.invalid_encrypted_fields");
     }
 
     #[test]
