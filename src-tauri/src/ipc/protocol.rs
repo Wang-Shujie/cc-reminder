@@ -14,6 +14,7 @@ pub const IPC_CONNECT_TIMEOUT: Duration = Duration::from_millis(35);
 pub const IPC_TOTAL_TIMEOUT: Duration = Duration::from_millis(75);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IngressRequest {
     pub protocol_version: u16,
     pub helper_version: String,

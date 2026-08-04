@@ -18,7 +18,7 @@ use crate::model::{
     ProjectPathKind, ProjectPathRecord, ProjectRecord, RuleConfig, RulePatch,
 };
 use crate::rules::{StoredGlobalRule, StoredRulePatch, default_rule, resolve_rule, validate_rule};
-use crate::security::permissions::ensure_private_file;
+use crate::security::permissions::{ensure_current_user_dacl, ensure_private_file};
 
 use super::db::{Database, storage_error};
 
@@ -578,7 +578,8 @@ impl ConfigRepository {
             file.sync_all().map_err(|_| cache_error())?;
             drop(file);
             std::fs::rename(&temporary, &target).map_err(|_| cache_error())?;
-            ensure_private_file(&target).map_err(|_| cache_error())
+            ensure_private_file(&target).map_err(|_| cache_error())?;
+            ensure_current_user_dacl(&target).map_err(|_| cache_error())
         })();
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);

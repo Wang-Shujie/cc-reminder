@@ -59,8 +59,35 @@ pub fn ensure_current_user_dacl(path: &Path) -> Result<(), AppError> {
     }
 }
 
+#[cfg(unix)]
+pub fn validate_private_file(path: &Path) -> Result<(), AppError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let symlink = std::fs::symlink_metadata(path).map_err(|_| permission_error())?;
+    let metadata = std::fs::metadata(path).map_err(|_| permission_error())?;
+    if symlink.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(permission_error());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn validate_private_file(path: &Path) -> Result<(), AppError> {
+    if !path.is_file() || !windows_permissions::verify_current_user_dacl(path)? {
+        return Err(permission_error());
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 pub use windows_permissions::ensure_current_user_dacl;
+#[cfg(windows)]
+pub(crate) use windows_permissions::{
+    NamedPipeSecurity, current_user_sid_string, verify_named_pipe_dacl,
+};
 
 #[cfg(all(test, windows))]
 use windows_permissions::verify_current_user_dacl;
@@ -83,15 +110,17 @@ mod windows_permissions {
 
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
-        EXPLICIT_ACCESS_W, SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW,
-        TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
+        ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GetSecurityInfo, SE_FILE_OBJECT,
+        SE_KERNEL_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID,
+        TRUSTEE_IS_USER, TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
     };
     use windows_sys::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, CreateWellKnownSid,
         DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
-        GetTokenInformation, NO_INHERITANCE, OBJECT_INHERIT_ACE,
-        PROTECTED_DACL_SECURITY_INFORMATION, PSID, SECURITY_MAX_SID_SIZE, TOKEN_QUERY, TOKEN_USER,
-        TokenUser, WinBuiltinUsersSid, WinLocalSystemSid, WinWorldSid,
+        GetTokenInformation, InitializeSecurityDescriptor, NO_INHERITANCE, OBJECT_INHERIT_ACE,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+        SECURITY_MAX_SID_SIZE, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        WinBuiltinUsersSid, WinLocalSystemSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FILE_GENERIC_WRITE};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -99,6 +128,103 @@ mod windows_permissions {
     use super::{AppError, ensure_private_file, permission_error};
 
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+
+    pub(crate) struct NamedPipeSecurity {
+        acl: *mut ACL,
+        descriptor: Box<SECURITY_DESCRIPTOR>,
+        attributes: SECURITY_ATTRIBUTES,
+    }
+
+    impl NamedPipeSecurity {
+        pub(crate) fn new() -> Result<Self, AppError> {
+            let current_user = current_user_sid()?;
+            let local_system = well_known_sid(WinLocalSystemSid)?;
+            let entries = [
+                explicit_access(&current_user, TRUSTEE_IS_USER, NO_INHERITANCE),
+                explicit_access(&local_system, TRUSTEE_IS_WELL_KNOWN_GROUP, NO_INHERITANCE),
+            ];
+            let mut acl: *mut ACL = null_mut();
+            let status = unsafe {
+                SetEntriesInAclW(entries.len() as u32, entries.as_ptr(), null(), &mut acl)
+            };
+            if status != ERROR_SUCCESS || acl.is_null() {
+                return Err(permission_error());
+            }
+            let mut descriptor = Box::<SECURITY_DESCRIPTOR>::default();
+            let descriptor_pointer = (&mut *descriptor as *mut SECURITY_DESCRIPTOR).cast();
+            if unsafe { InitializeSecurityDescriptor(descriptor_pointer, 1) } == 0
+                || unsafe { SetSecurityDescriptorDacl(descriptor_pointer, 1, acl, 0) } == 0
+            {
+                unsafe { LocalFree(acl.cast()) };
+                return Err(permission_error());
+            }
+            let attributes = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: (&mut *descriptor as *mut SECURITY_DESCRIPTOR).cast(),
+                bInheritHandle: 0,
+            };
+            Ok(Self {
+                acl,
+                descriptor,
+                attributes,
+            })
+        }
+
+        pub(crate) fn attributes(&self) -> *const SECURITY_ATTRIBUTES {
+            let _ = &self.descriptor;
+            &self.attributes
+        }
+    }
+
+    impl Drop for NamedPipeSecurity {
+        fn drop(&mut self) {
+            unsafe { LocalFree(self.acl.cast()) };
+        }
+    }
+
+    pub(crate) fn current_user_sid_string() -> Result<String, AppError> {
+        let sid = current_user_sid()?;
+        let mut string = null_mut();
+        if unsafe { ConvertSidToStringSidW(sid.as_ptr().cast_mut().cast(), &mut string) } == 0
+            || string.is_null()
+        {
+            return Err(permission_error());
+        }
+        let length = (0_usize..)
+            .find(|&index| unsafe { *string.add(index) } == 0)
+            .ok_or_else(permission_error)?;
+        let value = String::from_utf16(unsafe { std::slice::from_raw_parts(string, length) })
+            .map_err(|_| permission_error());
+        unsafe { LocalFree(string.cast()) };
+        value
+    }
+
+    pub(crate) fn verify_named_pipe_dacl(handle: HANDLE) -> Result<bool, AppError> {
+        let current_user = current_user_sid()?;
+        let local_system = well_known_sid(WinLocalSystemSid)?;
+        let world = well_known_sid(WinWorldSid)?;
+        let users = well_known_sid(WinBuiltinUsersSid)?;
+        let mut acl: *mut ACL = null_mut();
+        let mut descriptor = null_mut();
+        let status = unsafe {
+            GetSecurityInfo(
+                handle,
+                SE_KERNEL_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                &mut acl,
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != ERROR_SUCCESS || acl.is_null() || descriptor.is_null() {
+            return Err(permission_error());
+        }
+        let verified = verify_acl(acl, &current_user, &local_system, &world, &users);
+        unsafe { LocalFree(descriptor) };
+        verified
+    }
 
     pub fn ensure_current_user_dacl(path: &Path) -> Result<(), AppError> {
         if !path.exists() {

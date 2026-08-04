@@ -302,6 +302,7 @@ pub struct ProjectPathRecord {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectMatchCacheProject {
     pub id: ProjectId,
     pub display_name: String,
@@ -309,6 +310,7 @@ pub struct ProjectMatchCacheProject {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectMatchCacheFile {
     pub version: u8,
     pub projects: Vec<ProjectMatchCacheProject>,

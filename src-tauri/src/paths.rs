@@ -32,6 +32,22 @@ impl AppPaths {
                 std::io::Error::new(std::io::ErrorKind::NotFound, "data directory unavailable")
             })?
             .join(APP_ID);
+        #[cfg(unix)]
+        let ipc = root.join("ipc").join("hook.sock");
+        #[cfg(windows)]
+        let ipc = {
+            let sid = crate::security::permissions::current_user_sid_string().map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "current SID unavailable",
+                )
+            })?;
+            let digest = Sha256::digest(sid.as_bytes());
+            PathBuf::from(format!(
+                r"\\.\pipe\cc-reminder-{}",
+                &hex::encode(digest)[..16]
+            ))
+        };
         let paths = Self {
             database: root.join("cc-reminder.sqlite3"),
             spool: root.join("spool"),
@@ -40,26 +56,19 @@ impl AppPaths {
             agent_versions: root.join("agent-versions.json"),
             project_paths: root.join("project-paths.json"),
             correlation_key: root.join("correlation.key"),
-            ipc: root
-                .join("ipc")
-                .join(if cfg!(unix) { "hook.sock" } else { "" }),
+            ipc,
             data_dir: root,
         };
         Ok(paths)
     }
 
     pub fn ensure(&self) -> std::io::Result<()> {
-        for path in [
-            &self.data_dir,
-            &self.spool,
-            &self.logs,
-            &self.bin,
-            &self.ipc,
-        ] {
+        for path in [&self.data_dir, &self.spool, &self.logs, &self.bin] {
             if path.extension().is_none() {
                 std::fs::create_dir_all(path)?;
             }
         }
+        #[cfg(unix)]
         if let Some(parent) = self.ipc.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -73,23 +82,20 @@ impl AppPaths {
         }
         #[cfg(windows)]
         {
-            let sid = std::env::var("USERNAME").unwrap_or_default();
-            let digest = Sha256::digest(sid.as_bytes());
-            crate::ipc::server::Endpoint::Windows(format!(
-                r"\\.\pipe\cc-reminder-{}",
-                hex::encode(digest)[..16].to_owned()
-            ))
+            crate::ipc::server::Endpoint::Windows(self.ipc.to_string_lossy().into_owned())
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentVersionCacheFile {
     pub schema_version: u16,
     pub agents: std::collections::BTreeMap<crate::model::AgentKind, CachedAgentVersion>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CachedAgentVersion {
     pub version: semver::Version,
     pub detected_at: chrono::DateTime<chrono::Utc>,

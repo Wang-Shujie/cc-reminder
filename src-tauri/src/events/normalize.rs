@@ -18,6 +18,7 @@ use crate::projects::{
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapturedHookEvent {
     pub source: AgentKind,
     pub source_version: Version,
@@ -33,6 +34,7 @@ pub struct CapturedHookEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SafeIngressEvent {
     pub event_id: Uuid,
     pub source: AgentKind,
@@ -183,6 +185,59 @@ pub fn normalize_event(
         action_id,
         action_capabilities,
     })
+}
+
+pub fn normalize_safe_ingress(
+    event: CapturedHookEvent,
+    projects: &[ProjectRegistration],
+    platform: PathPlatform,
+    correlation_key: Option<&[u8; 32]>,
+) -> SafeIngressEvent {
+    let project = event
+        .cwd
+        .as_deref()
+        .map(|cwd| resolve_project(cwd, projects, platform));
+    let (project_id, project_display_name, cwd_fingerprint) = match correlation_key {
+        Some(key) => project_fields(project, event.cwd.as_deref(), platform, key),
+        None => match project {
+            Some(ProjectMatch::Matched {
+                project_id,
+                display_name,
+            }) => (Some(project_id), Some(display_name), None),
+            Some(ProjectMatch::Unmatched) | None => (
+                None,
+                event
+                    .cwd
+                    .as_deref()
+                    .and_then(|cwd| path_leaf(cwd, platform)),
+                None,
+            ),
+        },
+    };
+    SafeIngressEvent {
+        event_id: Uuid::now_v7(),
+        source: event.source,
+        source_version: event.source_version,
+        source_event: event.source_event,
+        occurred_at: event.occurred_at,
+        received_at: Utc::now(),
+        project_id,
+        project_display_name,
+        cwd_fingerprint,
+        session_ref: correlation_key.and_then(|key| {
+            event
+                .session_id
+                .as_deref()
+                .map(|value| reference(key, b"session", value))
+        }),
+        turn_ref: correlation_key.and_then(|key| {
+            event
+                .turn_id
+                .as_deref()
+                .map(|value| reference(key, b"turn", value))
+        }),
+        public_fields: event.public_fields,
+    }
 }
 
 fn project_fields(
