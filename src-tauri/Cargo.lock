@@ -497,6 +497,7 @@ dependencies = [
  "async-trait",
  "chacha20poly1305",
  "chrono",
+ "directories",
  "hex",
  "hmac",
  "keyring",
@@ -514,6 +515,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
  "uuid",
  "windows-sys 0.61.2",
  "zeroize",
@@ -883,6 +885,15 @@ dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
  "subtle",
+]
+
+[[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]
@@ -4136,8 +4147,21 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
+ "tokio-macros",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

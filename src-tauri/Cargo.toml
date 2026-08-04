@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 default-run = "cc-reminder"
 
+[features]
+test-support = []
+
 [lib]
 name = "cc_reminder_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -19,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 async-trait = "0.1.91"
 chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
 chrono = { version = "0.4.45", features = ["serde"] }
+directories = "6"
 hex = "0.4"
 hmac = "0.12"
 keyring = "4.1.6"
@@ -34,6 +38,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 thiserror = "2.0.19"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process"] }
 uuid = { version = "1.24.0", features = ["serde", "v7"] }
 zeroize = "1.9.0"
 
