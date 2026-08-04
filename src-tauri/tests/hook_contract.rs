@@ -9,10 +9,14 @@ use std::process::{Command, Stdio};
 use cc_reminder_lib::events::normalize::CapturedHookEvent;
 use cc_reminder_lib::events::normalize::SafeIngressEvent;
 #[cfg(unix)]
+use cc_reminder_lib::hook_command::persist_ipc_request_for_test;
+#[cfg(unix)]
 use cc_reminder_lib::ipc::protocol::{IPC_PROTOCOL_VERSION, IngressRequest, IngressResponse};
 #[cfg(unix)]
-use cc_reminder_lib::ipc::server::{Endpoint, IpcServer};
+use cc_reminder_lib::ipc::server::IpcServer;
 use cc_reminder_lib::model::{AgentKind, ProjectMatchCacheFile, ProjectMatchCacheProject};
+#[cfg(unix)]
+use cc_reminder_lib::paths::AppPaths;
 use cc_reminder_lib::paths::{AgentVersionCacheFile, CachedAgentVersion};
 use cc_reminder_lib::storage::db::Database;
 use semver::Version;
@@ -48,6 +52,22 @@ impl HookEnvironment {
 
     fn app(&self) -> std::path::PathBuf {
         self.root.path().join("com.ccreminder.app")
+    }
+
+    #[cfg(unix)]
+    fn paths(&self) -> AppPaths {
+        let data_dir = self.app();
+        AppPaths {
+            database: data_dir.join("cc-reminder.sqlite3"),
+            spool: data_dir.join("spool"),
+            logs: data_dir.join("logs"),
+            bin: data_dir.join("bin"),
+            agent_versions: data_dir.join("agent-versions.json"),
+            project_paths: data_dir.join("project-paths.json"),
+            correlation_key: data_dir.join("correlation.key"),
+            ipc: data_dir.join("ipc/hook.sock"),
+            data_dir,
+        }
     }
 
     fn private_write(&self, name: &str, bytes: &[u8]) {
@@ -351,25 +371,176 @@ fn wrong_or_public_version_cache_drops_the_event() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "dedicated release IPC latency smoke"]
-fn local_ipc_p95_is_under_one_hundred_milliseconds() {
-    let root = tempfile::tempdir().unwrap();
-    let endpoint = Endpoint::Unix(root.path().join("ipc/hook.sock"));
-    let mut server = IpcServer::bind(endpoint.clone()).unwrap();
+fn symlinked_agent_and_project_caches_are_rejected_before_parsing() {
+    use std::os::unix::fs::symlink;
+
+    let agent_env = HookEnvironment::new();
+    let cache = AgentVersionCacheFile {
+        schema_version: 1,
+        agents: [(
+            AgentKind::Codex,
+            CachedAgentVersion {
+                version: Version::new(0, 145, 0),
+                detected_at: chrono::Utc::now(),
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+    agent_env.private_write(
+        "actual-agent-cache.json",
+        &serde_json::to_vec(&cache).unwrap(),
+    );
+    symlink(
+        agent_env.app().join("actual-agent-cache.json"),
+        agent_env.paths().agent_versions,
+    )
+    .unwrap();
+    Database::open(&agent_env.paths().database).unwrap();
+
+    agent_env.run(br#"{}"#);
+
+    let connection = Database::open_ingress_writer(&agent_env.paths().database).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM ingress_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+
+    let project_env = HookEnvironment::new();
+    project_env.version_cache(1);
+    let project_id = Uuid::now_v7();
+    let cache = ProjectMatchCacheFile {
+        version: 1,
+        projects: vec![ProjectMatchCacheProject {
+            id: project_id,
+            display_name: "client-app".into(),
+            canonical_paths: vec!["/workspace/client".into()],
+        }],
+    };
+    project_env.private_write(
+        "actual-project-cache.json",
+        &serde_json::to_vec(&cache).unwrap(),
+    );
+    symlink(
+        project_env.app().join("actual-project-cache.json"),
+        project_env.paths().project_paths,
+    )
+    .unwrap();
+    Database::open(&project_env.paths().database).unwrap();
+
+    project_env.run(br#"{"cwd":"/workspace/client/src"}"#);
+
+    let connection = Database::open_ingress_writer(&project_env.paths().database).unwrap();
+    let json: String = connection
+        .query_row("SELECT safe_envelope_json FROM ingress_events", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let safe: SafeIngressEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(safe.project_id, None);
+    assert_ne!(safe.project_id, Some(project_id));
+}
+
+#[cfg(unix)]
+#[test]
+fn busy_sqlite_falls_back_to_a_private_spool_file() {
+    let env = HookEnvironment::new();
+    env.version_cache(1);
+    Database::open(&env.paths().database).unwrap();
+    let lock = Database::open_ingress_writer(&env.paths().database).unwrap();
+    lock.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+    let output = env.run(br#"{}"#);
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"{}\n");
+    assert!(output.stderr.is_empty());
+    let entries = cc_reminder_lib::storage::spool::Spool::new(env.paths().spool)
+        .unwrap()
+        .entries()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn unavailable_sqlite_falls_back_to_a_private_spool_file() {
+    let env = HookEnvironment::new();
+    env.version_cache(1);
+    std::fs::create_dir(env.paths().database).unwrap();
+
+    let output = env.run(br#"{}"#);
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"{}\n");
+    assert!(output.stderr.is_empty());
+    let entries = cc_reminder_lib::storage::spool::Spool::new(env.paths().spool)
+        .unwrap()
+        .entries()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn helper_process_reaches_real_durable_ipc_acceptance() {
+    let env = HookEnvironment::new();
+    env.version_cache(1);
+    let paths = env.paths();
+    Database::open(&paths.database).unwrap();
+    let mut server = IpcServer::bind(paths.endpoint()).unwrap();
+    let server_paths = paths.clone();
     let handler = std::thread::spawn(move || {
-        for _ in 0..500 {
-            let (_, response) = server.receiver.blocking_recv().unwrap();
-            response
-                .blocking_send(IngressResponse::Accepted {
-                    event_id: Uuid::now_v7(),
-                })
-                .unwrap();
-        }
+        let (request, response) = server.receiver.blocking_recv().unwrap();
+        let event_id = persist_ipc_request_for_test(&server_paths, request).unwrap();
+        response
+            .blocking_send(IngressResponse::Accepted { event_id })
+            .unwrap();
+    });
+
+    let output = env.run(br#"{"session_id":"ipc-session"}"#);
+
+    handler.join().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"{}\n");
+    assert!(output.stderr.is_empty());
+    let connection = Database::open_ingress_writer(&paths.database).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM ingress_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(
+        cc_reminder_lib::storage::spool::Spool::new(paths.spool)
+            .unwrap()
+            .entries()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn oversized_safe_event_is_rejected_by_real_ipc_persistence() {
+    use cc_reminder_lib::model::ScalarValue;
+
+    let env = HookEnvironment::new();
+    let paths = env.paths();
+    Database::open(&paths.database).unwrap();
+    let endpoint = paths.endpoint();
+    let mut server = IpcServer::bind(endpoint.clone()).unwrap();
+    let server_paths = paths.clone();
+    let handler = std::thread::spawn(move || {
+        let (request, response) = server.receiver.blocking_recv().unwrap();
+        let reply = match persist_ipc_request_for_test(&server_paths, request) {
+            Ok(event_id) => IngressResponse::Accepted { event_id },
+            Err(error_code) => IngressResponse::Rejected { error_code },
+        };
+        response.blocking_send(reply).unwrap();
     });
     let request = IngressRequest {
         protocol_version: IPC_PROTOCOL_VERSION,
         helper_version: "0.1.0".into(),
-        command_fingerprint: "latency-smoke".into(),
+        command_fingerprint: "oversized-safe-event".into(),
         event: CapturedHookEvent {
             source: AgentKind::Codex,
             source_version: Version::new(0, 145, 0),
@@ -380,20 +551,63 @@ fn local_ipc_p95_is_under_one_hundred_milliseconds() {
             turn_id: None,
             model: None,
             permission_mode: None,
-            public_fields: Default::default(),
+            public_fields: [("summary".into(), ScalarValue::String("x".repeat(65_536)))]
+                .into_iter()
+                .collect(),
             sensitive_fields: Default::default(),
         },
     };
+
+    let response = cc_reminder_lib::ipc::send_ingress(&endpoint, &request).unwrap();
+
+    handler.join().unwrap();
+    assert!(matches!(
+        response,
+        IngressResponse::Rejected { error_code } if error_code == "safe_envelope_too_large"
+    ));
+    let connection = Database::open_ingress_writer(&paths.database).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM ingress_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "dedicated release IPC latency smoke"]
+fn local_ipc_p95_is_under_one_hundred_milliseconds() {
+    let env = HookEnvironment::new();
+    env.version_cache(1);
+    let paths = env.paths();
+    Database::open(&paths.database).unwrap();
+    let endpoint = paths.endpoint();
+    let mut server = IpcServer::bind(endpoint.clone()).unwrap();
+    let server_paths = paths.clone();
+    let handler = std::thread::spawn(move || {
+        for _ in 0..500 {
+            let (request, response) = server.receiver.blocking_recv().unwrap();
+            let event_id = persist_ipc_request_for_test(&server_paths, request).unwrap();
+            response
+                .blocking_send(IngressResponse::Accepted { event_id })
+                .unwrap();
+        }
+    });
     let mut samples = Vec::with_capacity(500);
-    for _ in 0..500 {
+    for index in 0..500 {
         let started = std::time::Instant::now();
-        assert!(matches!(
-            cc_reminder_lib::ipc::send_ingress(&endpoint, &request),
-            Ok(IngressResponse::Accepted { .. })
-        ));
+        let input = format!(r#"{{"turn_id":"latency-{index}"}}"#);
+        let output = env.run(input.as_bytes());
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"{}\n");
+        assert!(output.stderr.is_empty());
         samples.push(started.elapsed());
     }
     handler.join().unwrap();
+    let connection = Database::open_ingress_writer(&paths.database).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM ingress_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 500);
     samples.sort_unstable();
     let p95 = samples[474];
     eprintln!("local IPC p95: {:.3} ms", p95.as_secs_f64() * 1_000.0);

@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::actions::new_v1_action_fields;
@@ -193,6 +193,7 @@ pub fn normalize_safe_ingress(
     platform: PathPlatform,
     correlation_key: Option<&[u8; 32]>,
 ) -> SafeIngressEvent {
+    let event_id = stable_ingress_event_id(&event);
     let project = event
         .cwd
         .as_deref()
@@ -215,7 +216,7 @@ pub fn normalize_safe_ingress(
         },
     };
     SafeIngressEvent {
-        event_id: Uuid::now_v7(),
+        event_id,
         source: event.source,
         source_version: event.source_version,
         source_event: event.source_event,
@@ -238,6 +239,17 @@ pub fn normalize_safe_ingress(
         }),
         public_fields: event.public_fields,
     }
+}
+
+pub fn stable_ingress_event_id(event: &CapturedHookEvent) -> Uuid {
+    let digest = Sha256::digest(
+        serde_json::to_vec(event).expect("captured hook events always serialize to JSON"),
+    );
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
 }
 
 fn project_fields(
@@ -299,14 +311,41 @@ fn invalid(message: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
 
     use semver::Version;
     use serde_json::Value;
 
-    use super::{NormalizeContext, capture_hook_json, normalize_event};
+    use super::{
+        CapturedHookEvent, NormalizeContext, capture_hook_json, normalize_event,
+        normalize_safe_ingress,
+    };
     use crate::model::{AgentKind, EventCategory, ScalarValue};
     use crate::projects::{PathPlatform, ProjectRegistration};
+
+    #[test]
+    fn safe_ingress_id_is_stable_for_the_exact_captured_ipc_event() {
+        let captured = CapturedHookEvent {
+            source: AgentKind::Codex,
+            source_version: Version::new(0, 145, 0),
+            source_event: "Stop".into(),
+            occurred_at: chrono::Utc::now(),
+            cwd: Some("/private/client".into()),
+            session_id: Some("session".into()),
+            turn_id: Some("turn".into()),
+            model: None,
+            permission_mode: None,
+            public_fields: BTreeMap::new(),
+            sensitive_fields: BTreeMap::new(),
+        };
+
+        let first =
+            normalize_safe_ingress(captured.clone(), &[], PathPlatform::Unix, Some(&[7; 32]));
+        let second = normalize_safe_ingress(captured, &[], PathPlatform::Unix, Some(&[7; 32]));
+
+        assert_eq!(first.event_id, second.event_id);
+    }
 
     #[test]
     fn codex_permission_keeps_source_name_and_hmac_references() {

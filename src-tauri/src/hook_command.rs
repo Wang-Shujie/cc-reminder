@@ -146,17 +146,11 @@ fn process() -> Result<(), String> {
     validate_safe_envelope(&safe)?;
     if let Ok(executable) = std::env::current_exe() {
         let command = canonical_hook_command(&executable, agent, &event);
-        let mut ipc_event = captured;
-        if key.is_none() {
-            ipc_event.cwd = None;
-            ipc_event.session_id = None;
-            ipc_event.turn_id = None;
-        }
         let request = crate::ipc::IngressRequest {
             protocol_version: crate::ipc::IPC_PROTOCOL_VERSION,
             helper_version: env!("CARGO_PKG_VERSION").to_owned(),
             command_fingerprint: command_fingerprint(&command),
-            event: ipc_event,
+            event: captured,
         };
         if matches!(
             crate::ipc::send_ingress(&paths.endpoint(), &request),
@@ -206,6 +200,14 @@ pub(crate) fn persist_ipc_request(
     );
     insert_ingress(&paths.database, &safe)?;
     Ok(safe.event_id)
+}
+
+#[cfg(feature = "test-support")]
+pub fn persist_ipc_request_for_test(
+    paths: &AppPaths,
+    request: crate::ipc::IngressRequest,
+) -> Result<uuid::Uuid, String> {
+    persist_ipc_request(paths, request)
 }
 
 fn load_cached_version(agent: AgentKind) -> Result<Version, String> {

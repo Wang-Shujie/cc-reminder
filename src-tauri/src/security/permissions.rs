@@ -61,13 +61,39 @@ pub fn ensure_current_user_dacl(path: &Path) -> Result<(), AppError> {
 
 #[cfg(unix)]
 pub fn validate_private_file(path: &Path) -> Result<(), AppError> {
-    use std::os::unix::fs::PermissionsExt;
-
     let symlink = std::fs::symlink_metadata(path).map_err(|_| permission_error())?;
     let metadata = std::fs::metadata(path).map_err(|_| permission_error())?;
-    if symlink.file_type().is_symlink()
+    if symlink.file_type().is_symlink() || !private_file_owned_by(&metadata, effective_uid()) {
+        return Err(permission_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn private_file_owned_by(metadata: &std::fs::Metadata, effective_uid: u32) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    metadata.is_file()
+        && metadata.uid() == effective_uid
+        && metadata.permissions().mode() & 0o077 == 0
+}
+
+#[cfg(unix)]
+fn effective_uid() -> u32 {
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() }
+}
+
+#[cfg(windows)]
+pub fn validate_private_file(path: &Path) -> Result<(), AppError> {
+    use std::os::windows::fs::MetadataExt;
+
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| permission_error())?;
+    if is_reparse_point(metadata.file_attributes())
         || !metadata.is_file()
-        || metadata.permissions().mode() & 0o077 != 0
+        || !windows_permissions::verify_current_user_dacl(path)?
     {
         return Err(permission_error());
     }
@@ -75,11 +101,8 @@ pub fn validate_private_file(path: &Path) -> Result<(), AppError> {
 }
 
 #[cfg(windows)]
-pub fn validate_private_file(path: &Path) -> Result<(), AppError> {
-    if !path.is_file() || !windows_permissions::verify_current_user_dacl(path)? {
-        return Err(permission_error());
-    }
-    Ok(())
+fn is_reparse_point(attributes: u32) -> bool {
+    attributes & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(windows)]
@@ -434,7 +457,7 @@ mod unix_tests {
 
     use tempfile::tempdir;
 
-    use super::{ensure_private_directory, ensure_private_file};
+    use super::{ensure_private_directory, ensure_private_file, private_file_owned_by};
 
     #[test]
     fn private_paths_apply_owner_only_unix_modes() {
@@ -454,13 +477,30 @@ mod unix_tests {
             0o600
         );
     }
+
+    #[test]
+    fn private_cache_metadata_rejects_a_different_effective_user() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempdir().unwrap();
+        let file = root.path().join("cache.json");
+        ensure_private_file(&file).unwrap();
+        let metadata = std::fs::metadata(file).unwrap();
+
+        assert!(private_file_owned_by(&metadata, metadata.uid()));
+        assert!(!private_file_owned_by(
+            &metadata,
+            metadata.uid().wrapping_add(1)
+        ));
+    }
 }
 
 #[cfg(all(test, windows))]
 mod windows_tests {
     use tempfile::tempdir;
 
-    use super::{ensure_current_user_dacl, verify_current_user_dacl};
+    use super::{ensure_current_user_dacl, is_reparse_point, verify_current_user_dacl};
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
 
     #[test]
     fn private_file_dacl_has_no_broad_write_principal() {
@@ -470,5 +510,25 @@ mod windows_tests {
         ensure_current_user_dacl(&file).unwrap();
 
         assert!(verify_current_user_dacl(&file).unwrap());
+    }
+
+    #[test]
+    fn cache_validation_rejects_reparse_point_attributes() {
+        assert!(!is_reparse_point(0));
+        assert!(is_reparse_point(FILE_ATTRIBUTE_REPARSE_POINT));
+    }
+
+    #[test]
+    fn private_cache_validation_rejects_a_real_file_symlink() {
+        let root = tempdir().unwrap();
+        let target = root.path().join("target.json");
+        let link = root.path().join("cache.json");
+        std::fs::write(&target, b"{}").unwrap();
+        ensure_current_user_dacl(&target).unwrap();
+        match std::os::windows::fs::symlink_file(&target, &link) {
+            Ok(()) => assert!(super::validate_private_file(&link).is_err()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("failed to create test symlink: {error}"),
+        }
     }
 }
