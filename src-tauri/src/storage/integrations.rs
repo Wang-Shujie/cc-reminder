@@ -45,12 +45,14 @@ impl IntegrationRepository {
             .execute(
                 "INSERT INTO agent_installations (
                     agent, executable_path, version, capability_verification, health_status, last_checked_at
-                 ) VALUES (?1, NULL, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(agent) DO UPDATE SET version = excluded.version,
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(agent) DO UPDATE SET executable_path = excluded.executable_path,
+                    version = excluded.version,
                     capability_verification = excluded.capability_verification,
                     health_status = excluded.health_status, last_checked_at = excluded.last_checked_at",
                 params![
                     agent.agent.as_str(),
+                    agent.executable_path.as_ref().map(|path| path.to_string_lossy()),
                     agent.version.as_ref().map(ToString::to_string),
                     db_text(&agent.capability_verification)?,
                     db_text(&agent.health_status)?,
@@ -66,7 +68,7 @@ impl IntegrationRepository {
         let connection = self.database.connect()?;
         connection
             .query_row(
-                "SELECT agent, version, capability_verification, health_status, last_checked_at
+                "SELECT agent, executable_path, version, capability_verification, health_status, last_checked_at
                  FROM agent_installations WHERE agent = ?1",
                 [agent.as_str()],
                 agent_row,
@@ -332,13 +334,15 @@ fn insert_hook(
 
 fn agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentInstallationRecord> {
     let agent: String = row.get(0)?;
-    let version: Option<String> = row.get(1)?;
-    let verification: String = row.get(2)?;
-    let health: String = row.get(3)?;
-    let checked: String = row.get(4)?;
+    let executable_path: Option<String> = row.get(1)?;
+    let version: Option<String> = row.get(2)?;
+    let verification: String = row.get(3)?;
+    let health: String = row.get(4)?;
+    let checked: String = row.get(5)?;
     stored_result((|| -> Result<_, AppError> {
         Ok(AgentInstallationRecord {
             agent: db_parse(&agent)?,
+            executable_path: executable_path.map(Into::into),
             version: version
                 .as_deref()
                 .map(semver::Version::parse)
@@ -504,6 +508,7 @@ mod tests {
         let (_root, repository) = test_integration_repository();
         let agent = AgentInstallationRecord {
             agent: AgentKind::Codex,
+            executable_path: Some("/usr/local/bin/codex".into()),
             version: Some(semver::Version::new(0, 145, 0)),
             capability_verification: CatalogVerification::Exact,
             health_status: InstallationHealth::Healthy,

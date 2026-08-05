@@ -369,6 +369,7 @@ impl Default for AppSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentInstallationRecord {
     pub agent: AgentKind,
+    pub executable_path: Option<PathBuf>,
     pub version: Option<Version>,
     pub capability_verification: crate::events::catalog::CatalogVerification,
     pub health_status: InstallationHealth,
