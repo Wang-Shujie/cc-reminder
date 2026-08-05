@@ -85,7 +85,6 @@ fn send_ingress_windows(name: &str, request: &IngressRequest) -> Result<IngressR
     let pipe = run_with_deadline(IPC_CONNECT_TIMEOUT, "connect timeout", move || {
         open_named_pipe(&wide)
     })?;
-    let handle = pipe.into_raw_handle();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -96,6 +95,7 @@ fn send_ingress_windows(name: &str, request: &IngressRequest) -> Result<IngressR
         return Err("total timeout".into());
     }
     runtime.block_on(async move {
+        let handle = pipe.into_raw_handle();
         let mut stream = unsafe {
             NamedPipeClient::from_raw_handle(handle as RawHandle)
                 .map_err(|error| error.to_string())?
@@ -183,24 +183,35 @@ where
 
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use std::os::windows::io::{FromRawHandle, RawHandle};
+    use std::collections::BTreeMap;
+    use std::io::Read;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
     use std::ptr::{null, null_mut};
     use std::time::{Duration, Instant};
 
-    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, GetLastError, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
     };
     use windows_sys::Win32::System::Pipes::{
-        CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
     };
 
-    use crate::ipc::server::{Endpoint, IpcServer};
-    use crate::ipc::{IPC_CONNECT_TIMEOUT, IPC_TOTAL_TIMEOUT, IngressResponse};
+    use crate::events::normalize::CapturedHookEvent;
+    use crate::ipc::server::Endpoint;
+    use crate::ipc::{
+        IPC_CONNECT_TIMEOUT, IPC_PROTOCOL_VERSION, IPC_TOTAL_TIMEOUT, IngressRequest,
+    };
+    use crate::model::AgentKind;
 
     #[test]
     fn public_client_cannot_outlive_the_connect_deadline_when_all_instances_are_busy() {
-        let name = format!(r"\\.\pipe\cc-reminder-connect-deadline-{}", uuid::Uuid::now_v7());
+        let name = format!(
+            r"\\.\pipe\cc-reminder-connect-deadline-{}",
+            uuid::Uuid::now_v7()
+        );
         let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
         let server_handle = unsafe {
             CreateNamedPipeW(
@@ -231,7 +242,7 @@ mod windows_tests {
         let _client = unsafe { std::fs::File::from_raw_handle(client_handle as RawHandle) };
 
         let started = Instant::now();
-        let result = super::send_ingress(&Endpoint::Windows(name), &super::request_for_test());
+        let result = super::send_ingress(&Endpoint::Windows(name), &request());
 
         assert_eq!(result.unwrap_err(), "connect timeout");
         assert!(started.elapsed() >= IPC_CONNECT_TIMEOUT);
@@ -240,23 +251,65 @@ mod windows_tests {
 
     #[test]
     fn public_client_cannot_outlive_the_total_deadline_when_response_is_withheld() {
-        let endpoint = Endpoint::Windows(format!(
+        let name = format!(
             r"\\.\pipe\cc-reminder-total-deadline-{}",
             uuid::Uuid::now_v7()
-        ));
-        let mut server = IpcServer::bind(endpoint.clone()).unwrap();
+        );
+        let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        let server_handle = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                1,
+                4096,
+                4096,
+                0,
+                null(),
+            )
+        };
+        assert_ne!(server_handle, INVALID_HANDLE_VALUE);
+        let server = unsafe { std::fs::File::from_raw_handle(server_handle as RawHandle) };
         let handler = std::thread::spawn(move || {
-            let (_, response) = server.receiver.blocking_recv().unwrap();
+            let connected = unsafe { ConnectNamedPipe(server.as_raw_handle(), null_mut()) } != 0
+                || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
+            assert!(connected);
+            let mut server = server;
+            let mut length = [0; 4];
+            server.read_exact(&mut length).unwrap();
+            let mut body = vec![0; u32::from_be_bytes(length) as usize];
+            server.read_exact(&mut body).unwrap();
             std::thread::sleep(Duration::from_millis(250));
-            drop(response);
         });
+        let endpoint = Endpoint::Windows(name);
 
         let started = Instant::now();
-        let result = super::send_ingress(&endpoint, &super::request_for_test());
+        let result = super::send_ingress(&endpoint, &request());
 
         assert_eq!(result.unwrap_err(), "total timeout");
         assert!(started.elapsed() >= IPC_TOTAL_TIMEOUT);
         assert!(started.elapsed() < Duration::from_millis(200));
         handler.join().unwrap();
+    }
+
+    fn request() -> IngressRequest {
+        IngressRequest {
+            protocol_version: IPC_PROTOCOL_VERSION,
+            helper_version: "0.1.0".into(),
+            command_fingerprint: "deadline".into(),
+            event: CapturedHookEvent {
+                source: AgentKind::Codex,
+                source_version: semver::Version::new(0, 145, 0),
+                source_event: "Stop".into(),
+                occurred_at: chrono::Utc::now(),
+                cwd: None,
+                session_id: None,
+                turn_id: None,
+                model: None,
+                permission_mode: None,
+                public_fields: BTreeMap::new(),
+                sensitive_fields: BTreeMap::new(),
+            },
+        }
     }
 }
