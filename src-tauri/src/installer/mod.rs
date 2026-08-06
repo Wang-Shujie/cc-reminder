@@ -416,8 +416,19 @@ fn plan_event(
             }
             None => {
                 let group_text = serialise_owned_group(agent, entry);
-                let (pos, text) = insert_array_append(array, source, &group_text);
-                edits.push(Edit::insert(pos, text));
+                if cleanup_groups.len() == array.elements.len() {
+                    // Every group is being removed by cleanup (e.g. the user moved
+                    // our owned handler into a non-matching matcher group, so every
+                    // group is all-owned and non-target). After cleanup the array is
+                    // empty, so place the new group at the open bracket with no
+                    // leading comma — insert_array_append would emit a dangling
+                    // leading comma off the deleted last element ([,group]).
+                    let open = array.range.start + 1;
+                    edits.push(Edit::insert(open, group_text));
+                } else {
+                    let (pos, text) = insert_array_append(array, source, &group_text);
+                    edits.push(Edit::insert(pos, text));
+                }
             }
         }
     }

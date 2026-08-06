@@ -805,6 +805,36 @@ fn mixed_group_preserves_foreign_handlers() {
     );
 }
 
+/// Scoped re-review regression: when every group for a desired event is
+/// all-owned but sits in a NON-matching matcher group (e.g. the user moved our
+/// owned handler into a "Bash" group), cleanup empties the whole array. The
+/// placement None-arm must still emit a valid single canonical group at the
+/// wide matcher — not a dangling `[,group]` that fails validation.
+#[test]
+fn owned_handler_in_wrong_matcher_group_moves_to_canonical_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let handler = canonical_handler_json(CLAUDE, &helper, "Stop");
+    let group = group_json("Bash", &[&handler]);
+    let source = format!(r#"{{"hooks":{{"Stop":[{group}]}}}}"#);
+
+    let result = patch_claude_settings(
+        source.as_bytes(),
+        &owned_entries(CLAUDE, &helper, &["Stop"]),
+    )
+    .expect("all-owned non-matching array must patch, not error");
+    assert!(strict_jsonc_ok(&result.bytes), "output must be valid JSON");
+
+    let inspected = inspect_owned_entries(CLAUDE, &result.bytes).unwrap();
+    assert_eq!(inspected.len(), 1, "exactly one owned Stop entry");
+    assert_eq!(inspected[0].source_event, "Stop");
+    assert_eq!(
+        inspected[0].matcher.as_deref(),
+        Some(""),
+        "canonical handler placed in the wide matcher group",
+    );
+}
+
 /// Bug 3: when a desired event's value is not an array, the patcher must refuse
 /// rather than insert a duplicate key.
 #[test]
