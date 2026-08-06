@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CC Reminder signed helper manifest",
+  "description": "Authoritative record of every packaged helper binary. The desktop app embeds this manifest and, at runtime, selects the entry whose target_triple matches the current compile target. The helper bytes are SHA-256 + length verified against the selected entry BEFORE the stable per-user copy is touched. A manifest path or checksum is NEVER accepted from runtime configuration (design 9.1). The placeholder version below is the documented shape; release packaging replaces the helpers array with one real entry per target triple (compiled cc-reminder-hook binary, real length, real SHA-256). Until release tooling generates real values, the runtime installer consumes an already-selected HelperManifestEntry plus its bytes (see src/installer/helper.rs), so the security-critical verify-then-copy path is exercised exactly as shipped by the unit tests.",
+  "helpers": [
+    {
+      "target_triple": "REPLACE_WITH_TARGET_TRIPLE",
+      "helper_version": "0.0.0-placeholder",
+      "filename": "cc-reminder-hook",
+      "length": 0,
+      "sha256": "REPLACE_WITH_SHA256_OF_THE_PACKAGED_HELPER_BYTES"
+    }
+  ]
+}

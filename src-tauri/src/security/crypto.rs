@@ -37,8 +37,8 @@ impl FieldCipher {
         Self::load_or_create_with_store(&CredentialStore::system())
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_key(key: [u8; KEY_BYTES]) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_key(key: [u8; KEY_BYTES]) -> Self {
         Self::with_key(key)
     }
 
@@ -99,7 +99,6 @@ impl FieldCipher {
             .collect()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn encrypt_snapshot(
         &self,
         snapshot_id: Uuid,
@@ -114,6 +113,9 @@ impl FieldCipher {
         self.encrypt(plaintext, snapshot_aad(snapshot_id).as_bytes())
     }
 
+    /// Decrypt a config snapshot. Reserved for the explicit disaster-recovery
+    /// flow (design 9.4); not yet called from the install path, which only
+    /// writes snapshots.
     #[allow(dead_code)]
     pub(crate) fn decrypt_snapshot(
         &self,
@@ -422,7 +424,7 @@ fn event_field_aad(event_id: Uuid, field_name: &str) -> String {
     format!("cc-reminder:event:{event_id}:field:{field_name}")
 }
 
-fn snapshot_aad(snapshot_id: Uuid) -> String {
+pub(crate) fn snapshot_aad(snapshot_id: Uuid) -> String {
     format!("cc-reminder:snapshot:{snapshot_id}:hooks")
 }
 

@@ -78,9 +78,12 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
-use crate::agents::{AgentHealthUpdate, Detection, persist_detection};
+use crate::agents::{
+    AgentHealthUpdate, Detection, HookHealth, HookSelection, Installation, persist_detection,
+};
 use crate::error::AppError;
 use crate::events::catalog::{CapabilityResolution, catalog_for};
+use crate::installer::lifecycle::{HookAction, HookEnvironment, HookInstaller};
 use crate::model::AgentKind;
 use crate::storage::integrations::IntegrationRepository;
 
@@ -131,5 +134,41 @@ impl CodexIntegration {
         repository: &IntegrationRepository,
     ) -> Result<AgentHealthUpdate, AppError> {
         persist_detection(repository, &self.detect())
+    }
+
+    fn installer(&self, env: &HookEnvironment) -> HookInstaller {
+        HookInstaller::new(
+            AgentKind::Codex,
+            self.hooks_path(env.codex_home.as_deref(), &env.home),
+            env.repository.clone(),
+            env.cipher.clone(),
+            env.helper.clone(),
+        )
+    }
+}
+
+impl crate::agents::AgentIntegration for CodexIntegration {
+    fn detect(&self) -> Detection {
+        CodexIntegration::detect(self)
+    }
+
+    fn capabilities(&self, version: &Version) -> CapabilityResolution {
+        CodexIntegration::capabilities(self, version)
+    }
+
+    fn install_hooks(
+        &self,
+        env: &HookEnvironment,
+        selection: &HookSelection,
+    ) -> Result<Installation, AppError> {
+        self.installer(env).apply(HookAction::Install, selection)
+    }
+
+    fn inspect_hooks(
+        &self,
+        env: &HookEnvironment,
+        selection: &HookSelection,
+    ) -> Result<HookHealth, AppError> {
+        self.installer(env).inspect(selection)
     }
 }

@@ -1,21 +1,33 @@
-//! Round-trip and atomic-replacement tests for the Agent hook config installer (Task 10).
+//! Round-trip and atomic-replacement tests for the Agent hook config installer
+//! (Task 10) and the full checked Hook mutation transaction (Task 11).
 //!
 //! These tests assert the contract documented in
-//! `docs/superpowers/plans/2026-07-29-cc-reminder.md` Task 10 and design 9.2/9.3/9.4:
-//! structured JSONC/JSON patching that preserves every foreign byte, ownership
-//! recognition via the (helper path + `--owner cc-reminder` + command fingerprint)
-//! triad, and checked atomic replacement that refuses to overwrite a drifted file.
+//! `docs/superpowers/plans/2026-07-29-cc-reminder.md` Tasks 10–11 and design
+//! 9.2/9.3/9.4: structured JSONC/JSON patching that preserves every foreign
+//! byte, ownership recognition via the (helper path + `--owner cc-reminder` +
+//! command fingerprint) triad, checked atomic replacement that refuses to
+//! overwrite a drifted file, and a lifecycle transaction that encrypts only the
+//! previous `hooks` subtree and records separate command/definition fingerprints.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use cc_reminder_lib::agents::{EntryHealth, HealthAggregate, HookSelection};
 use cc_reminder_lib::error::AppError;
 use cc_reminder_lib::hook_command::command_fingerprint;
+use cc_reminder_lib::installer::helper::{
+    HelperInstaller, HelperManifestEntry, current_target_triple,
+};
+use cc_reminder_lib::installer::lifecycle::{HookAction, HookInstaller};
 use cc_reminder_lib::installer::{
     ConfigPatch, OwnedHookEntry, atomic_replace_checked, hook_definition_fingerprint,
     inspect_owned_entries, owned_command, patch_claude_settings, patch_codex_hooks, sha256_hex,
 };
-use cc_reminder_lib::model::AgentKind;
+use cc_reminder_lib::model::{AgentKind, TrustStatus};
+use cc_reminder_lib::security::crypto::FieldCipher;
+use cc_reminder_lib::storage::db::Database;
+use cc_reminder_lib::storage::integrations::IntegrationRepository;
 use tempfile::TempDir;
 
 const CLAUDE: AgentKind = AgentKind::ClaudeCode;
@@ -928,4 +940,476 @@ fn atomic_rename_failure_leaves_original_unchanged() {
         temps, 0,
         "no partial temp should remain after a rename failure"
     );
+}
+
+// ============================================================================
+// Task 11: full checked Hook mutation transaction (lifecycle, snapshot, trust)
+// ============================================================================
+
+/// Wired test environment for one agent. Owns the tempdir, database, cipher,
+/// helper installer, and the HookInstaller under test. Mirrors how the desktop
+/// shell wires a `HookEnvironment`, with a deterministic data key.
+struct InstallerEnvironment {
+    #[allow(dead_code)]
+    root: TempDir,
+    agent: AgentKind,
+    config_path: PathBuf,
+    repository: IntegrationRepository,
+    helper: HelperInstaller,
+    cipher: Option<FieldCipher>,
+}
+
+impl InstallerEnvironment {
+    fn new(agent: AgentKind, cipher_available: bool) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let data_dir = root.path().join("com.ccreminder.app");
+        let database_path = data_dir.join("cc-reminder.sqlite3");
+        let database = Database::open(&database_path).unwrap();
+        let repository = IntegrationRepository::new(database);
+        let bin_dir = root.path().join("bin");
+        let helper = HelperInstaller::new(
+            bin_dir.clone(),
+            manifest_entry(b"helper-body", "0.1.0"),
+            b"helper-body".to_vec(),
+        );
+        helper.install().unwrap();
+        let home = root.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let config_path = match agent {
+            AgentKind::ClaudeCode => home.join(".claude/settings.json"),
+            AgentKind::Codex => home.join(".codex/hooks.json"),
+        };
+        let cipher = if cipher_available {
+            Some(FieldCipher::from_key([3_u8; 32]))
+        } else {
+            None
+        };
+        Self {
+            root,
+            agent,
+            config_path,
+            repository,
+            helper,
+            cipher,
+        }
+    }
+
+    fn claude_fixture() -> Self {
+        Self::new(CLAUDE, true)
+    }
+
+    fn codex_fixture() -> Self {
+        Self::new(CODEX, true)
+    }
+
+    fn installer(&self) -> HookInstaller {
+        HookInstaller::new(
+            self.agent,
+            self.config_path.clone(),
+            self.repository.clone(),
+            self.cipher.clone(),
+            self.helper.clone(),
+        )
+    }
+
+    /// Build a selection whose helper path/version track the installed helper.
+    fn selection(&self, events: &[&str]) -> HookSelection {
+        HookSelection {
+            events: events
+                .iter()
+                .map(|e| (*e).to_owned())
+                .collect::<BTreeSet<_>>(),
+            helper_path: self.helper.stable_path(),
+            helper_version: self.helper.manifest_version().clone(),
+        }
+    }
+
+    fn apply(&self, action: HookAction, selection: &HookSelection) -> InstallationResult {
+        InstallationResult {
+            inner: self.installer().apply(action, selection),
+        }
+    }
+
+    fn observe_ingress(&self, event: &str, command_fingerprint: &str) -> TrustStatus {
+        self.installer()
+            .observe_ingress(event, command_fingerprint)
+            .unwrap()
+    }
+
+    fn inspect(&self, selection: &HookSelection) -> cc_reminder_lib::agents::HookHealth {
+        self.installer().inspect(selection).unwrap()
+    }
+
+    fn snapshot_ciphertext(&self) -> Vec<u8> {
+        self.repository
+            .latest_snapshot(self.agent)
+            .map(|s| s.ciphertext)
+            .unwrap_or_default()
+    }
+
+    fn snapshot_source_hash(&self) -> Option<String> {
+        self.repository
+            .latest_snapshot(self.agent)
+            .ok()
+            .map(|s| s.source_hash)
+    }
+}
+
+/// Wrapper so tests can call `.unwrap()` on the Installation while still
+/// asserting error codes on failure paths.
+struct InstallationResult {
+    inner: Result<cc_reminder_lib::agents::Installation, AppError>,
+}
+
+impl InstallationResult {
+    fn unwrap(self) -> cc_reminder_lib::agents::Installation {
+        self.inner.unwrap()
+    }
+    fn unwrap_err_code(self) -> String {
+        self.inner.unwrap_err().code
+    }
+}
+
+fn manifest_entry(bytes: &[u8], version: &str) -> HelperManifestEntry {
+    HelperManifestEntry {
+        target_triple: current_target_triple().to_owned(),
+        helper_version: semver::Version::parse(version).unwrap(),
+        filename: "cc-reminder-hook".to_owned(),
+        length: bytes.len() as u64,
+        sha256: sha256_hex(bytes),
+    }
+}
+
+fn owned_events_on_disk(agent: AgentKind, path: &Path) -> Vec<String> {
+    let mut events = inspect_owned_entries(agent, &fs::read(path).unwrap_or_default())
+        .unwrap()
+        .into_iter()
+        .map(|e| e.source_event)
+        .collect::<Vec<_>>();
+    events.sort();
+    events
+}
+
+#[test]
+fn apply_snapshots_only_the_previous_hook_subtree_then_installs_selection() {
+    let env = InstallerEnvironment::claude_fixture();
+    // Seed a foreign hook command that must end up encrypted in the snapshot,
+    // never persisted in plaintext by the app.
+    fs::create_dir_all(env.config_path.parent().unwrap()).unwrap();
+    fs::write(
+        &env.config_path,
+        b"{\"hooks\":{\"Stop\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"/bin/foreign command keep-out\"}]}]}}",
+    )
+    .unwrap();
+
+    let installation = env
+        .apply(
+            HookAction::Install,
+            &env.selection(&["PermissionRequest", "Stop"]),
+        )
+        .unwrap();
+
+    assert_eq!(
+        owned_events_on_disk(CLAUDE, &env.config_path),
+        vec!["PermissionRequest".to_owned(), "Stop".to_owned()]
+    );
+    // Two records, separate fingerprints.
+    assert_eq!(installation.records.len(), 2);
+    assert!(
+        installation
+            .records
+            .iter()
+            .all(|r| { r.command_fingerprint != r.definition_fingerprint })
+    );
+    // Claude entries never require trust.
+    assert!(
+        installation
+            .records
+            .iter()
+            .all(|r| r.trust_status == TrustStatus::NotRequired)
+    );
+
+    // A snapshot was written and is encrypted: no plaintext foreign command.
+    assert!(env.snapshot_count(CLAUDE) >= 1);
+    let ciphertext = env.snapshot_ciphertext();
+    assert!(!ciphertext.is_empty());
+    assert!(
+        !String::from_utf8_lossy(&ciphertext).contains("foreign command keep-out"),
+        "previous hooks subtree must be encrypted, never plaintext"
+    );
+    // Source hash captured for drift-free disaster recovery.
+    assert!(env.snapshot_source_hash().is_some());
+}
+
+#[test]
+fn snapshot_encryption_unavailable_aborts_before_writing_agent_config() {
+    let env = InstallerEnvironment::new(CLAUDE, false);
+    let err = env
+        .apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap_err_code();
+    assert_eq!(err, "security.encryption_unavailable");
+    // No config file was created and no snapshot row was written.
+    assert!(!env.config_path.exists());
+    assert_eq!(env.snapshot_count(CLAUDE), 0);
+}
+
+#[test]
+fn codex_change_waits_for_official_trust_until_matching_hook_is_observed() {
+    let env = InstallerEnvironment::codex_fixture();
+    let installation = env
+        .apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let record = &installation.records[0];
+    assert_eq!(record.trust_status, TrustStatus::NeedsUserConfirmation);
+
+    // A non-matching fingerprint does NOT transition trust.
+    env.observe_ingress("Stop", "wrong-fingerprint");
+    let health = env.inspect(&env.selection(&["Stop"]));
+    assert_eq!(
+        health.entries[0].trust_status,
+        TrustStatus::NeedsUserConfirmation
+    );
+
+    // The real ingress fingerprint transitions to ObservedWorking.
+    env.observe_ingress("Stop", &record.command_fingerprint);
+    let health = env.inspect(&env.selection(&["Stop"]));
+    assert_eq!(health.entries[0].trust_status, TrustStatus::ObservedWorking);
+}
+
+#[test]
+fn binary_only_helper_upgrade_preserves_codex_trust_and_both_fingerprints() {
+    let mut env = InstallerEnvironment::codex_fixture();
+    let installed = env
+        .apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let cmd_fp = installed.records[0].command_fingerprint.clone();
+    let def_fp = installed.records[0].definition_fingerprint.clone();
+    env.observe_ingress("Stop", &cmd_fp);
+    assert_eq!(
+        env.inspect(&env.selection(&["Stop"])).entries[0].trust_status,
+        TrustStatus::ObservedWorking
+    );
+
+    // Swap the helper binary at the SAME stable path (higher version).
+    let upgraded = HelperInstaller::new(
+        env.helper_bin_dir(),
+        manifest_entry(b"helper-body-v2", "0.2.0"),
+        b"helper-body-v2".to_vec(),
+    );
+    upgraded.install().unwrap();
+    env.helper = upgraded;
+
+    let reinstalled = env
+        .apply(HookAction::UpgradeHelper, &env.selection(&["Stop"]))
+        .unwrap();
+    let record = &reinstalled.records[0];
+    assert_eq!(record.command_fingerprint, cmd_fp);
+    assert_eq!(record.definition_fingerprint, def_fp);
+    assert_eq!(record.trust_status, TrustStatus::ObservedWorking);
+    assert_eq!(record.helper_version, "0.2.0");
+}
+
+#[test]
+fn helper_path_change_resets_codex_trust_to_needs_user_confirmation() {
+    let mut env = InstallerEnvironment::codex_fixture();
+    let installed = env
+        .apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let cmd_fp = installed.records[0].command_fingerprint.clone();
+    env.observe_ingress("Stop", &cmd_fp);
+    assert_eq!(
+        env.inspect(&env.selection(&["Stop"])).entries[0].trust_status,
+        TrustStatus::ObservedWorking
+    );
+
+    // Move the helper to a different stable path (new bin dir). Both fingerprints
+    // change because the command string is part of both fingerprints, so the
+    // stored observed trust no longer applies and resets.
+    let new_bin = env.root.path().join("bin2");
+    let moved = HelperInstaller::new(
+        new_bin,
+        manifest_entry(b"helper-body", "0.1.0"),
+        b"helper-body".to_vec(),
+    );
+    moved.install().unwrap();
+    env.helper = moved;
+
+    let reinstalled = env
+        .apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let record = &reinstalled.records[0];
+    assert_ne!(record.command_fingerprint, cmd_fp);
+    assert_eq!(record.trust_status, TrustStatus::NeedsUserConfirmation);
+}
+
+#[test]
+fn uninstall_removes_only_owned_matching_entries_and_leaves_a_lookalike() {
+    let env = InstallerEnvironment::claude_fixture();
+    // Seed a foreign lookalike INSIDE hooks.Stop: it carries the owner marker
+    // but a trailing --extra arg, so the triad recognizer (7 tokens exact)
+    // leaves it alone. The real owned entry has the canonical command.
+    fs::create_dir_all(env.config_path.parent().unwrap()).unwrap();
+    let helper = env.helper.stable_path();
+    let lookalike = format!(
+        "{{\"type\":\"command\",\"command\":\"{} --owner cc-reminder --agent claude-code --event Stop --extra\",\"timeout\":1}}",
+        helper.to_string_lossy()
+    );
+    let seed = format!("{{\"hooks\":{{\"Stop\":[{{\"matcher\":\"\",\"hooks\":[{lookalike}]}}]}}}}");
+    fs::write(&env.config_path, seed.as_bytes()).unwrap();
+
+    env.apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    // Exactly one owned entry now coexists with the lookalike.
+    assert_eq!(
+        owned_events_on_disk(CLAUDE, &env.config_path),
+        vec!["Stop".to_owned()]
+    );
+
+    env.apply(HookAction::Uninstall, &env.selection(&[]))
+        .unwrap();
+    // The owned entry is gone; the lookalike (different command) survives.
+    assert!(owned_events_on_disk(CLAUDE, &env.config_path).is_empty());
+    let after = fs::read_to_string(&env.config_path).unwrap();
+    assert!(
+        after.contains("--event Stop --extra"),
+        "foreign lookalike with a different command must be preserved"
+    );
+}
+
+#[test]
+fn external_drift_between_inspection_and_replace_is_rejected_without_overwrite() {
+    use cc_reminder_lib::installer::lifecycle::force_config_drift_for_test;
+    let env = InstallerEnvironment::claude_fixture();
+    env.apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+
+    // The seam simulates an external editor rewriting the file between the
+    // installer's inspection read and its atomic replace. The replace's
+    // independent re-read must detect the drift, refuse, and leave the external
+    // edit in place — it does NOT silently restore the original.
+    force_config_drift_for_test(true);
+    let err = env
+        .apply(HookAction::Repair, &env.selection(&["Stop"]))
+        .unwrap_err_code();
+    force_config_drift_for_test(false);
+
+    assert_eq!(err, "integration.config_drift");
+    let after = fs::read_to_string(&env.config_path).unwrap();
+    assert_eq!(after, "{\"external\":\"drift\"}");
+    assert!(owned_events_on_disk(CLAUDE, &env.config_path).is_empty());
+}
+
+#[test]
+fn selection_out_of_date_is_reported_and_repair_converges() {
+    let env = InstallerEnvironment::claude_fixture();
+    env.apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+
+    // Required selection now wants PermissionRequest too: installed owned set
+    // differs from the required selection.
+    let health = env.inspect(&env.selection(&["PermissionRequest", "Stop"]));
+    assert!(health.selection_out_of_date);
+    assert_eq!(health.aggregate, HealthAggregate::NeedsRepair);
+
+    // An explicit Repair converges in one checked patch.
+    env.apply(
+        HookAction::Repair,
+        &env.selection(&["PermissionRequest", "Stop"]),
+    )
+    .unwrap();
+    let health = env.inspect(&env.selection(&["PermissionRequest", "Stop"]));
+    assert!(!health.selection_out_of_date);
+    assert_eq!(health.aggregate, HealthAggregate::Healthy);
+}
+
+#[test]
+fn inspect_reports_healthy_entries_for_an_aligned_installation() {
+    let env = InstallerEnvironment::claude_fixture();
+    env.apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let health = env.inspect(&env.selection(&["Stop"]));
+    assert!(!health.selection_out_of_date);
+    assert_eq!(health.entries.len(), 1);
+    assert_eq!(health.entries[0].health, EntryHealth::Healthy);
+    assert_eq!(health.entries[0].trust_status, TrustStatus::NotRequired);
+}
+
+// Additional accessors split into a second impl block for locality.
+impl InstallerEnvironment {
+    fn snapshot_count(&self, agent: AgentKind) -> usize {
+        self.repository.snapshot_count(agent).unwrap()
+    }
+    fn helper_bin_dir(&self) -> PathBuf {
+        self.helper.stable_path().parent().unwrap().to_path_buf()
+    }
+}
+
+#[test]
+fn agent_integration_trait_routes_install_and_inspect_through_the_fixed_user_path() {
+    use cc_reminder_lib::agents::AgentIntegration;
+    use cc_reminder_lib::installer::lifecycle::HookEnvironment;
+
+    // The trait impls must NOT accept a caller-supplied config path: Claude uses
+    // home/.claude/settings.json, Codex uses codex_home/hooks.json. Both delegate
+    // to HookInstaller, producing records with separate fingerprints.
+    for agent in [CLAUDE, CODEX] {
+        let env = if agent == CLAUDE {
+            InstallerEnvironment::claude_fixture()
+        } else {
+            InstallerEnvironment::codex_fixture()
+        };
+        let hook_env = HookEnvironment {
+            repository: env.repository.clone(),
+            cipher: env.cipher.clone(),
+            helper: env.helper.clone(),
+            home: env
+                .config_path
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf(),
+            codex_home: None,
+        };
+        let integration: Box<dyn AgentIntegration> = match agent {
+            CLAUDE => Box::new(cc_reminder_lib::agents::ClaudeIntegration::with_detection(
+                dummy_detection(CLAUDE),
+            )),
+            CODEX => Box::new(cc_reminder_lib::agents::CodexIntegration::with_detection(
+                dummy_detection(CODEX),
+            )),
+        };
+        let selection = env.selection(&["Stop"]);
+        let installed = integration.install_hooks(&hook_env, &selection).unwrap();
+        assert_eq!(installed.records.len(), 1);
+        let health = integration.inspect_hooks(&hook_env, &selection).unwrap();
+        assert_eq!(health.entries.len(), 1);
+        let (expected_health, expected_trust) = if agent == CLAUDE {
+            (EntryHealth::Healthy, TrustStatus::NotRequired)
+        } else {
+            // Codex needs official trust confirmation before it is Healthy.
+            (EntryHealth::NeedsTrust, TrustStatus::NeedsUserConfirmation)
+        };
+        assert_eq!(health.entries[0].health, expected_health);
+        assert_eq!(health.entries[0].trust_status, expected_trust);
+    }
+}
+
+fn dummy_detection(agent: AgentKind) -> cc_reminder_lib::agents::Detection {
+    use cc_reminder_lib::agents::DetectionState;
+    use chrono::Utc;
+    let version = match agent {
+        CLAUDE => semver::Version::new(2, 1, 218),
+        CODEX => semver::Version::new(0, 145, 0),
+    };
+    cc_reminder_lib::agents::Detection {
+        agent,
+        executable_path: Some("/bin/agent".into()),
+        version: Some(version.clone()),
+        capability_verification: Some(
+            cc_reminder_lib::events::catalog::catalog_for(agent, &version).verification,
+        ),
+        state: DetectionState::Detected,
+        checked_at: Utc::now(),
+    }
 }

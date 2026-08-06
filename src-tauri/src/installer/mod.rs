@@ -17,7 +17,9 @@
 //! 9.2/9.3/9.4). No brace or key is ever located via regex or substring search.
 
 pub mod atomic;
+pub mod helper;
 mod jsonc;
+pub mod lifecycle;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

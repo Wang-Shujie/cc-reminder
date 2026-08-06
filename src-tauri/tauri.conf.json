@@ -30,7 +30,8 @@
     "targets": "all",
     "resources": [
       "resources/capabilities/claude-code-2.1.218.json",
-      "resources/capabilities/codex-0.145.0.json"
+      "resources/capabilities/codex-0.145.0.json",
+      "resources/helper-manifest.json"
     ]
   }
 }
