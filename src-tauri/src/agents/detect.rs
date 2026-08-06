@@ -339,9 +339,12 @@ impl AgentVersionCache {
             .parent()
             .ok_or_else(|| std::io::Error::other("cache parent unavailable"))?;
         ensure_private_directory(parent).map_err(|_| std::io::Error::other("cache permissions"))?;
+        ensure_current_user_dacl(parent).map_err(|_| std::io::Error::other("cache permissions"))?;
         let temporary = parent.join(format!(".agent-versions.{}.tmp", uuid::Uuid::now_v7()));
         let result = (|| {
             let mut file = private_new_file(&temporary)?;
+            ensure_current_user_dacl(&temporary)
+                .map_err(|_| std::io::Error::other("cache permissions"))?;
             file.write_all(&bytes)?;
             file.sync_all()?;
             drop(file);
