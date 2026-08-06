@@ -72,28 +72,35 @@ fn strip_owned(value: &mut serde_json::Value, helper: &str) {
     let Some(serde_json::Value::Object(hooks)) = root.get_mut("hooks") else {
         return;
     };
-    // Drop matcher groups that contain any owned handler, then drop events whose
-    // group array becomes empty — a faithful "foreign only" projection.
+    // Handler-granularity oracle: drop only owned HANDLERS from each group's
+    // `hooks` array (preserving co-located foreign handlers byte-for-byte in the
+    // canonical comparison), then drop a group only when it BECAME empty as a
+    // result of stripping owned handlers — mirroring the installer's empty-group
+    // cleanup. Foreign-only and already-empty groups are left in place.
     let mut empty_events = Vec::new();
     for (event, groups) in hooks.iter_mut() {
         let serde_json::Value::Array(groups) = groups else {
             continue;
         };
-        groups.retain(|group| {
-            let owned = group
-                .get("hooks")
-                .and_then(serde_json::Value::as_array)
-                .map(|handlers| {
-                    handlers.iter().any(|handler| {
-                        handler
-                            .get("command")
-                            .and_then(serde_json::Value::as_str)
-                            .is_some_and(|cmd| cmd.contains(helper))
-                    })
-                })
-                .unwrap_or(false);
-            !owned
-        });
+        let mut kept_groups = Vec::new();
+        for group in groups.iter_mut() {
+            let handlers_opt = group.get_mut("hooks").and_then(|v| v.as_array_mut());
+            let Some(handlers) = handlers_opt else {
+                kept_groups.push(group.clone());
+                continue;
+            };
+            let had_owned = handlers
+                .iter()
+                .any(|handler| handler_owns_command(handler, helper));
+            handlers.retain(|handler| !handler_owns_command(handler, helper));
+            if had_owned && handlers.is_empty() {
+                // Group held owned handlers and is now empty: drop the whole group,
+                // matching the installer's empty-group cleanup.
+                continue;
+            }
+            kept_groups.push(group.clone());
+        }
+        *groups = kept_groups;
         if groups.is_empty() {
             empty_events.push(event.clone());
         }
@@ -109,6 +116,50 @@ fn strip_owned(value: &mut serde_json::Value, helper: &str) {
     }
 }
 
+fn handler_owns_command(handler: &serde_json::Value, helper: &str) -> bool {
+    handler
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|cmd| cmd.contains(helper))
+}
+
+/// Canonical CC-reminder handler object as compact JSON, matching what the
+/// installer emits for `agent`/`event` (Claude omits `commandWindows`, Codex
+/// includes it). Used to assemble source fixtures that the triad recognizer
+/// accepts as owned.
+fn canonical_handler_json(agent: AgentKind, helper: &Path, event: &str) -> String {
+    let cmd = owned_command(helper, agent, event);
+    let mut s = String::from(r#"{"type":"command","#);
+    s.push_str(&format!(
+        r#""command":{}"#,
+        serde_json::to_string(&cmd.command).unwrap()
+    ));
+    // The recognizer requires the fingerprint to match the agent's canonical
+    // shape: Claude's canonical handler carries NO commandWindows, so emitting
+    // one for a Claude fixture would make the lookalike reject and the bug under
+    // test would be masked.
+    if agent == AgentKind::Codex
+        && let Some(cw) = &cmd.command_windows
+    {
+        s.push_str(&format!(
+            r#","commandWindows":{}"#,
+            serde_json::to_string(cw).unwrap()
+        ));
+    }
+    s.push_str(r#","timeout":1}"#);
+    s
+}
+
+/// One matcher-group object as compact JSON, wrapping the given handler strings.
+fn group_json(matcher: &str, handlers: &[&str]) -> String {
+    let joined = handlers.join(",");
+    format!(
+        r#"{{"matcher":{},"hooks":[{}]}}"#,
+        serde_json::to_string(matcher).unwrap(),
+        joined
+    )
+}
+
 fn canonicalize(value: &serde_json::Value) -> String {
     let mut s = serde_json::to_string(value).expect("serialize");
     // serde_json::Map is BTreeMap-backed without preserve_order, so keys are sorted.
@@ -122,6 +173,101 @@ fn parse_jsonc_ok(bytes: &[u8]) -> bool {
         Err(_) => return false,
     };
     jsonc_parser::parse_to_serde_value(text, &Default::default()).is_ok()
+}
+
+/// Strict structural validator used where jsonc-parser's loose mode would mask
+/// a real defect (e.g. Bug 6's missing separating comma between adjacent
+/// properties, which jsonc-parser silently tolerates). Strips JSONC comments
+/// and trailing commas with a string-aware scanner, then hands the result to
+/// serde_json (strict JSON), so a missing comma between elements is a hard
+/// error.
+fn strict_jsonc_ok(bytes: &[u8]) -> bool {
+    let text = match std::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let stripped = strip_jsonc_to_strict_json(text);
+    serde_json::from_str::<serde_json::Value>(&stripped).is_ok()
+}
+
+fn strip_jsonc_to_strict_json(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut in_string = false;
+    let mut esc = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let b = bytes[index];
+        if line_comment {
+            if b == b'\n' {
+                line_comment = false;
+                out.push('\n');
+            }
+            index += 1;
+            continue;
+        }
+        if block_comment {
+            if b == b'*' && index + 1 < bytes.len() && bytes[index + 1] == b'/' {
+                block_comment = false;
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+        if in_string {
+            out.push(b as char);
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_string = true;
+            out.push('"');
+            index += 1;
+            continue;
+        }
+        if b == b'/' && index + 1 < bytes.len() && bytes[index + 1] == b'/' {
+            line_comment = true;
+            index += 2;
+            continue;
+        }
+        if b == b'/' && index + 1 < bytes.len() && bytes[index + 1] == b'*' {
+            block_comment = true;
+            index += 2;
+            continue;
+        }
+        out.push(b as char);
+        index += 1;
+    }
+    // Strip trailing commas (a `,` followed by optional whitespace then `]`/`}`).
+    let compact = out;
+    let mut result = String::with_capacity(compact.len());
+    let cb = compact.as_bytes();
+    let mut i = 0;
+    while i < cb.len() {
+        if cb[i] == b',' {
+            let mut j = i + 1;
+            while j < cb.len() && cb[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < cb.len() && (cb[j] == b']' || cb[j] == b'}') {
+                i += 1;
+                continue;
+            }
+        }
+        result.push(cb[i] as char);
+        i += 1;
+    }
+    result
 }
 
 /// Walk an installed config and return the sorted set of events CC Reminder owns.
@@ -557,4 +703,199 @@ fn hook_command_carries_both_platform_commands() {
     assert!(cmd.command.contains("'codex'"));
     assert!(cmd.command.contains("'Stop'"));
     assert!(win.contains("--agent codex --event Stop"));
+}
+
+// ---- fix-round: handler-granularity splice, non-array guards, multi-insert ----
+
+/// Bug 1 (uninstall): two owned matcher-groups for the same event must both be
+/// removed; the old per-element delete spans overlapped at the shared comma and
+/// `apply_edits` silently dropped one, leaving an owned hook alive.
+#[test]
+fn multi_owned_uninstall_leaves_no_owned_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let handler = canonical_handler_json(CLAUDE, &helper, "Stop");
+    let group = group_json("", &[&handler]);
+    let source = format!(r#"{{"hooks":{{"Stop":[{},{}]}}}}"#, group, group);
+
+    let result = patch_claude_settings(source.as_bytes(), &[]).unwrap();
+    assert!(parse_jsonc_ok(&result.bytes));
+    assert!(
+        owned_events(CLAUDE, &result.bytes).is_empty(),
+        "no owned handler for Stop should remain after uninstall"
+    );
+    let text = std::str::from_utf8(&result.bytes).unwrap();
+    assert!(
+        !text.contains("--owner cc-reminder"),
+        "no owned marker may survive uninstall"
+    );
+    assert_eq!(
+        foreign_projection(&result.bytes, &helper),
+        foreign_projection(source.as_bytes(), &helper),
+        "foreign projection must be unchanged"
+    );
+}
+
+/// Bug 1 (replace): three owned groups for Stop, desired [Stop] must consolidate
+/// to exactly one owned handler. The replace path replaces the first group and
+/// deletes the rest; with the old per-element delete spans the two trailing
+/// deletes overlapped at the shared comma and one was silently dropped, leaving
+/// a second owned group alive. Three groups is the minimum that issues two
+/// deletes in the replace path and so exercises the overlap.
+#[test]
+fn multi_owned_replace_consolidates_to_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let handler = canonical_handler_json(CLAUDE, &helper, "Stop");
+    let group = group_json("", &[&handler]);
+    let source = format!(r#"{{"hooks":{{"Stop":[{},{},{}]}}}}"#, group, group, group);
+
+    let result = patch_claude_settings(
+        source.as_bytes(),
+        &owned_entries(CLAUDE, &helper, &["Stop"]),
+    )
+    .unwrap();
+    assert!(parse_jsonc_ok(&result.bytes));
+    let inspected = inspect_owned_entries(CLAUDE, &result.bytes).unwrap();
+    assert_eq!(
+        inspected.len(),
+        1,
+        "exactly one owned handler must remain after consolidate"
+    );
+    assert_eq!(
+        foreign_projection(&result.bytes, &helper),
+        foreign_projection(source.as_bytes(), &helper),
+        "foreign projection must be unchanged"
+    );
+}
+
+/// Bug 2: a foreign handler co-located in the same group as an owned handler
+/// must survive an update byte-for-byte. The old group-level replace destroyed
+/// every co-located foreign handler.
+#[test]
+fn mixed_group_preserves_foreign_handlers() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let owned = canonical_handler_json(CLAUDE, &helper, "Stop");
+    let foreign_command = "/usr/local/bin/foreign-logger.sh";
+    let foreign = format!(
+        r#"{{"type":"command","command":{},"timeout":2}}"#,
+        serde_json::to_string(foreign_command).unwrap()
+    );
+    let group = group_json("", &[&owned, &foreign]);
+    let source = format!(r#"{{"hooks":{{"Stop":[{}]}}}}"#, group);
+
+    let result = patch_claude_settings(
+        source.as_bytes(),
+        &owned_entries(CLAUDE, &helper, &["Stop"]),
+    )
+    .unwrap();
+    assert!(parse_jsonc_ok(&result.bytes));
+    let text = std::str::from_utf8(&result.bytes).unwrap();
+    assert!(
+        text.contains(foreign_command),
+        "foreign handler command must survive verbatim"
+    );
+    let inspected = inspect_owned_entries(CLAUDE, &result.bytes).unwrap();
+    assert_eq!(inspected.len(), 1, "exactly one owned handler");
+    assert_eq!(
+        foreign_projection(&result.bytes, &helper),
+        foreign_projection(source.as_bytes(), &helper),
+        "foreign projection must retain the co-located foreign handler"
+    );
+}
+
+/// Bug 3: when a desired event's value is not an array, the patcher must refuse
+/// rather than insert a duplicate key.
+#[test]
+fn non_array_desired_event_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let source = br#"{"hooks":{"Stop":"oops"}}"#;
+    let err = patch_claude_settings(source, &owned_entries(CLAUDE, &helper, &["Stop"]))
+        .expect_err("non-array desired event must error");
+    assert_eq!(err.code, "configuration.invalid_jsonc");
+}
+
+/// Bug 3 (negative): a non-array value for an event that is NOT desired must be
+/// left untouched (no error), preserving a foreign malformed entry.
+#[test]
+fn non_array_foreign_event_is_left_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let source = br#"{"hooks":{"Stop":"oops"}}"#;
+    let result = patch_claude_settings(
+        source,
+        &owned_entries(CLAUDE, &helper, &["PermissionRequest"]),
+    )
+    .unwrap();
+    let text = std::str::from_utf8(&result.bytes).unwrap();
+    assert!(
+        text.contains(r#""Stop":"oops"#),
+        "foreign non-array entry must be preserved verbatim"
+    );
+}
+
+/// Bug 6: inserting two or more new event properties after a trailing comma in
+/// the hooks object must still emit a separating comma between the new
+/// properties (the old code re-probed original bytes and emitted none).
+#[test]
+fn trailing_comma_multi_insert_keeps_separating_commas() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    // Trailing comma after the lone foreign event in the hooks object.
+    let source = br#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/bin/x.sh"}]}],}}"#;
+    let result = patch_claude_settings(
+        source,
+        &owned_entries(CLAUDE, &helper, &["PermissionRequest", "Stop"]),
+    )
+    .unwrap();
+    assert!(
+        strict_jsonc_ok(&result.bytes),
+        "output must separate newly inserted properties with commas even after \
+         a trailing comma (jsonc-parser loose mode would otherwise mask this)"
+    );
+    let events = owned_events(CLAUDE, &result.bytes);
+    let mut want = vec!["PermissionRequest".to_owned(), "Stop".to_owned()];
+    want.sort();
+    let mut got = events.clone();
+    got.sort();
+    assert_eq!(got, want, "both newly inserted events must be present");
+}
+
+/// Bug 4 / atomic cleanup: a failure at the rename step (after the temp was
+/// created and written) must leave the original target bytes unchanged and
+/// remove the partial temp file. The pre-existing test only covered
+/// temp-creation failure.
+#[test]
+fn atomic_rename_failure_leaves_original_unchanged() {
+    use cc_reminder_lib::installer::atomic::force_rename_failure_for_test;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+    fs::write(&path, b"{\"hooks\":{}}").unwrap();
+    let inspected_hash = sha256_hex(&fs::read(&path).unwrap());
+
+    force_rename_failure_for_test(true);
+    let result = atomic_replace_checked(&path, &inspected_hash, b"replacement", None);
+    force_rename_failure_for_test(false);
+
+    let err = result.expect_err("rename should fail under the forced seam");
+    assert!(matches!(
+        err.domain,
+        cc_reminder_lib::error::ErrorDomain::Integration
+    ));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"hooks\":{}}");
+    let temps = fs::read_dir(dir.path())
+        .unwrap()
+        .filter(|entry| {
+            let name = entry.as_ref().unwrap().file_name();
+            let name = name.to_string_lossy();
+            name.ends_with(".tmp")
+        })
+        .count();
+    assert_eq!(
+        temps, 0,
+        "no partial temp should remain after a rename failure"
+    );
 }

@@ -15,10 +15,34 @@ use std::time::{Duration, Instant};
 use crate::error::{AppError, ErrorDomain};
 use crate::installer::jsonc;
 use crate::installer::sha256_hex;
-use crate::security::permissions::ensure_private_file;
+use crate::security::permissions::{ensure_current_user_dacl, ensure_private_file};
 
 const LOCK_NAME: &str = ".cc-reminder-config.lock";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Publish the temp by renaming it over the target. Routed through a seam so the
+/// rename-failure cleanup path can be exercised under the `test-support` feature
+/// (production builds always call `fs::rename`).
+fn publish_rename(temp: &Path, target: &Path) -> std::io::Result<()> {
+    #[cfg(feature = "test-support")]
+    if RENAME_FAIL.with(|flag| flag.get()) {
+        return Err(std::io::Error::from_raw_os_error(5));
+    }
+    fs::rename(temp, target)
+}
+
+#[cfg(feature = "test-support")]
+std::thread_local! {
+    static RENAME_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test-only seam: force `publish_rename` to fail until toggled back off, so the
+/// rename-failure cleanup path (original bytes untouched, temp removed) can be
+/// asserted. Has no effect in production builds.
+#[cfg(feature = "test-support")]
+pub fn force_rename_failure_for_test(on: bool) {
+    RENAME_FAIL.with(|flag| flag.set(on));
+}
 
 /// Atomically replace `path` with `bytes` after verifying it has not drifted
 /// since `inspected_hash` was captured. `mode` overrides the file mode on Unix;
@@ -70,6 +94,12 @@ fn perform_replace(
     mode: Option<u32>,
 ) -> Result<(), AppError> {
     let mut file = private_new_file(temp).map_err(|_| write_failed())?;
+    // Harden the temp's permissions before writing any payload. On Unix this is
+    // an idempotent 0o600 (the create already used that mode); on Windows it
+    // applies the current-user-only DACL the security brief requires, mirroring
+    // storage/spool.rs and security/crypto.rs. A failure here is treated as a
+    // pre-write atomic failure so the target is never disturbed.
+    ensure_current_user_dacl(temp).map_err(|_| write_failed())?;
     if let Err(error) = file
         .write_all(bytes)
         .and_then(|()| file.flush())
@@ -90,7 +120,7 @@ fn perform_replace(
 
     // Atomically publish. `rename` over an existing file is atomic on the same
     // filesystem, which is why the temp lives in the target's directory.
-    if let Err(error) = fs::rename(temp, target) {
+    if let Err(error) = publish_rename(temp, target) {
         let _ = fs::remove_file(temp);
         return Err(AppError {
             domain: ErrorDomain::Integration,
