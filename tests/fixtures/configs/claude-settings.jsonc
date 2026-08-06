@@ -1,0 +1,28 @@
+// CC Reminder fixture: leading line comment.
+/* Block comment spanning
+   two lines before the object. */
+{
+    // top-level unknown field kept verbatim
+    "schemaVersion": 3,
+  "theme": "dark",
+    "hooks": {
+            // comment inside hooks, indented with 8 spaces
+        "PreToolUse": [
+            {
+                "matcher": "Bash|Write",
+                "hooks": [
+                    { "type": "command", "command": "/usr/local/bin/foreign-lint.sh", "timeout": 4 }
+                ]
+            }
+        ],
+        "Notification": [
+          {
+            "hooks": [
+              { "type": "command", "command": "/usr/local/bin/foreign-notify.sh" }
+            ]
+          }
+        ]
+    },
+	"permissions": { "allow": ["Read"] }
+}
+// trailing comment after object, NO final newline

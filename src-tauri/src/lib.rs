@@ -3,6 +3,7 @@ pub mod agents;
 pub mod error;
 pub mod events;
 pub mod hook_command;
+pub mod installer;
 pub mod ipc;
 pub mod model;
 pub mod paths;

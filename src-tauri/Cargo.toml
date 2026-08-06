@@ -25,6 +25,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 directories = "6"
 hex = "0.4"
 hmac = "0.12"
+jsonc-parser = { version = "0.26", features = ["serde"] }
 keyring = "4.1.6"
 rand = "0.10.2"
 regex = "1"
