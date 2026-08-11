@@ -1,3 +1,5 @@
+#![cfg(feature = "test-support")]
+
 //! Recovery and concurrency tests for the durable delivery queue (Task 12).
 //!
 //! These complement the in-crate unit tests in `storage::queue::tests` and

@@ -285,11 +285,13 @@ impl RetryPolicy {
             return classified_at + retry_after;
         }
 
-        // Full-jitter exponential backoff. The exponent is the number of
-        // attempts already completed (so the first retry uses base^1).
-        let exponent = i32::from(attempts_completed.max(1));
-        let raw = self.base.checked_mul(exponent).unwrap_or(self.cap);
-        let capped = raw.min(self.cap);
+        // Full-jitter exponential backoff: base * 2^(attempts-1), capped.
+        // The exponent is the number of attempts already completed, so the
+        // first retry (attempts=1) waits base*2^0 = base.
+        let exponent = u32::from(attempts_completed.max(1).saturating_sub(1));
+        let multiplier = 2i64.checked_pow(exponent).unwrap_or(i64::MAX);
+        let raw_ms = self.base.num_milliseconds().saturating_mul(multiplier);
+        let capped = Duration::milliseconds(raw_ms.min(self.cap.num_milliseconds()));
         let jitter_factor = self.jitter.sample(attempts_completed);
         let delay = Duration::milliseconds(
             (capped.num_milliseconds() as f32 * jitter_factor).round() as i64,

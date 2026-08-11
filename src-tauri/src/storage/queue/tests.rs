@@ -539,6 +539,30 @@ fn network_timeout_and_temporary_platform_retry_with_jittered_backoff() {
 }
 
 #[test]
+fn backoff_is_exponential_not_linear() {
+    // Pins base*2^(attempts-1) with full jitter (1.0 so the cap dominates): the
+    // delays must be 2s, 4s, 8s, 16s for attempts 1..4. A linear (base*attempts)
+    // implementation would yield 2/4/6/8s and fail at attempt 3.
+    let policy = RetryPolicy::with_deterministic_jitter([1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(
+        policy.classify(attempt(1), &redacted_error()),
+        RetryDecision::RetryAt(now() + Duration::seconds(2))
+    );
+    assert_eq!(
+        policy.classify(attempt(2), &redacted_error()),
+        RetryDecision::RetryAt(now() + Duration::seconds(4))
+    );
+    assert_eq!(
+        policy.classify(attempt(3), &redacted_error()),
+        RetryDecision::RetryAt(now() + Duration::seconds(8))
+    );
+    assert_eq!(
+        policy.classify(attempt(4), &redacted_error()),
+        RetryDecision::RetryAt(now() + Duration::seconds(16))
+    );
+}
+
+#[test]
 fn fifth_attempt_expires_or_fails_instead_of_retrying() {
     let policy = RetryPolicy::default();
     // 5 attempts already used; next is attempt 6 -> no retry.
