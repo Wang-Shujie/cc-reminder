@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod agents;
+pub mod channels;
 pub mod error;
 pub mod events;
 pub mod hook_command;
