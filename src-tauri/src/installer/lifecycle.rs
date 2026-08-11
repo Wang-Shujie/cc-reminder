@@ -19,6 +19,7 @@
 //! `NeedsUserConfirmation`. The bypass flag is never used.
 
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use chrono::Utc;
@@ -37,7 +38,7 @@ use crate::installer::{
 };
 use crate::model::{AgentKind, HookInstallationRecord, InstallationHealth, TrustStatus};
 use crate::security::crypto::{FieldCipher, snapshot_aad};
-use crate::security::permissions::{ensure_private_directory, ensure_private_file};
+use crate::security::permissions::ensure_private_directory;
 use crate::storage::integrations::IntegrationRepository;
 
 /// Exact lifecycle action. Rule-save commands never implicitly trigger any of
@@ -194,7 +195,14 @@ impl HookInstaller {
         // prevents a stale selection from recording a foreign helper).
         if action != HookAction::Uninstall {
             let installed_helper = self.helper.stable_path();
-            if !installed_helper.exists() || installed_helper != selection.helper_path {
+            // The selection must point at the wired helper's stable path AND carry
+            // its manifest version — otherwise a stale selection (e.g. a
+            // selection cached before a helper upgrade) would record a foreign or
+            // stale helper path/version in the installation rows.
+            if !installed_helper.exists()
+                || installed_helper != selection.helper_path
+                || selection.helper_version != *self.helper.manifest_version()
+            {
                 return Err(AppError {
                     domain: ErrorDomain::Update,
                     code: "update.helper_not_installed".to_owned(),
@@ -301,20 +309,26 @@ impl HookInstaller {
     }
 
     fn ensure_config_seed(&self) -> Result<(), AppError> {
-        if self.config_path.exists() {
-            return Ok(());
-        }
         if let Some(parent) = self.config_path.parent() {
             ensure_private_directory(parent)?;
             #[cfg(windows)]
             crate::security::permissions::ensure_current_user_dacl(parent)?;
         }
-        // Create an empty owner-only seed file, then write the empty root. The
-        // atomic replace below preserves the mode.
-        ensure_private_file(&self.config_path)?;
+        // Atomically create the seed ONLY if it is absent (O_CREAT | O_EXCL). A
+        // plain exists()-then-write would clobber a config a concurrent process
+        // created between the check and the write; create_new refuses to touch an
+        // existing file. apply() re-reads the file afterward, so a race-created
+        // file is patched from its real contents rather than a synthetic {}.
+        match private_create_new(&self.config_path) {
+            Ok(mut file) => {
+                file.write_all(b"{}").map_err(|_| write_failed())?;
+                let _ = file.sync_all();
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(write_failed()),
+        }
         #[cfg(windows)]
         crate::security::permissions::ensure_current_user_dacl(&self.config_path)?;
-        fs::write(&self.config_path, b"{}").map_err(|_| write_failed())?;
         Ok(())
     }
 
@@ -469,6 +483,24 @@ fn current_mode(path: &std::path::Path) -> Option<u32> {
 #[cfg(not(unix))]
 fn current_mode(_path: &std::path::Path) -> Option<u32> {
     None
+}
+
+#[cfg(unix)]
+fn private_create_new(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn private_create_new(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
 
 fn write_failed() -> AppError {

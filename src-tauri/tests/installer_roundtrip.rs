@@ -1299,6 +1299,20 @@ fn external_drift_between_inspection_and_replace_is_rejected_without_overwrite()
     assert!(owned_events_on_disk(CLAUDE, &env.config_path).is_empty());
 }
 
+/// A selection carrying a helper_version that no longer matches the installed
+/// helper's manifest must be rejected, so a selection cached before a helper
+/// upgrade cannot record a stale version in the installation rows.
+#[test]
+fn stale_helper_version_in_selection_is_rejected() {
+    let env = InstallerEnvironment::claude_fixture();
+    let mut stale = env.selection(&["Stop"]);
+    stale.helper_version = semver::Version::new(99, 0, 0);
+    assert_eq!(
+        env.apply(HookAction::Install, &stale).unwrap_err_code(),
+        "update.helper_not_installed"
+    );
+}
+
 #[test]
 fn selection_out_of_date_is_reported_and_repair_converges() {
     let env = InstallerEnvironment::claude_fixture();
