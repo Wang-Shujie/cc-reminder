@@ -20,6 +20,7 @@ use url::Url;
 
 use crate::channels::http::{
     build_client, format_error, http_status_error, map_reqwest_error, read_capped,
+    redact_error_message,
 };
 use crate::channels::{
     ChannelConfig, render_markdown, render_text, truncate_chars, validate_official_webhook,
@@ -169,10 +170,12 @@ impl DingTalkSender {
             .send()
             .await
             .map_err(map_reqwest_error)?;
+        // Capture Retry-After before the body is consumed (mirrors WeCom).
+        let retry_after = super::http::retry_after_from_headers(response.headers());
         let (status, payload) = read_capped(response, self.config.max_body_bytes()).await?;
 
         if !status.is_success() {
-            return Err(http_status_error(status, None));
+            return Err(http_status_error(status, retry_after));
         }
 
         let parsed: DingResponse = serde_json::from_slice(&payload)
@@ -195,7 +198,7 @@ impl DingTalkSender {
                 return Err(DeliveryError {
                     kind: DeliveryErrorKind::Signature,
                     code: "dingtalk.signature".to_owned(),
-                    redacted_message: redact(&parsed.errmsg),
+                    redacted_message: redact_error_message(&parsed.errmsg),
                     http_status: Some(status.as_u16()),
                     platform_code: Some(parsed.errcode.to_string()),
                     retry_after_seconds: None,
@@ -323,7 +326,7 @@ fn current_signature(secret: &str) -> (i64, String) {
 /// - 400101: keyword not in content (also format) -> Format
 /// - otherwise -> TemporaryPlatform
 fn map_platform_error(errcode: i64, errmsg: &str, http_status: u16) -> DeliveryError {
-    let redacted = redact(errmsg);
+    let redacted = redact_error_message(errmsg);
     let platform_code = Some(errcode.to_string());
     match errcode {
         300_000..=300_002 => DeliveryError {
@@ -352,17 +355,6 @@ fn map_platform_error(errcode: i64, errmsg: &str, http_status: u16) -> DeliveryE
             platform_code,
             retry_after_seconds: None,
         },
-    }
-}
-
-/// Strip the platform free-text message down to a short, safe summary so the
-/// redacted_message field is safe to persist and log.
-fn redact(errmsg: &str) -> String {
-    let trimmed = errmsg.trim();
-    if trimmed.len() > 120 {
-        trimmed[..120].to_owned()
-    } else {
-        trimmed.to_owned()
     }
 }
 

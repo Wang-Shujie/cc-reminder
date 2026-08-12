@@ -557,6 +557,45 @@ async fn http_429_parses_retry_after() {
     assert_eq!(err.retry_after_seconds, Some(30));
 }
 
+/// DingTalk must honour Retry-After too (regression: it previously hard-wired
+/// retry_after to None on the HTTP-status path, unlike WeCom).
+#[tokio::test]
+async fn dingtalk_429_parses_retry_after() {
+    let server = MockPlatform::new(vec![NextResponse::Static(CannedResponse {
+        status: 429,
+        headers: vec![("retry-after".to_owned(), "30".to_owned())],
+        body: b"{}".to_vec(),
+    })]);
+    let sender =
+        DingTalkSender::for_contract_test(server.endpoint(), Some("CCReminder".to_owned()), None);
+    let err = sender.send(&document("x")).await.unwrap_err();
+    assert_eq!(err.kind, DeliveryErrorKind::HttpStatus);
+    assert_eq!(err.http_status, Some(429));
+    assert_eq!(err.retry_after_seconds, Some(30));
+}
+
+/// A platform `errmsg` whose UTF-8 form straddles the 120-byte redaction cap
+/// (typical for the localized CJK messages both platforms return) must not
+/// panic on `trimmed[..120]`. We lay out the bytes precisely: 117 ASCII bytes
+/// then a 4-byte emoji at bytes 117..121, so byte 120 lands mid-codepoint and
+/// the naive slice would panic.
+#[tokio::test]
+async fn dingtalk_multibyte_errmsg_is_redacted_without_panicking() {
+    let mut errmsg = "x".repeat(117);
+    errmsg.push('😀'); // bytes 117..121 -> byte 120 is mid-codepoint
+    debug_assert_eq!(errmsg.len(), 121);
+    let server = MockPlatform::new(vec![NextResponse::Static(CannedResponse::json(
+        200,
+        &json!({ "errcode": 300001, "errmsg": errmsg }),
+    ))]);
+    let sender =
+        DingTalkSender::for_contract_test(server.endpoint(), Some("CCReminder".to_owned()), None);
+    let err = sender.send(&document("x")).await.unwrap_err();
+    assert_eq!(err.kind, DeliveryErrorKind::Authentication);
+    assert!(err.redacted_message.len() <= 120);
+    assert!(!err.redacted_message.contains('😀'));
+}
+
 #[tokio::test]
 async fn http_5xx_maps_to_http_status() {
     for status in [500u16, 502, 503, 504] {

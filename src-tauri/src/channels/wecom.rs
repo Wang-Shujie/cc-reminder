@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::channels::http::{
     build_client, format_error, http_status_error, map_reqwest_error, read_capped,
+    redact_error_message, retry_after_from_headers,
 };
 use crate::channels::{
     ChannelConfig, render_markdown, render_text, truncate_bytes, validate_official_webhook,
@@ -106,11 +107,7 @@ impl WeComSender {
             .map_err(map_reqwest_error)?;
         let status = response.status();
         // Capture Retry-After before the body is consumed.
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_retry_after);
+        let retry_after = retry_after_from_headers(response.headers());
         let (read_status, payload) = read_capped(response, self.config.max_body_bytes()).await?;
 
         if !status.is_success() {
@@ -190,7 +187,7 @@ struct WeComResponse {
 /// - 45033: markdown rejected -> Format (handled as fallback by caller)
 /// - 41001 / signature class: Signature
 fn map_platform_error(errcode: i64, errmsg: &str, http_status: u16) -> DeliveryError {
-    let redacted = redact(errmsg);
+    let redacted = redact_error_message(errmsg);
     let platform_code = Some(errcode.to_string());
     match errcode {
         40014 | 41009 | 40001 => DeliveryError {
@@ -230,15 +227,6 @@ fn map_platform_error(errcode: i64, errmsg: &str, http_status: u16) -> DeliveryE
     }
 }
 
-fn redact(errmsg: &str) -> String {
-    let trimmed = errmsg.trim();
-    if trimmed.len() > 120 {
-        trimmed[..120].to_owned()
-    } else {
-        trimmed.to_owned()
-    }
-}
-
 fn config_error(code: &str) -> DeliveryError {
     DeliveryError {
         kind: DeliveryErrorKind::Format,
@@ -248,11 +236,4 @@ fn config_error(code: &str) -> DeliveryError {
         platform_code: None,
         retry_after_seconds: None,
     }
-}
-
-/// Parse a `Retry-After` header value (delta-seconds form only; we ignore the
-/// HTTP-date form because neither platform emits it). Caps at a sane upper bound.
-fn parse_retry_after(header_value: &str) -> Option<std::time::Duration> {
-    let secs: u64 = header_value.trim().parse().ok()?;
-    Some(std::time::Duration::from_secs(secs.min(3_600)))
 }

@@ -115,3 +115,36 @@ pub(crate) fn format_error(message: &str, http_status: Option<u16>) -> DeliveryE
         retry_after_seconds: None,
     }
 }
+
+/// Parse a `Retry-After` header value (delta-seconds form only; the HTTP-date
+/// form is ignored because neither platform emits it). Caps at one hour.
+pub(crate) fn parse_retry_after(header_value: &str) -> Option<Duration> {
+    let secs: u64 = header_value.trim().parse().ok()?;
+    Some(Duration::from_secs(secs.min(3_600)))
+}
+
+/// Capture `Retry-After` from a response's headers (before the body is
+/// consumed). Shared by both adapters so DingTalk and WeCom honour the header
+/// symmetrically.
+pub(crate) fn retry_after_from_headers(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after)
+}
+
+/// Trim and cap a platform `errmsg` for `redacted_message`, backing up to a
+/// UTF-8 char boundary so a multibyte message (both platforms return localized
+/// CJK errors) never panics on `[..120]`.
+pub(crate) fn redact_error_message(errmsg: &str) -> String {
+    let trimmed = errmsg.trim();
+    const MAX_BYTES: usize = 120;
+    if trimmed.len() <= MAX_BYTES {
+        return trimmed.to_owned();
+    }
+    let mut end = MAX_BYTES;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    trimmed[..end].to_owned()
+}
