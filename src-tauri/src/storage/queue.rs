@@ -370,6 +370,38 @@ impl QueueRepository {
         hex::encode(hasher.finalize())
     }
 
+    /// Recent successful delivery times for a (rule, channel) pair, used by the
+    /// pipeline's cooldown / per-window-cap evaluation. Returns at most the
+    /// last `limit` `last_succeeded_at`-equivalents derived from
+    /// `delivery_attempts.completed_at` for succeeded attempts on this rule +
+    /// channel.
+    pub fn recent_delivery_times(
+        &self,
+        rule_id: RuleId,
+        channel_id: ChannelId,
+        limit: usize,
+    ) -> Result<Vec<DateTime<Utc>>, AppError> {
+        let connection = self.database.connect()?;
+        let mut stmt = connection
+            .prepare(
+                "SELECT a.completed_at FROM delivery_attempts a
+                 JOIN delivery_jobs j ON j.id = a.job_id
+                 WHERE j.rule_id = ?1 AND j.channel_id = ?2 AND a.outcome = 'succeeded'
+                 ORDER BY a.completed_at DESC LIMIT ?3",
+            )
+            .map_err(|_| query_error())?;
+        let rows = stmt
+            .query_map(
+                params![rule_id.to_string(), channel_id.to_string(), limit as i64],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|_| query_error())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| query_error())?;
+        drop(stmt);
+        rows.into_iter().map(|s| parse_time(&s)).collect()
+    }
+
     /// Enqueue a job. Returns [`EnqueueResult::AlreadyExists`] when a job with
     /// the same idempotency key already exists (one job per
     /// event+rule_version+channel). Takes a `BEGIN IMMEDIATE` transaction so
@@ -1347,6 +1379,61 @@ fn parse_time(value: &str) -> Result<DateTime<Utc>, AppError> {
 
 fn stored_result<T>(value: Result<T, AppError>) -> rusqlite::Result<T> {
     value.map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+/// Enqueue a job into an existing transaction. Used by the live ingestion
+/// path so the job is committed atomically with its event, outcome and the
+/// hook-seen transition. Same idempotency contract as
+/// [`QueueRepository::enqueue`].
+pub fn enqueue_in_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    job: &DeliveryJob,
+) -> Result<EnqueueResult, AppError> {
+    let key = QueueRepository::idempotency_key(job.event_id, &job.rule_version, job.channel_id);
+    let now = Utc::now().to_rfc3339();
+    let document = serde_json::to_string(&job.document).map_err(|_| serialization_error())?;
+    let aggregate_release_at = job.aggregate_release_at.map(|time| time.to_rfc3339());
+
+    let existing: Option<String> = transaction
+        .query_row(
+            "SELECT id FROM delivery_jobs WHERE idempotency_key = ?1",
+            params![&key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| query_error())?;
+    if let Some(existing_id) = existing {
+        let id = parse_uuid(&existing_id)?;
+        return Ok(EnqueueResult::AlreadyExists(id));
+    }
+    transaction
+        .execute(
+            "INSERT INTO delivery_jobs (
+                id, event_id, rule_id, rule_version, channel_id, idempotency_key,
+                document_json, state, attempts, next_attempt_at, expires_at,
+                lease_owner, lease_expires_at, aggregate_key, aggregate_release_at,
+                last_error_code, created_at, updated_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, ?8, ?9,
+                NULL, NULL, ?10, ?11, NULL, ?12, ?12
+             )",
+            params![
+                job.id.to_string(),
+                job.event_id.to_string(),
+                job.rule_id.to_string(),
+                &job.rule_version,
+                job.channel_id.to_string(),
+                &key,
+                &document,
+                job.next_attempt_at.to_rfc3339(),
+                job.expires_at.to_rfc3339(),
+                job.aggregate_key.as_deref(),
+                aggregate_release_at.as_deref(),
+                now,
+            ],
+        )
+        .map_err(map_enqueue_error)?;
+    Ok(EnqueueResult::Inserted(job.id))
 }
 
 fn serialization_error() -> AppError {

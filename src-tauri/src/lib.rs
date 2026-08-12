@@ -8,10 +8,12 @@ pub mod installer;
 pub mod ipc;
 pub mod model;
 pub mod paths;
+pub mod pipeline;
 pub mod projects;
 pub mod rules;
 pub mod security;
 pub mod storage;
+pub mod worker;
 
 use tauri::Manager;
 

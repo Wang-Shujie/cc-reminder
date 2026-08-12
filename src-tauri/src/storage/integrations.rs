@@ -157,6 +157,45 @@ impl IntegrationRepository {
         Ok(hooks)
     }
 
+    /// Run a caller-defined set of writes against a single transaction. Used
+    /// by the live ingestion path to commit the hook-seen transition together
+    /// with the event, outcome and delivery jobs.
+    pub fn transaction<F, T>(&self, body: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, AppError>,
+    {
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| write_error())?;
+        let result = body(&transaction)?;
+        transaction.commit().map_err(|_| write_error())?;
+        Ok(result)
+    }
+
+    /// In-transaction variant of [`Self::mark_hook_seen`]. Returns
+    /// `Ok(true)` only when the hook row matched the supplied command
+    /// fingerprint (i.e. trust was established for this helper). Returns
+    /// `Ok(false)` if the row exists but the fingerprint mismatched — the
+    /// caller uses that to reject an unrecognized helper without establishing
+    /// trust.
+    pub fn mark_hook_seen_in_tx(
+        &self,
+        transaction: &rusqlite::Transaction<'_>,
+        agent: AgentKind,
+        source_event: &str,
+        command_fingerprint: &str,
+        seen_at: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
+        mark_hook_seen_in_tx(
+            transaction,
+            agent,
+            source_event,
+            command_fingerprint,
+            seen_at,
+        )
+    }
+
     pub fn mark_hook_seen(
         &self,
         agent: AgentKind,
@@ -422,6 +461,57 @@ fn parse_time(value: &str) -> Result<DateTime<Utc>, AppError> {
 
 fn stored_result<T>(value: Result<T, AppError>) -> rusqlite::Result<T> {
     value.map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+/// In-transaction variant of [`IntegrationRepository::mark_hook_seen`] that
+/// also validates the command fingerprint. Returns `Ok(true)` only when the
+/// hook row matched the supplied command fingerprint (i.e. trust was
+/// established for this helper); `Ok(false)` when the row is missing or the
+/// fingerprint mismatched. The caller uses the `false` outcome to reject an
+/// unrecognized helper without establishing trust, and to skip the trust
+/// transition for the matching event when the helper is unrecognized.
+pub fn mark_hook_seen_in_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    agent: AgentKind,
+    source_event: &str,
+    command_fingerprint: &str,
+    seen_at: DateTime<Utc>,
+) -> Result<bool, AppError> {
+    let expected: Option<String> = transaction
+        .query_row(
+            "SELECT command_fingerprint FROM hook_installations
+             WHERE agent = ?1 AND source_event = ?2",
+            params![agent.as_str(), source_event],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| query_error())?;
+    let Some(expected_fp) = expected else {
+        return Ok(false);
+    };
+    if expected_fp != command_fingerprint {
+        return Ok(false);
+    }
+    let updated = transaction
+        .execute(
+            "UPDATE hook_installations SET
+                last_seen_at = ?1,
+                observed_command_fingerprint = ?2,
+                trust_status = CASE trust_status
+                    WHEN 'needs_user_confirmation' THEN 'observed_working'
+                    ELSE trust_status
+                END,
+                updated_at = ?1
+             WHERE agent = ?3 AND source_event = ?4 AND command_fingerprint = ?2",
+            params![
+                seen_at.to_rfc3339(),
+                command_fingerprint,
+                agent.as_str(),
+                source_event,
+            ],
+        )
+        .map_err(|_| write_error())?;
+    Ok(updated > 0)
 }
 
 fn not_found() -> AppError {

@@ -1,10 +1,10 @@
 use std::fmt;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::BTreeMap;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Mutex};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::time::Duration;
 
 use secrecy::{ExposeSecret, SecretString};
@@ -78,15 +78,16 @@ pub struct CredentialStore {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // test-only variants are not all exercised under test-support builds.
 enum CredentialBackend {
     System,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Memory(Arc<Mutex<BTreeMap<String, Vec<u8>>>>),
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Unavailable,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     OperationallyUnavailable,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     DelayedMemory {
         values: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
         miss_delay: Duration,
@@ -134,8 +135,8 @@ impl CredentialStore {
         self.delete_secret(&username)
     }
 
-    #[cfg(test)]
-    pub(crate) fn memory_for_test() -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn memory_for_test() -> Self {
         Self {
             backend: CredentialBackend::Memory(Arc::new(Mutex::new(BTreeMap::new()))),
         }
@@ -168,9 +169,9 @@ impl CredentialStore {
     fn probe(&self) -> Result<(), AppError> {
         match &self.backend {
             CredentialBackend::System => probe_system_store(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Memory(_) | CredentialBackend::DelayedMemory { .. } => Ok(()),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Unavailable | CredentialBackend::OperationallyUnavailable => {
                 Err(unavailable_error())
             }
@@ -180,7 +181,7 @@ impl CredentialStore {
     fn set_secret(&self, username: &str, secret: &[u8]) -> Result<(), AppError> {
         match &self.backend {
             CredentialBackend::System => set_system_secret(username, secret),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Memory(values) => {
                 values
                     .lock()
@@ -188,7 +189,7 @@ impl CredentialStore {
                     .insert(username.to_owned(), secret.to_vec());
                 Ok(())
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::DelayedMemory { values, .. } => {
                 values
                     .lock()
@@ -196,7 +197,7 @@ impl CredentialStore {
                     .insert(username.to_owned(), secret.to_vec());
                 Ok(())
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Unavailable | CredentialBackend::OperationallyUnavailable => {
                 Err(unavailable_error())
             }
@@ -214,14 +215,14 @@ impl CredentialStore {
     fn get_secret(&self, username: &str) -> Result<Vec<u8>, AppError> {
         match &self.backend {
             CredentialBackend::System => get_system_secret(username),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Memory(values) => values
                 .lock()
                 .map_err(|_| unavailable_error())?
                 .get(username)
                 .cloned()
                 .ok_or_else(not_found_error),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::DelayedMemory { values, miss_delay } => {
                 let value = values
                     .lock()
@@ -233,7 +234,7 @@ impl CredentialStore {
                 }
                 value.ok_or_else(not_found_error)
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Unavailable | CredentialBackend::OperationallyUnavailable => {
                 Err(unavailable_error())
             }
@@ -243,21 +244,21 @@ impl CredentialStore {
     fn delete_secret(&self, username: &str) -> Result<(), AppError> {
         match &self.backend {
             CredentialBackend::System => delete_system_secret(username),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Memory(values) => values
                 .lock()
                 .map_err(|_| unavailable_error())?
                 .remove(username)
                 .map(|mut secret| secret.zeroize())
                 .ok_or_else(not_found_error),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::DelayedMemory { values, .. } => values
                 .lock()
                 .map_err(|_| unavailable_error())?
                 .remove(username)
                 .map(|mut secret| secret.zeroize())
                 .ok_or_else(not_found_error),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CredentialBackend::Unavailable | CredentialBackend::OperationallyUnavailable => {
                 Err(unavailable_error())
             }

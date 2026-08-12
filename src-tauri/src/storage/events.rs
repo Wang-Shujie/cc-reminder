@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use semver::Version;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -210,66 +210,36 @@ impl EventRepository {
         outcome: EventProcessingOutcome,
         outcome_reason_code: Option<EventOutcomeReasonCode>,
     ) -> Result<(), AppError> {
-        let (sensitive_blob_id, sensitive_fields_blob) =
-            match (event.encrypted_sensitive_fields.as_ref(), encrypted_fields) {
-                (None, None) => (None, None),
-                (Some(reference), Some(fields))
-                    if reference == &fields.blob_ref() && event.id == fields.event_id() =>
-                {
-                    (Some(reference.blob_id.to_string()), Some(fields.to_blob()?))
-                }
-                _ => {
-                    return Err(storage_error(
-                        "storage.invalid_encrypted_fields",
-                        "encrypted field reference and ciphertext must be stored together",
-                    ));
-                }
-            };
-        let connection = self.database.connect()?;
-        let outcome_reason_code = outcome_reason_code.as_ref().map(db_text).transpose()?;
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO events (
-                    id, source, source_version, source_event, category, occurred_at, received_at,
-                    project_id, project_display_name, unmatched_cwd_fingerprint, session_ref,
-                    turn_ref, model, permission_mode, severity, public_fields_json,
-                    sensitive_blob_id, sensitive_fields_blob, correlation_id, action_id,
-                    action_capabilities_json, processing_outcome, outcome_reason_code, created_at
-                 ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                    ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
-                 )",
-                params![
-                    event.id.to_string(),
-                    event.source.as_str(),
-                    event.source_version.to_string(),
-                    event.source_event,
-                    db_text(&event.category)?,
-                    event.occurred_at.to_rfc3339(),
-                    event.received_at.to_rfc3339(),
-                    event.project_id.map(|id| id.to_string()),
-                    event.project_display_name,
-                    event.unmatched_cwd_fingerprint,
-                    event.session_ref,
-                    event.turn_ref,
-                    event.model,
-                    event.permission_mode,
-                    db_text(&event.severity)?,
-                    serde_json::to_string(&event.public_fields)
-                        .map_err(|_| serialization_error())?,
-                    sensitive_blob_id,
-                    sensitive_fields_blob,
-                    event.correlation_id.to_string(),
-                    event.action_id,
-                    serde_json::to_string(&event.action_capabilities)
-                        .map_err(|_| serialization_error())?,
-                    db_text(&outcome)?,
-                    outcome_reason_code,
-                    Utc::now().to_rfc3339(),
-                ],
-            )
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| write_error())?;
+        insert_event_in_tx(
+            &transaction,
+            event,
+            encrypted_fields,
+            outcome,
+            outcome_reason_code,
+        )?;
+        transaction.commit().map_err(|_| write_error())?;
         Ok(())
+    }
+
+    /// Run a caller-defined set of writes against a single transaction so the
+    /// live ingestion path can store the event, its outcome, all delivery
+    /// jobs, the hook-seen transition and the Codex ObservedWorking transition
+    /// atomically (design §12.1 / Task 14).
+    pub fn transaction<F, T>(&self, body: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, AppError>,
+    {
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| write_error())?;
+        let result = body(&transaction)?;
+        transaction.commit().map_err(|_| write_error())?;
+        Ok(result)
     }
 
     pub fn list_history(
@@ -376,6 +346,104 @@ impl EventRepository {
         let next_offset = has_more.then_some(page.offset.saturating_add(u32::from(page.limit)));
         Ok(HistoryPage { items, next_offset })
     }
+}
+
+pub fn insert_event_in_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    event: &EventEnvelope,
+    encrypted_fields: Option<&EncryptedFields>,
+    outcome: EventProcessingOutcome,
+    outcome_reason_code: Option<EventOutcomeReasonCode>,
+) -> Result<(), AppError> {
+    let (sensitive_blob_id, sensitive_fields_blob) =
+        match (event.encrypted_sensitive_fields.as_ref(), encrypted_fields) {
+            (None, None) => (None, None),
+            (Some(reference), Some(fields))
+                if reference == &fields.blob_ref() && event.id == fields.event_id() =>
+            {
+                (Some(reference.blob_id.to_string()), Some(fields.to_blob()?))
+            }
+            _ => {
+                return Err(storage_error(
+                    "storage.invalid_encrypted_fields",
+                    "encrypted field reference and ciphertext must be stored together",
+                ));
+            }
+        };
+    let outcome_reason_code = outcome_reason_code.as_ref().map(db_text).transpose()?;
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO events (
+                id, source, source_version, source_event, category, occurred_at, received_at,
+                project_id, project_display_name, unmatched_cwd_fingerprint, session_ref,
+                turn_ref, model, permission_mode, severity, public_fields_json,
+                sensitive_blob_id, sensitive_fields_blob, correlation_id, action_id,
+                action_capabilities_json, processing_outcome, outcome_reason_code, created_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+             )",
+            params![
+                event.id.to_string(),
+                event.source.as_str(),
+                event.source_version.to_string(),
+                event.source_event,
+                db_text(&event.category)?,
+                event.occurred_at.to_rfc3339(),
+                event.received_at.to_rfc3339(),
+                event.project_id.map(|id| id.to_string()),
+                event.project_display_name,
+                event.unmatched_cwd_fingerprint,
+                event.session_ref,
+                event.turn_ref,
+                event.model,
+                event.permission_mode,
+                db_text(&event.severity)?,
+                serde_json::to_string(&event.public_fields).map_err(|_| serialization_error())?,
+                sensitive_blob_id,
+                sensitive_fields_blob,
+                event.correlation_id.to_string(),
+                event.action_id,
+                serde_json::to_string(&event.action_capabilities)
+                    .map_err(|_| serialization_error())?,
+                db_text(&outcome)?,
+                outcome_reason_code,
+                Utc::now().to_rfc3339(),
+            ],
+        )
+        .map_err(|_| write_error())?;
+    Ok(())
+}
+
+/// Returns true if the row was newly inserted (i.e. the event UUID had not
+/// been seen before). Used by the pipeline to short-circuit duplicate live
+/// ingress idempotently within the same transaction.
+pub fn event_already_seen(transaction: &rusqlite::Transaction<'_>, event_id: Uuid) -> bool {
+    let existing: Option<String> = transaction
+        .query_row(
+            "SELECT id FROM events WHERE id = ?1",
+            params![event_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    existing.is_some()
+}
+
+/// Delete an ingress row inside an existing transaction. Used by the recovery
+/// path so the row is removed only once the processing transaction commits.
+pub fn delete_ingress_in_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    event_id: Uuid,
+) -> Result<(), AppError> {
+    transaction
+        .execute(
+            "DELETE FROM ingress_events WHERE id = ?1",
+            params![event_id.to_string()],
+        )
+        .map_err(|_| write_error())?;
+    Ok(())
 }
 
 struct RawHistoryRow {
