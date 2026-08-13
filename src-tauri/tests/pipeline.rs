@@ -58,8 +58,9 @@ struct PipelineHarness {
     queue: QueueRepository,
     integrations: IntegrationRepository,
     credentials: CredentialStore,
-    cipher_key: [u8; 32],
+    cipher: std::sync::Arc<cc_reminder_lib::security::crypto::FieldCipher>,
     correlation_key: [u8; 32],
+    local_offset: chrono::FixedOffset,
 }
 
 impl PipelineHarness {
@@ -88,18 +89,26 @@ impl PipelineHarness {
             queue,
             integrations,
             credentials: CredentialStore::memory_for_test(),
-            cipher_key: [42_u8; 32],
+            cipher: std::sync::Arc::new(cc_reminder_lib::security::crypto::FieldCipher::from_key(
+                [42_u8; 32],
+            )),
             correlation_key: [7_u8; 32],
+            local_offset: chrono::FixedOffset::east_opt(0).unwrap(),
         }
     }
 
     fn pipeline(&self) -> EventPipeline {
+        self.pipeline_with_offset(self.local_offset)
+    }
+
+    fn pipeline_with_offset(&self, offset: chrono::FixedOffset) -> EventPipeline {
         EventPipeline::new(
             self.database.clone(),
-            self.cipher_key,
+            self.cipher.clone(),
             self.correlation_key,
             cc_reminder_lib::projects::PathPlatform::Unix,
             Vec::new(),
+            offset,
         )
     }
 
@@ -1039,4 +1048,303 @@ async fn manual_retry_moves_failed_job_back_to_pending() {
         .manual_retry(job, Utc::now())
         .unwrap();
     assert_eq!(harness.job_state(job), DeliveryStatus::Pending);
+}
+
+// ---------------------------------------------------------------------------
+// Fix-round regression tests (Task 14 review)
+// ---------------------------------------------------------------------------
+
+/// Aggregate rule with TWO target channels must yield TWO separate claimable
+/// buckets (one per channel), so each channel gets its own delivery. Before the
+/// fix, both jobs shared one aggregate_key and `claim_due` coalesced them into
+/// a single Aggregate sent only to the first channel.
+#[tokio::test]
+async fn aggregate_rule_with_two_targets_yields_one_bucket_per_channel() {
+    let harness = PipelineHarness::new();
+    let chan_a = harness.add_channel(ChannelKind::WeCom, "a");
+    let chan_b = harness.add_channel(ChannelKind::WeCom, "b");
+    harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![
+            TargetConfig {
+                channel_id: chan_a,
+                template: None,
+            },
+            TargetConfig {
+                channel_id: chan_b,
+                template: None,
+            },
+        ];
+        rule.delivery.mode = cc_reminder_lib::model::DeliveryMode::Aggregate { window_seconds: 60 };
+    });
+    harness.install_hook(AgentKind::Codex, "Stop", "fp");
+    let pipeline = harness.pipeline();
+    pipeline
+        .process_live(harness.ingress_request("Stop", "fp"))
+        .await
+        .unwrap();
+
+    // Both jobs exist but must carry DIFFERENT aggregate_keys.
+    let conn = rusqlite::Connection::open(harness.database.path()).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT channel_id, aggregate_key FROM delivery_jobs
+             WHERE aggregate_key IS NOT NULL ORDER BY channel_id",
+        )
+        .unwrap();
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2, "expected one job per target channel");
+    assert_ne!(rows[0].0, rows[1].0, "jobs belong to different channels");
+    assert_ne!(
+        rows[0].1, rows[1].1,
+        "aggregate keys must differ per channel"
+    );
+
+    // claim_due must return TWO separate Aggregate claims (one per channel),
+    // not one coalesced claim. Claim well past the 60s aggregate window's
+    // release boundary so the buckets are due.
+    let claims = harness
+        .queue
+        .claim_due(
+            "test-worker",
+            Utc::now() + Duration::minutes(5),
+            Duration::seconds(60),
+            20,
+        )
+        .unwrap();
+    assert_eq!(
+        claims.len(),
+        2,
+        "expected two separate claims, one per channel"
+    );
+    for claim in &claims {
+        let channels: std::collections::HashSet<String> = claim
+            .jobs()
+            .into_iter()
+            .map(|j| j.channel_id.to_string())
+            .collect();
+        assert_eq!(
+            channels.len(),
+            1,
+            "each aggregate claim must target exactly one channel"
+        );
+    }
+}
+
+/// Non-UTC local offset must drive the quiet-hours weekday/time from local
+/// time, not UTC. Mirrors `non_utc_quiet_hours_use_local_weekday_and_return_a_utc_deadline`
+/// at the policy level. We pick a +12:00 offset and a quiet window that
+/// contains the current LOCAL time under +12:00 but does NOT contain the
+/// current UTC time; under the fix (offset forwarded) the event is suppressed,
+/// whereas under the old hardcoded-UTC bug it would be sent.
+#[tokio::test]
+async fn pipeline_quiet_hours_use_local_offset() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    // Compute a window that discriminates UTC from +12:00 local. Pick the
+    // window as the local current time +/- 1 minute under +12:00.
+    let now = Utc::now();
+    let offset = chrono::FixedOffset::east_opt(12 * 60 * 60).unwrap();
+    let local_now = now.with_timezone(&offset);
+    let start_local = (local_now - Duration::seconds(60))
+        .format("%H:%M")
+        .to_string();
+    let end_local = (local_now + Duration::seconds(60))
+        .format("%H:%M")
+        .to_string();
+    // Sanity: the same instant under UTC must fall OUTSIDE this window for the
+    // test to discriminate (the offset shifts the hour by 12, so unless the
+    // window straddles a wraparound the UTC time differs). All weekdays active.
+    harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+        rule.quiet_hours = Some(cc_reminder_lib::model::QuietHours {
+            start_local: start_local.clone(),
+            end_local: end_local.clone(),
+            weekdays: vec![1, 2, 3, 4, 5, 6, 7],
+            bypass_at_or_above: None,
+        });
+    });
+    harness.install_hook(AgentKind::Codex, "Stop", "fp");
+    let pipeline = harness.pipeline_with_offset(offset);
+
+    pipeline
+        .process_live(harness.ingress_request("Stop", "fp"))
+        .await
+        .unwrap();
+    // Under the forwarded +12:00 offset, local_now is inside (start, end), so
+    // the event MUST be suppressed. (If the pipeline regressed to UTC, local_now
+    // would be 12h off and almost always outside this ±60s window.)
+    assert_eq!(
+        harness.pending_jobs(),
+        0,
+        "quiet hours must evaluate under the configured local offset, not UTC"
+    );
+    let _ = now;
+}
+
+/// Mandatory public-field redaction must run on the persisted envelope. A
+/// `public_fields` string matching a mandatory pattern (Authorization header)
+/// must be replaced with `[REDACTED]` in `public_fields_json`, not stored raw.
+/// This exercises `redact_envelope_public_fields` on the persisted path — the
+/// existing per-target test puts the secret in a Sensitive field and so never
+/// reaches the public-fields scrubber.
+#[tokio::test]
+async fn mandatory_redaction_runs_on_public_fields() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+    });
+    harness.install_hook(AgentKind::Codex, "Stop", "fp");
+    let pipeline = harness.pipeline();
+
+    // Inject a secret-bearing value into a cataloged Public field that the
+    // normalizer persists into public_fields. `stop_hook_active` is Public for
+    // Codex Stop (the `model` field is pulled up to the envelope top level, not
+    // public_fields, so it would not exercise the persisted scrubber). The value
+    // matches a mandatory redaction pattern (Bearer token).
+    let secret = "Authorization: Bearer abc.def.ghi";
+    let req = IngressRequest {
+        protocol_version: IPC_PROTOCOL_VERSION,
+        helper_version: "0.1.0".into(),
+        command_fingerprint: "fp".into(),
+        event: capture_hook_json(
+            AgentKind::Codex,
+            "Stop",
+            Version::new(0, 145, 0),
+            json!({
+                "cwd": "/workspace/demo",
+                "last_assistant_message": "msg",
+                "session_id": "s",
+                "turn_id": "t",
+                "stop_hook_active": secret,
+            }),
+        )
+        .unwrap(),
+    };
+    pipeline.process_live(req).await.unwrap();
+
+    let conn = rusqlite::Connection::open(harness.database.path()).unwrap();
+    let public_json: String = conn
+        .query_row(
+            "SELECT public_fields_json FROM events WHERE source_event = 'Stop'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        public_json.contains("[REDACTED]"),
+        "mandatory redaction must replace the secret: got {public_json}"
+    );
+    assert!(
+        !public_json.contains("abc.def.ghi"),
+        "raw secret must not persist: got {public_json}"
+    );
+}
+
+/// `recover_ingress` must NOT abort the whole batch when one row fails. A
+/// failing row (uncatalogued source_event) is left `'processing'` for the Task
+/// 15 reaper; sibling rows still process.
+#[tokio::test]
+async fn recover_ingress_skips_bad_row_and_processes_siblings() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+    });
+
+    // Insert two ingress rows: one good (Stop), one with an uncatalogued
+    // source_event that will fail capability resolution inside
+    // process_safe_ingress_with.
+    let good = safe_ingress_for_event("Stop", Utc::now());
+    let mut bad = safe_ingress_for_event("Stop", Utc::now());
+    bad.source_event = "UncataloguedEvent".to_owned();
+    bad.event_id = Uuid::now_v7();
+    harness.insert_safe_ingress(good.clone());
+    harness.insert_safe_ingress(bad.clone());
+
+    let pipeline = harness.pipeline();
+    // Must not error even though one row fails.
+    let processed = pipeline.recover_ingress().await.unwrap();
+    assert_eq!(processed, 2, "both rows were attempted");
+
+    // The good row processed into an event + a pending job.
+    assert_eq!(harness.event_count(), 1);
+    assert_eq!(harness.pending_jobs(), 1);
+
+    // The bad row is left 'processing' (not deleted) for the reaper; the good
+    // row was deleted after commit.
+    let conn = rusqlite::Connection::open(harness.database.path()).unwrap();
+    let (bad_state, remaining): (String, i64) = conn
+        .query_row(
+            "SELECT state, COUNT(*) FROM ingress_events GROUP BY state",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .unwrap();
+    assert_eq!(remaining, 1, "only the failed row remains");
+    assert_eq!(
+        bad_state, "processing",
+        "failed row is left 'processing' for the reaper"
+    );
+}
+
+/// A 3-strike auth pause must emit `CoreEvent::HealthChanged` for the paused
+/// channel. Before the fix, `emit_health_pause` read `paused_reason_code` into
+/// a `_` local and returned without pushing anything.
+#[tokio::test]
+async fn three_strike_auth_pause_emits_health_changed() {
+    let harness = WorkerHarness::new();
+    let chan_a = harness
+        .pipeline_harness
+        .add_channel(ChannelKind::WeCom, "a");
+    // Enqueue three jobs on chan_a; all return Auth so the 3rd triggers the pause.
+    let _j1 = harness.enqueue_job(chan_a);
+    let _j2 = harness.enqueue_job(chan_a);
+    let _j3 = harness.enqueue_job(chan_a);
+    harness.factory.set_outcomes(vec![
+        MockSendOutcome::Auth,
+        MockSendOutcome::Auth,
+        MockSendOutcome::Auth,
+    ]);
+
+    let worker = harness.worker();
+    for _ in 0..3 {
+        worker.clone().run_once().await.unwrap();
+    }
+
+    assert_eq!(
+        harness.channel_health(chan_a),
+        ChannelHealth::PausedAuthentication
+    );
+    let events = harness.events_sink.lock().unwrap();
+    let health_changes: Vec<Uuid> = events
+        .iter()
+        .filter_map(|e| match e {
+            cc_reminder_lib::worker::CoreEvent::HealthChanged { channel_id } => Some(*channel_id),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        health_changes.contains(&chan_a),
+        "expected a HealthChanged event for the paused channel, got {health_changes:?}"
+    );
 }

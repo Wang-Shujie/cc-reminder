@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use chrono::Utc;
-use secrecy::SecretString;
 use tokio::sync::{Notify, Semaphore};
 use uuid::Uuid;
 
@@ -28,9 +27,7 @@ use crate::model::{ChannelKind, NotificationDocument};
 use crate::security::credentials::{CredentialPayload, CredentialStore};
 use crate::storage::config::ConfigRepository;
 use crate::storage::db::Database;
-use crate::storage::queue::{
-    ClaimedDelivery, DeliveryJob, DeliveryStatus, QueueRepository, RetryOutcome,
-};
+use crate::storage::queue::{ClaimedDelivery, DeliveryJob, QueueRepository};
 
 /// Tunables + dependencies for [`DeliveryWorker`]. The sender factory is
 /// injectable so tests can drive every retry/auth/aggregate path without HTTP.
@@ -303,7 +300,7 @@ async fn process_claim<F: ChannelSenderFactory>(
             reset_auth_failures(&config.database, first.channel_id, now)?;
         }
         Err(error) => {
-            record_failure(config, claim, &queue, &jobs, now, &error)?;
+            record_failure(config, claim, &queue, &jobs, now, &error, &events)?;
         }
     }
     emit(&events, CoreEvent::QueueChanged);
@@ -327,6 +324,7 @@ fn record_failure<F: ChannelSenderFactory>(
     jobs: &[DeliveryJob],
     now: chrono::DateTime<Utc>,
     error: &DeliveryError,
+    events: &Arc<Mutex<Vec<CoreEvent>>>,
 ) -> Result<(), AppError> {
     let is_auth = matches!(
         error.kind,
@@ -350,7 +348,7 @@ fn record_failure<F: ChannelSenderFactory>(
         bump_auth_failure_explicit(queue, jobs[0].channel_id, now)?;
     }
     if matches!(error.kind, DeliveryErrorKind::Authentication) || is_auth {
-        emit_health_pause(queue, jobs[0].channel_id);
+        emit_health_pause(events, queue, jobs[0].channel_id);
     }
     Ok(())
 }
@@ -360,31 +358,7 @@ fn bump_auth_failure_explicit(
     channel_id: Uuid,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), AppError> {
-    // ponytail: reuse the queue's per-job helper by inserting a sentinel
-    // failed job would be overkill; instead do a direct UPDATE against the
-    // channels row. The 3-strike pause flips health_status to
-    // paused_authentication.
-    let conn = queue
-        .database_for_test()
-        .connect()
-        .map_err(|_| crate::storage::db::storage_error("storage.query_failed", "connect failed"))?;
-    conn.execute(
-        "UPDATE channels
-         SET consecutive_auth_failures = consecutive_auth_failures + 1,
-             health_status = CASE
-                 WHEN consecutive_auth_failures + 1 >= 3 THEN 'paused_authentication'
-                 ELSE health_status
-             END,
-             paused_reason_code = CASE
-                 WHEN consecutive_auth_failures + 1 >= 3 THEN 'authentication_failed'
-                 ELSE paused_reason_code
-             END,
-             updated_at = ?1
-         WHERE id = ?2",
-        rusqlite::params![now.to_rfc3339(), channel_id.to_string()],
-    )
-    .map_err(|_| crate::storage::db::storage_error("storage.write_failed", "write failed"))?;
-    Ok(())
+    queue.bump_auth_failure(channel_id, now)
 }
 
 fn reset_auth_failures(
@@ -392,33 +366,25 @@ fn reset_auth_failures(
     channel_id: Uuid,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), AppError> {
-    let conn = database
-        .connect()
-        .map_err(|_| crate::storage::db::storage_error("storage.query_failed", "connect failed"))?;
-    conn.execute(
-        "UPDATE channels
-         SET consecutive_auth_failures = 0,
-             health_status = 'healthy',
-             paused_reason_code = NULL,
-             last_succeeded_at = ?1,
-             updated_at = ?1
-         WHERE id = ?2",
-        rusqlite::params![now.to_rfc3339(), channel_id.to_string()],
-    )
-    .map_err(|_| crate::storage::db::storage_error("storage.write_failed", "write failed"))?;
-    Ok(())
+    QueueRepository::new(database.clone()).reset_auth_failures(channel_id, now)
 }
 
-fn emit_health_pause(queue: &QueueRepository, channel_id: Uuid) {
-    if let Ok(conn) = queue.database_for_test().connect() {
-        let paused: Option<String> = conn
-            .query_row(
-                "SELECT paused_reason_code FROM channels WHERE id = ?1",
-                [channel_id.to_string()],
-                |row| row.get(0),
-            )
-            .ok();
-        let _ = paused;
+fn emit_health_pause(
+    events: &Arc<Mutex<Vec<CoreEvent>>>,
+    queue: &QueueRepository,
+    channel_id: Uuid,
+) {
+    // Re-query the channel's health and push HealthChanged if it transitioned
+    // to paused_authentication. The auth-failure bump that precedes this call
+    // is what flips the column, so this must run AFTER bump_auth_failure /
+    // queue.retry (which already bumps for Authentication-kind errors).
+    if queue
+        .channel_health_status_for(channel_id)
+        .as_deref()
+        .map(|status| status == "paused_authentication")
+        .unwrap_or(false)
+    {
+        emit(events, CoreEvent::HealthChanged { channel_id });
     }
 }
 
@@ -477,14 +443,3 @@ fn emit(sink: &Arc<Mutex<Vec<CoreEvent>>>, event: CoreEvent) {
 
 // Re-export commonly used types from the queue module for convenience.
 pub use crate::storage::queue::RetryDecision;
-
-// Suppress unused-import warning: SecretString is reserved for the production
-// sender factory bridge (Task 15).
-#[allow(dead_code)]
-fn _retain_secret_string_type(_: SecretString) {}
-
-#[allow(dead_code)]
-fn _retain_delivery_status(_: DeliveryStatus) {}
-
-#[allow(dead_code)]
-fn _retain_retry_outcome(_: RetryOutcome) {}

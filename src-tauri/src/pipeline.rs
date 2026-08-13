@@ -18,9 +18,10 @@
 //! commits; duplicate event UUIDs are idempotent.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Instant;
 
-use chrono::Utc;
+use chrono::{FixedOffset, Utc};
 use uuid::Uuid;
 
 use crate::error::{AppError, ErrorDomain};
@@ -86,26 +87,29 @@ const POLICY_RECENT_DELIVERY_LOOKUP: usize = 32;
 #[derive(Clone)]
 pub struct EventPipeline {
     database: crate::storage::db::Database,
-    cipher_key: [u8; 32],
+    cipher: Arc<FieldCipher>,
     correlation_key: [u8; 32],
     platform: PathPlatform,
     projects: Vec<ProjectRegistration>,
+    local_offset: FixedOffset,
 }
 
 impl EventPipeline {
     pub fn new(
         database: crate::storage::db::Database,
-        cipher_key: [u8; 32],
+        cipher: Arc<FieldCipher>,
         correlation_key: [u8; 32],
         platform: PathPlatform,
         projects: Vec<ProjectRegistration>,
+        local_offset: FixedOffset,
     ) -> Self {
         Self {
             database,
-            cipher_key,
+            cipher,
             correlation_key,
             platform,
             projects,
+            local_offset,
         }
     }
 
@@ -121,13 +125,14 @@ impl EventPipeline {
         // Encrypt sensitive fields NOW, while we still hold the captured
         // event's sensitive_fields map. normalize_event drops it (by design)
         // after producing HMAC references, so we cannot encrypt after.
-        let cipher = FieldCipher::from_key(self.cipher_key);
         let encrypted = if request.event.sensitive_fields.is_empty() {
             None
         } else {
-            Some(cipher.encrypt_fields(stable_id, &request.event.sensitive_fields)?)
+            Some(
+                self.cipher
+                    .encrypt_fields(stable_id, &request.event.sensitive_fields)?,
+            )
         };
-        let sensitive_for_template = !request.event.sensitive_fields.is_empty();
         let event = request.event;
         let agent = event.source;
         let source_event = event.source_event.clone();
@@ -180,7 +185,7 @@ impl EventPipeline {
 
         // Resolve effective rule (global + project patch).
         let config = ConfigRepository::new(self.database.clone());
-        let (resolved, project_patch_used) =
+        let (resolved, _project_patch_used) =
             resolve_effective_rule(&config, &envelope, agent, &source_event)?;
 
         let now = Utc::now();
@@ -196,7 +201,7 @@ impl EventPipeline {
             rule: &resolved.config,
             notification_pause: notification_pause.as_ref(),
             now,
-            local_offset: chrono::FixedOffset::east_opt(0).expect("valid offset"),
+            local_offset: self.local_offset,
             recent_delivery_times: &recent,
         });
 
@@ -210,7 +215,6 @@ impl EventPipeline {
         // rule is suppressed stores no ciphertext (encrypted is dropped on the
         // floor when outcome != Queued, since insert_event_in_tx is the only
         // path that persists the blob and we only pass it for Queued events).
-        let _ = sensitive_for_template;
 
         // Build the persisted envelope. Mandatory redaction is applied to every
         // public_fields string below in redact_envelope().
@@ -223,7 +227,6 @@ impl EventPipeline {
         // Begin the atomic processing transaction.
         let events_repo = EventRepository::new(self.database.clone());
         let queue_repo = QueueRepository::new(self.database.clone());
-        let integrations_repo = IntegrationRepository::new(self.database.clone());
 
         let processed_event_id = redacted_envelope.id;
         let event_id_for_tx = processed_event_id;
@@ -269,17 +272,21 @@ impl EventPipeline {
                 event_id: event_id_for_tx,
             })
         });
-        let _ = integrations_repo;
-        let _ = project_patch_used;
-        let _ = queue_repo;
-        let _ = events_repo;
         let outcome = result?;
         let _ = started.elapsed();
         Ok(outcome)
     }
 
-    /// Process one safe-ingress row using current rules and the original
+    /// Process one safe-ingress batch using current rules and the original
     /// occurrence time. Idempotent on event UUID.
+    ///
+    /// `take_ingress_batch` already flipped every row in the batch to
+    /// `'processing'` and committed, so a per-row failure must NOT abort the
+    /// rest of the batch — that would strand healthy rows in `'processing'`
+    /// with no reaper until Task 15's startup sweep. Instead a failing row is
+    /// skipped and left in `'processing'` for the Task 15 reaper; the rest of
+    /// the batch proceeds. Returns the count of rows that were attempted
+    /// (successful or not).
     pub async fn recover_ingress(&self) -> Result<usize, AppError> {
         let events_repo = EventRepository::new(self.database.clone());
         let queue_repo = QueueRepository::new(self.database.clone());
@@ -292,8 +299,18 @@ impl EventPipeline {
         let mut processed = 0usize;
         for safe in batch {
             processed += 1;
-            self.process_safe_ingress_with(&events_repo, &queue_repo, &config, safe)
-                .await?;
+            // Skip-and-continue: a single bad row (e.g. uncatalogued
+            // capability after a catalog upgrade) must not strand its
+            // siblings. The failing row stays `'processing'` for the Task 15
+            // startup reaper.
+            if let Err(_error) = self
+                .process_safe_ingress_with(&events_repo, &queue_repo, &config, safe)
+                .await
+            {
+                // ponytail: no logger is wired yet (Task 15); the failed row
+                // is observable via its lingering `'processing'` state and
+                // the startup reaper. Swap in tracing::warn when Task 15 lands.
+            }
         }
         Ok(processed)
     }
@@ -377,7 +394,7 @@ impl EventPipeline {
             rule: &resolved.config,
             notification_pause: notification_pause.as_ref(),
             now,
-            local_offset: chrono::FixedOffset::east_opt(0).expect("valid offset"),
+            local_offset: self.local_offset,
             recent_delivery_times: &recent,
         });
 
@@ -512,7 +529,7 @@ fn enqueue_jobs(
     let ttl_seconds = resolved.config.delivery.ttl_seconds.max(1) as i64;
     let expires_at = now + chrono::Duration::seconds(ttl_seconds);
 
-    let (aggregate_key, aggregate_release_at) = match decision {
+    let (base_aggregate_key, aggregate_release_at) = match decision {
         PolicyDecision::Aggregate {
             bucket_key,
             release_at,
@@ -524,6 +541,16 @@ fn enqueue_jobs(
         return Ok(());
     }
     for target in targets {
+        // Mix channel_id into the aggregate bucket key so a rule with multiple
+        // targets yields one SEPARATE claimable bucket per channel (design
+        // §15.1: one delivery job per event/rule/target). Without this, two
+        // jobs sharing a base key would be coalesced by claim_due into a
+        // single Aggregate delivery sent to only the first channel, and the
+        // shared receipt would mark the other channel's job succeeded
+        // without it ever being notified.
+        let aggregate_key = base_aggregate_key
+            .as_ref()
+            .map(|base| per_channel_aggregate_key(base, target.channel_id));
         let job = DeliveryJob {
             id: Uuid::now_v7(),
             event_id,
@@ -542,12 +569,25 @@ fn enqueue_jobs(
             expires_at,
             lease_owner: None,
             lease_expires_at: None,
-            aggregate_key: aggregate_key.clone(),
+            aggregate_key,
             aggregate_release_at,
         };
         enqueue_in_tx(tx, &job)?;
     }
     Ok(())
+}
+
+/// Derive a per-channel aggregate bucket key by hashing the base policy bucket
+/// together with the channel id. Kept separate from the idempotency-key helper
+/// because the bucket must be stable across replays of the same event+channel
+/// but MUST differ across channels even when the policy produced one base key.
+fn per_channel_aggregate_key(base: &str, channel_id: crate::model::ChannelId) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(base.as_bytes());
+    hasher.update([0x00]);
+    hasher.update(channel_id.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 fn load_envelope_for_template(
@@ -712,13 +752,9 @@ fn unrecognized_helper() -> AppError {
 /// sensitive plaintext, by design).
 #[allow(dead_code)]
 pub fn encrypt_sensitive_fields(
-    cipher_key: [u8; 32],
+    cipher: &FieldCipher,
     event_id: Uuid,
     sensitive: &BTreeMap<String, String>,
 ) -> Result<crate::security::crypto::EncryptedFields, AppError> {
-    FieldCipher::from_key(cipher_key).encrypt_fields(event_id, sensitive)
+    cipher.encrypt_fields(event_id, sensitive)
 }
-
-// Suppress an unused-import warning when only the public re-exports are used.
-#[allow(unused_imports)]
-use crate::events::normalize::SafeIngressEvent as _SafeIngressImport;

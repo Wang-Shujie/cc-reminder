@@ -868,6 +868,50 @@ impl QueueRepository {
         Ok(())
     }
 
+    /// Bump a channel's `consecutive_auth_failures` by one and, when the
+    /// design §15.2 threshold (3) is reached, flip `health_status` to
+    /// `paused_authentication` with `paused_reason_code = 'authentication_failed'`.
+    /// Used by the worker when a `Signature`/`Permission` failure bypasses
+    /// the queue's own auth-bump path (which only fires for `Authentication`).
+    /// Mirrors the SQL in [`pause_channel_for_auth`] but is keyed directly on
+    /// `channel_id` rather than on a job row.
+    pub fn bump_auth_failure(
+        &self,
+        channel_id: ChannelId,
+        now: DateTime<Utc>,
+    ) -> Result<(), AppError> {
+        let connection = self.database.connect()?;
+        bump_auth_failure_on(&connection, channel_id, now)?;
+        Ok(())
+    }
+
+    /// Reset a channel's auth-failure state to healthy after a successful
+    /// send: `consecutive_auth_failures = 0`, `health_status = 'healthy'`,
+    /// `paused_reason_code = NULL`, and stamp `last_succeeded_at`.
+    pub fn reset_auth_failures(
+        &self,
+        channel_id: ChannelId,
+        now: DateTime<Utc>,
+    ) -> Result<(), AppError> {
+        let connection = self.database.connect()?;
+        reset_auth_failures_on(&connection, channel_id, now)?;
+        Ok(())
+    }
+
+    /// Read a channel's `health_status` text. Returns `None` if the row is
+    /// absent or the column is unreadable. Used by the worker to detect the
+    /// `paused_authentication` transition and emit `CoreEvent::HealthChanged`.
+    pub fn channel_health_status_for(&self, channel_id: ChannelId) -> Option<String> {
+        let connection = self.database.connect().ok()?;
+        connection
+            .query_row(
+                "SELECT health_status FROM channels WHERE id = ?1",
+                params![channel_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+    }
+
     /// Per-state queue counters.
     pub fn queue_stats(&self) -> Result<QueueStats, AppError> {
         let connection = self.database.connect()?;
@@ -1212,6 +1256,58 @@ fn pause_channel_for_auth(
                 &now_rfc,
                 job_id.to_string()
             ],
+        )
+        .map_err(|_| write_error())?;
+    Ok(())
+}
+
+fn bump_auth_failure_on(
+    connection: &rusqlite::Connection,
+    channel_id: ChannelId,
+    now: DateTime<Utc>,
+) -> Result<(), AppError> {
+    let now_rfc = now.to_rfc3339();
+    connection
+        .execute(
+            "UPDATE channels
+             SET consecutive_auth_failures = consecutive_auth_failures + 1,
+                 health_status = CASE
+                     WHEN consecutive_auth_failures + 1 >= ?1 THEN 'paused_authentication'
+                     ELSE health_status
+                 END,
+                 paused_reason_code = CASE
+                     WHEN consecutive_auth_failures + 1 >= ?1 THEN ?2
+                     ELSE paused_reason_code
+                 END,
+                 updated_at = ?3
+             WHERE id = ?4",
+            params![
+                AUTH_PAUSE_THRESHOLD,
+                PAUSE_AUTH_REASON,
+                &now_rfc,
+                channel_id.to_string()
+            ],
+        )
+        .map_err(|_| write_error())?;
+    Ok(())
+}
+
+fn reset_auth_failures_on(
+    connection: &rusqlite::Connection,
+    channel_id: ChannelId,
+    now: DateTime<Utc>,
+) -> Result<(), AppError> {
+    let now_rfc = now.to_rfc3339();
+    connection
+        .execute(
+            "UPDATE channels
+             SET consecutive_auth_failures = 0,
+                 health_status = 'healthy',
+                 paused_reason_code = NULL,
+                 last_succeeded_at = ?1,
+                 updated_at = ?1
+             WHERE id = ?2",
+            params![&now_rfc, channel_id.to_string()],
         )
         .map_err(|_| write_error())?;
     Ok(())

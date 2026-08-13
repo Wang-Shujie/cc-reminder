@@ -37,7 +37,11 @@ impl FieldCipher {
         Self::load_or_create_with_store(&CredentialStore::system())
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// Construct a cipher from a raw key. Production callers should prefer
+    /// [`FieldCipher::load_or_create`] so the key is sourced from the
+    /// platform credential store; this constructor exists for boot paths
+    /// that already hold the key (e.g. the live pipeline, which constructs
+    /// the cipher once at startup) and for tests.
     pub fn from_key(key: [u8; KEY_BYTES]) -> Self {
         Self::with_key(key)
     }
