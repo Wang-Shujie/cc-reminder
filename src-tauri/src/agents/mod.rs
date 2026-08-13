@@ -15,7 +15,7 @@ use crate::model::{AgentInstallationRecord, AgentKind, InstallationHealth, Trust
 
 pub use claude::ClaudeIntegration;
 pub use codex::CodexIntegration;
-pub use detect::{AgentVersionCache, Detection, DetectionState};
+pub use detect::{AgentVersionCache, Detection, DetectionState, detect_agent};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentHealthUpdate {

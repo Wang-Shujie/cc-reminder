@@ -22,7 +22,7 @@ use chrono::Utc;
 use tokio::sync::{Notify, Semaphore};
 use uuid::Uuid;
 
-use crate::error::{AppError, DeliveryError, DeliveryErrorKind, DeliveryReceipt};
+use crate::error::{AppError, ChannelSender, DeliveryError, DeliveryErrorKind, DeliveryReceipt};
 use crate::model::{ChannelKind, NotificationDocument};
 use crate::security::credentials::{CredentialPayload, CredentialStore};
 use crate::storage::config::ConfigRepository;
@@ -72,8 +72,27 @@ pub trait ChannelSenderFactory: Send + Sync {
 }
 
 /// Production factory that builds the real DingTalk / WeCom senders per send
-/// and zeroizes the credential payload after the request. Not used in tests.
-pub struct ProductionSenderFactory;
+/// from a stored [`CredentialPayload`] and runs the async [`ChannelSender`]
+/// via a stored tokio runtime handle. Replaces the Task-14 stub.
+///
+/// Construction lives in the app shell (`commands`/`lib.rs`) because that is
+/// where the [`CredentialStore`] and tokio handle are owned. Tests use mocks.
+pub struct ProductionSenderFactory {
+    credentials: crate::security::credentials::CredentialStore,
+    handle: tokio::runtime::Handle,
+}
+
+impl ProductionSenderFactory {
+    pub fn new(
+        credentials: crate::security::credentials::CredentialStore,
+        handle: tokio::runtime::Handle,
+    ) -> Self {
+        Self {
+            credentials,
+            handle,
+        }
+    }
+}
 
 impl ChannelSenderFactory for ProductionSenderFactory {
     fn send(
@@ -82,19 +101,61 @@ impl ChannelSenderFactory for ProductionSenderFactory {
         credential_ref: &str,
         document: NotificationDocument,
     ) -> Result<DeliveryReceipt, DeliveryError> {
-        // ponytail: real senders are async; in production the worker wraps
-        // this in spawn_blocking. Implementation defers to the ChannelSender
-        // trait via a synchronous bridge that the runtime hosts.
-        let _ = (kind, credential_ref, document);
-        Err(DeliveryError {
-            kind: DeliveryErrorKind::Format,
-            code: "worker.production_unavailable".to_owned(),
-            redacted_message: "production sender bridge is wired by the app shell (Task 15)"
-                .to_owned(),
-            http_status: None,
-            platform_code: None,
-            retry_after_seconds: None,
-        })
+        let payload = self
+            .credentials
+            .get(credential_ref)
+            .map_err(|_| DeliveryError {
+                kind: DeliveryErrorKind::Authentication,
+                code: "credential_unavailable".to_owned(),
+                redacted_message: "credential could not be loaded from the keyring".to_owned(),
+                http_status: None,
+                platform_code: None,
+                retry_after_seconds: None,
+            })?;
+        // Build the typed sender for the channel kind, then run the async
+        // ChannelSender::send on the tokio runtime. The worker already wraps
+        // the factory call in spawn_blocking; we block_on the runtime handle
+        // here so the async adapter resolves synchronously.
+        match kind {
+            ChannelKind::DingTalk => {
+                use crate::security::credentials::CredentialPayload;
+                let CredentialPayload::DingTalk {
+                    webhook,
+                    signing_secret,
+                } = payload
+                else {
+                    return Err(DeliveryError {
+                        kind: DeliveryErrorKind::Format,
+                        code: "credential_kind_mismatch".to_owned(),
+                        redacted_message: "credential kind does not match channel".to_owned(),
+                        http_status: None,
+                        platform_code: None,
+                        retry_after_seconds: None,
+                    });
+                };
+                let keyword_prefix = None::<String>;
+                let sender =
+                    crate::channels::DingTalkSender::new(webhook, signing_secret, keyword_prefix)?;
+                self.handle
+                    .block_on(async move { sender.send(&document).await })
+            }
+            ChannelKind::WeCom => {
+                use crate::security::credentials::CredentialPayload;
+                let CredentialPayload::WeCom { webhook } = payload else {
+                    return Err(DeliveryError {
+                        kind: DeliveryErrorKind::Format,
+                        code: "credential_kind_mismatch".to_owned(),
+                        redacted_message: "credential kind does not match channel".to_owned(),
+                        http_status: None,
+                        platform_code: None,
+                        retry_after_seconds: None,
+                    });
+                };
+                let sender = crate::channels::WeComSender::new(webhook)?;
+                self.handle
+                    .block_on(async move { sender.send(&document).await })
+            }
+        }
     }
 }
 

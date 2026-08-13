@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the main window",
+  "description": "Default capabilities for the main window. Grants only the window, event, autostart and updater permissions the WebView actually uses. No shell, filesystem, process, global-HTTP or localhost capabilities.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:event:default",
+    "autostart:default",
+    "updater:default"
+  ]
 }

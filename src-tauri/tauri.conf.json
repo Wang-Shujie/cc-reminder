@@ -33,5 +33,13 @@
       "resources/capabilities/codex-0.145.0.json",
       "resources/helper-manifest.json"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "dialog": false,
+      "pubkey": "",
+      "endpoints": []
+    }
   }
 }

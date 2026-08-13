@@ -181,6 +181,7 @@ pub(crate) fn insert_ingress(
     Ok(())
 }
 
+#[allow(dead_code)] // Task-14 IPC fallback; retained for the hook-contract tests
 pub(crate) fn persist_ipc_request(
     paths: &AppPaths,
     request: crate::ipc::IngressRequest,
