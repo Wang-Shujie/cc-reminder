@@ -910,6 +910,50 @@ mod tests {
         assert_eq!(page.next_offset, None);
     }
 
+    #[test]
+    fn history_detail_by_id_reaches_events_older_than_the_first_page() {
+        // Regression guard for the detail-drawer fix: the event_id filter must
+        // reach an event that sits beyond the newest `limit` rows, where the
+        // old scan-and-filter implementation silently returned nothing.
+        let (_file, repo) = test_repository();
+        let oldest = event_fixture();
+        repo.insert_event(
+            &oldest,
+            None,
+            EventProcessingOutcome::Suppressed,
+            Some(EventOutcomeReasonCode::Disabled),
+        )
+        .unwrap();
+        for _ in 0..210 {
+            repo.insert_event(
+                &event_fixture(),
+                None,
+                EventProcessingOutcome::Suppressed,
+                Some(EventOutcomeReasonCode::Disabled),
+            )
+            .unwrap();
+        }
+
+        let unfiltered = repo
+            .list_history(&HistoryFilter::default(), PageRequest::first(200))
+            .unwrap();
+        assert!(
+            !unfiltered
+                .items
+                .iter()
+                .any(|item| item.event_id == oldest.id),
+            "precondition: the oldest event is beyond the first page"
+        );
+
+        let filter = HistoryFilter {
+            event_id: Some(oldest.id),
+            ..HistoryFilter::default()
+        };
+        let page = repo.list_history(&filter, PageRequest::first(200)).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].event_id, oldest.id);
+    }
+
     fn test_repository() -> (TempDir, EventRepository) {
         let root = tempdir().unwrap();
         let path = root

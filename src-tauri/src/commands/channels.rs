@@ -280,6 +280,12 @@ pub(crate) async fn test_channel_impl(
 ) -> Result<TestChannelResult, AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
     let existing = state.config.get_channel(channel_id)?;
+    // A DingTalk keyword robot only accepts messages containing the configured
+    // keyword, so the connection test must carry it exactly like a real send.
+    let keyword_prefix = match &existing.public_config {
+        crate::model::ChannelPublicConfig::DingTalk { keyword_prefix } => keyword_prefix.as_deref(),
+        crate::model::ChannelPublicConfig::WeCom => None,
+    };
     let factory = crate::worker::ProductionSenderFactory::new(state.credentials.clone());
     let document = crate::model::NotificationDocument {
         title: "CC Reminder connection test".into(),
@@ -289,7 +295,12 @@ pub(crate) async fn test_channel_impl(
         footer: None,
     };
     match factory
-        .send(existing.kind, &existing.credential_ref, None, document)
+        .send(
+            existing.kind,
+            &existing.credential_ref,
+            keyword_prefix,
+            document,
+        )
         .await
     {
         Ok(receipt) => Ok(TestChannelResult {

@@ -107,6 +107,17 @@ pub(crate) fn save_settings_impl(
 ) -> Result<SettingsView, AppError> {
     let mut settings = state.config.get_settings()?;
     let autostart_changed = settings.autostart != input.autostart;
+    // Apply the OS registration BEFORE persisting: if the control fails, the
+    // DB keeps its old value, so re-saving with the same target retries the
+    // registration instead of silently no-op'ing on an unchanged field.
+    if autostart_changed {
+        (state.autostart_control)(input.autostart).map_err(|message| AppError {
+            domain: ErrorDomain::Configuration,
+            code: "configuration.autostart_failed".to_owned(),
+            message,
+            suggested_action: Some("re-save settings to retry".to_owned()),
+        })?;
+    }
     settings.autostart = input.autostart;
     settings.close_to_tray = input.close_to_tray;
     settings.locale = input.locale.into_locale();
@@ -119,14 +130,6 @@ pub(crate) fn save_settings_impl(
     // applied ONLY here, per the plan ("updated only from save_settings"). The
     // control is injected by the app shell (the Tauri autostart plugin); tests
     // inject a recording closure.
-    if autostart_changed {
-        (state.autostart_control)(input.autostart).map_err(|message| AppError {
-            domain: ErrorDomain::Configuration,
-            code: "configuration.autostart_failed".to_owned(),
-            message,
-            suggested_action: Some("re-save settings to retry".to_owned()),
-        })?;
-    }
     Ok(saved.into())
 }
 
