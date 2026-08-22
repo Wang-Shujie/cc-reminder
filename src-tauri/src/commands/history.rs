@@ -114,6 +114,7 @@ pub(crate) fn list_history_impl(
             .transpose()?,
         delivery_status: filter.delivery_status.map(|s| s.into_status()),
         processing_outcome: filter.processing_outcome.map(|o| o.into_outcome()),
+        event_id: None,
     };
     state.events.list_history(&parsed, page.to_page_request())
 }
@@ -123,27 +124,16 @@ pub(crate) fn get_history_detail_impl(
     input: GetHistoryDetailInput,
 ) -> Result<HistoryPage, AppError> {
     let event_id = parse_uuid_input(&input.event_id)?;
-    // Fetch the single event by using the typed list with a project-neutral
-    // filter and a page of 1; the repo does not expose a by-id read, and the
-    // history page already redacts ciphertext/credentials.
-    let mut filter = HistoryFilter::default();
-    let _ = &mut filter;
-    // ponytail: a dedicated by-id query would be cleaner; the history page is
-    // small and the frontend uses this for the detail drawer. Promote to a
-    // dedicated repo method if the page size becomes a hotspot.
-    let page = state.events.list_history(
-        &HistoryFilter::default(),
-        crate::storage::events::PageRequest::first(200),
-    )?;
-    let items: Vec<_> = page
-        .items
-        .into_iter()
-        .filter(|i| i.event_id == event_id)
-        .collect();
-    Ok(HistoryPage {
-        items,
-        next_offset: None,
-    })
+    // By-id filter: one SQL query returning that event with its delivery jobs
+    // regardless of how far back it sits in history. The history read path
+    // already redacts ciphertext/credentials.
+    let filter = HistoryFilter {
+        event_id: Some(event_id),
+        ..HistoryFilter::default()
+    };
+    state
+        .events
+        .list_history(&filter, crate::storage::events::PageRequest::first(200))
 }
 
 pub(crate) fn manual_retry_delivery_impl(

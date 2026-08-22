@@ -843,13 +843,23 @@ impl MockSenderFactory {
 }
 
 impl ChannelSenderFactory for MockSenderFactory {
-    fn send(
-        &self,
+    fn send<'a>(
+        &'a self,
         _kind: ChannelKind,
-        _credential_ref: &str,
+        _credential_ref: &'a str,
+        _keyword_prefix: Option<&'a str>,
         document: NotificationDocument,
-    ) -> Result<cc_reminder_lib::error::DeliveryReceipt, cc_reminder_lib::error::DeliveryError>
-    {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        cc_reminder_lib::error::DeliveryReceipt,
+                        cc_reminder_lib::error::DeliveryError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         self.sent_documents.lock().unwrap().push(document);
         let outcome = self
             .outcomes
@@ -857,29 +867,31 @@ impl ChannelSenderFactory for MockSenderFactory {
             .unwrap()
             .pop_front()
             .unwrap_or(MockSendOutcome::Success);
-        match outcome {
-            MockSendOutcome::Success => Ok(cc_reminder_lib::error::DeliveryReceipt {
-                http_status: 200,
-                platform_code: Some("0".to_owned()),
-                sent_at: Utc::now(),
-            }),
-            MockSendOutcome::Auth => Err(cc_reminder_lib::error::DeliveryError {
-                kind: cc_reminder_lib::error::DeliveryErrorKind::Authentication,
-                code: "mock.auth".into(),
-                redacted_message: "auth failed".into(),
-                http_status: Some(401),
-                platform_code: None,
-                retry_after_seconds: None,
-            }),
-            MockSendOutcome::Transient => Err(cc_reminder_lib::error::DeliveryError {
-                kind: cc_reminder_lib::error::DeliveryErrorKind::Network,
-                code: "mock.network".into(),
-                redacted_message: "network".into(),
-                http_status: None,
-                platform_code: None,
-                retry_after_seconds: None,
-            }),
-        }
+        Box::pin(async move {
+            match outcome {
+                MockSendOutcome::Success => Ok(cc_reminder_lib::error::DeliveryReceipt {
+                    http_status: 200,
+                    platform_code: Some("0".to_owned()),
+                    sent_at: Utc::now(),
+                }),
+                MockSendOutcome::Auth => Err(cc_reminder_lib::error::DeliveryError {
+                    kind: cc_reminder_lib::error::DeliveryErrorKind::Authentication,
+                    code: "mock.auth".into(),
+                    redacted_message: "auth failed".into(),
+                    http_status: Some(401),
+                    platform_code: None,
+                    retry_after_seconds: None,
+                }),
+                MockSendOutcome::Transient => Err(cc_reminder_lib::error::DeliveryError {
+                    kind: cc_reminder_lib::error::DeliveryErrorKind::Network,
+                    code: "mock.network".into(),
+                    redacted_message: "network".into(),
+                    http_status: None,
+                    platform_code: None,
+                    retry_after_seconds: None,
+                }),
+            }
+        })
     }
 }
 

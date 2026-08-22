@@ -274,14 +274,13 @@ pub(crate) fn delete_channel_impl(
     Ok(())
 }
 
-pub(crate) fn test_channel_impl(
+pub(crate) async fn test_channel_impl(
     state: &CoreState,
     input: TestChannelInput,
 ) -> Result<TestChannelResult, AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
     let existing = state.config.get_channel(channel_id)?;
-    let handle = tokio::runtime::Handle::current();
-    let factory = crate::worker::ProductionSenderFactory::new(state.credentials.clone(), handle);
+    let factory = crate::worker::ProductionSenderFactory::new(state.credentials.clone());
     let document = crate::model::NotificationDocument {
         title: "CC Reminder connection test".into(),
         severity: crate::model::Severity::Info,
@@ -289,7 +288,10 @@ pub(crate) fn test_channel_impl(
         body: "This is a connection test from CC Reminder.".into(),
         footer: None,
     };
-    match factory.send(existing.kind, &existing.credential_ref, document) {
+    match factory
+        .send(existing.kind, &existing.credential_ref, None, document)
+        .await
+    {
         Ok(receipt) => Ok(TestChannelResult {
             http_status: receipt.http_status,
             platform_code: receipt.platform_code,
@@ -369,10 +371,9 @@ pub async fn test_channel(
     state: State<'_, CoreState>,
     input: TestChannelInput,
 ) -> Result<TestChannelResult, AppError> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || test_channel_impl(&state, input))
-        .await
-        .map_err(|_| configuration_error("join_failed", "command join failed"))?
+    // The impl awaits the (async) sender factory directly, so it must run on
+    // the async runtime — not inside spawn_blocking.
+    test_channel_impl(state.inner(), input).await
 }
 
 #[cfg(test)]

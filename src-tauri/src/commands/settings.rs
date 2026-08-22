@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::{CoreState, configuration_error};
-use crate::error::AppError;
+use crate::error::{AppError, ErrorDomain};
 use crate::health::{PauseDuration, pause_until};
 use crate::model::{AppSettings, Locale, NotificationPause, Theme};
 
@@ -106,6 +106,7 @@ pub(crate) fn save_settings_impl(
     input: SaveSettingsInput,
 ) -> Result<SettingsView, AppError> {
     let mut settings = state.config.get_settings()?;
+    let autostart_changed = settings.autostart != input.autostart;
     settings.autostart = input.autostart;
     settings.close_to_tray = input.close_to_tray;
     settings.locale = input.locale.into_locale();
@@ -114,10 +115,18 @@ pub(crate) fn save_settings_impl(
     settings.log_retention_days = input.log_retention_days;
     settings.onboarding_completed = input.onboarding_completed;
     let saved = state.config.save_settings(&settings)?;
-    // Autostart is the only side-effecting setting; the only place it is
-    // applied is here, per the plan ("updated only from save_settings").
-    // The plugin's ManagerExt is used in the real runtime; tests cover the
-    // settings value alone.
+    // Autostart is the only side-effecting setting; the OS registration is
+    // applied ONLY here, per the plan ("updated only from save_settings"). The
+    // control is injected by the app shell (the Tauri autostart plugin); tests
+    // inject a recording closure.
+    if autostart_changed {
+        (state.autostart_control)(input.autostart).map_err(|message| AppError {
+            domain: ErrorDomain::Configuration,
+            code: "configuration.autostart_failed".to_owned(),
+            message,
+            suggested_action: Some("re-save settings to retry".to_owned()),
+        })?;
+    }
     Ok(saved.into())
 }
 
@@ -196,8 +205,85 @@ fn local_now() -> chrono::DateTime<chrono::FixedOffset> {
 
 #[cfg(test)]
 mod tests {
-    use crate::health::{PauseDuration, pause_until};
+    use super::*;
+    use crate::commands::CoreState;
+    use crate::events::catalog::catalog_for;
+    use crate::security::credentials::CredentialStore;
+    use crate::security::crypto::FieldCipher;
+    use crate::storage::config::ConfigRepository;
+    use crate::storage::db::Database;
+    use crate::storage::events::EventRepository;
+    use crate::storage::integrations::IntegrationRepository;
+    use crate::storage::queue::QueueRepository;
     use chrono::DateTime;
+    use semver::Version;
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+
+    fn state() -> CoreState {
+        let root = tempdir().unwrap();
+        let database_path = root.path().join("com.ccreminder.app/cc-reminder.sqlite3");
+        std::fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        std::mem::forget(root);
+        let database = Database::open(&database_path).unwrap();
+        let config = ConfigRepository::new(database.clone());
+        config
+            .ensure_global_rules(&[
+                catalog_for(
+                    crate::model::AgentKind::ClaudeCode,
+                    &Version::new(2, 1, 218),
+                )
+                .catalog,
+                catalog_for(crate::model::AgentKind::Codex, &Version::new(0, 145, 0)).catalog,
+            ])
+            .unwrap();
+        let events = EventRepository::new(database.clone());
+        let queue = QueueRepository::new(database.clone());
+        let integrations = IntegrationRepository::new(database.clone());
+        let credentials = CredentialStore::memory_for_test();
+        let cipher = Arc::new(FieldCipher::from_key([7u8; 32]));
+        CoreState::new(config, events, queue, integrations, credentials, cipher)
+    }
+
+    fn default_input() -> SaveSettingsInput {
+        SaveSettingsInput {
+            autostart: false,
+            close_to_tray: true,
+            locale: LocaleInput::ZhCn,
+            theme: ThemeInput::System,
+            event_retention_days: 30,
+            log_retention_days: 7,
+            onboarding_completed: true,
+        }
+    }
+
+    #[test]
+    fn save_settings_applies_autostart_only_when_it_changes() {
+        let mut st = state();
+        let applied: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = applied.clone();
+        st.autostart_control = Arc::new(move |enable| {
+            sink.lock().unwrap().push(enable);
+            Ok(())
+        });
+
+        // First save flips false -> true: the control must fire once.
+        let mut input = default_input();
+        input.autostart = true;
+        save_settings_impl(&st, input).unwrap();
+        assert_eq!(*applied.lock().unwrap(), vec![true]);
+
+        // A save that leaves the setting unchanged must not re-apply it.
+        let mut same = default_input();
+        same.autostart = true;
+        save_settings_impl(&st, same).unwrap();
+        assert_eq!(*applied.lock().unwrap(), vec![true]);
+
+        // Flipping back to false disables.
+        let off = default_input();
+        save_settings_impl(&st, off).unwrap();
+        assert_eq!(*applied.lock().unwrap(), vec![true, false]);
+    }
 
     #[test]
     fn pause_today_uses_local_midnight_and_does_not_change_rules() {

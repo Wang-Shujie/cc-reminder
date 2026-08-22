@@ -67,6 +67,9 @@ pub struct HistoryFilter {
     pub channel_id: Option<ChannelId>,
     pub delivery_status: Option<DeliveryStatus>,
     pub processing_outcome: Option<EventProcessingOutcome>,
+    /// Restrict to a single event (the detail drawer). `Default` leaves it
+    /// unset, matching the unfiltered list.
+    pub event_id: Option<Uuid>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -254,6 +257,7 @@ impl EventRepository {
         let source = filter.source.map(AgentKind::as_str);
         let project_id = filter.project_id.map(|id| id.to_string());
         let channel_id = filter.channel_id.map(|id| id.to_string());
+        let event_id = filter.event_id.map(|id| id.to_string());
         let processing_outcome = filter
             .processing_outcome
             .as_ref()
@@ -282,11 +286,12 @@ impl EventRepository {
                    AND (?5 IS NULL OR e.source_event = ?5)
                    AND (?6 IS NULL OR j.channel_id = ?6)
                    AND (?7 IS NULL OR e.processing_outcome = ?7)
+                   AND (?10 IS NULL OR e.id = ?10)
                    AND (
                      ?8 = 0 OR (?8 = 1 AND j.id IS NULL) OR (?8 = 2 AND j.state = ?9)
                    )
                  ORDER BY e.occurred_at DESC, e.id DESC, j.created_at DESC, j.id DESC
-                 LIMIT ?10 OFFSET ?11",
+                 LIMIT ?11 OFFSET ?12",
             )
             .map_err(|_| query_error())?;
         let mut raw_rows = statement
@@ -301,6 +306,7 @@ impl EventRepository {
                     processing_outcome,
                     delivery_filter_kind,
                     delivery_state,
+                    event_id,
                     i64::from(page.limit) + 1,
                     i64::from(page.offset),
                 ],

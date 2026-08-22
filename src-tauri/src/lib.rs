@@ -197,10 +197,7 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     });
 
     // 7. Start the worker with the real sender bridge.
-    let sender_factory = Arc::new(worker::ProductionSenderFactory::new(
-        credentials.clone(),
-        tokio::runtime::Handle::current(),
-    ));
+    let sender_factory = Arc::new(worker::ProductionSenderFactory::new(credentials.clone()));
     let worker_config = WorkerConfig {
         database: database.clone(),
         credentials: credentials.clone(),
@@ -220,10 +217,25 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
 
     // Manage the shared state for commands, and stash the worker cancel token
     // so Quit can trigger graceful shutdown (≤10s wait for active sends).
-    let state = CoreState::new(config, events, queue, integrations, credentials, cipher);
+    let mut state = CoreState::new(config, events, queue, integrations, credentials, cipher);
     {
         let mut guard = state.cancel_token.lock().unwrap();
         *guard = Some(cancel);
+    }
+    {
+        // Autostart is applied only from save_settings (plan Task 15); the
+        // control delegates to the official autostart plugin.
+        use tauri_plugin_autostart::ManagerExt;
+        let handle = app.clone();
+        state.autostart_control = Arc::new(move |enable| {
+            let manager = handle.autolaunch();
+            let result = if enable {
+                manager.enable()
+            } else {
+                manager.disable()
+            };
+            result.map_err(|error| format!("autostart plugin failed: {error}"))
+        });
     }
     app.manage(state);
 
@@ -231,13 +243,17 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 /// Flip stale `processing` ingress rows back to `pending` so the recovery
-/// batch re-evaluates them. A row is stale if it has been `processing` longer
-/// than the bounded recovery window. Uses a direct SQL update on the ingress
-/// table via the event repository's database.
+/// batch re-evaluates them.
+///
+/// This runs during startup BEFORE this process starts its worker, and the
+/// single-instance plugin prevents a second app process, so no live worker can
+/// own a `processing` row at this moment — an unconditional reset is therefore
+/// safe (a row left `processing` by a crashed predecessor is exactly what we
+/// want to recover). The schema has no claim timestamp, so a time-bounded
+/// reset is not possible without a migration; revisit if multi-process access
+/// is ever introduced. The pipeline's idempotency key dedupes any row that
+/// already committed its event.
 fn recover_stale_ingress(events: &EventRepository) {
-    // ponytail: the EventRepository does not expose a stale-row API; we run a
-    // single idempotent UPDATE that is safe to retry. The pipeline's
-    // idempotency key dedupes any row that already committed its event.
     let _ = events;
     let path = events.database_path();
     let connection = rusqlite::Connection::open(path).ok();

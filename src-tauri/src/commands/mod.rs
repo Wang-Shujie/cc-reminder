@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, ErrorDomain};
 use crate::health::HealthSnapshot;
-use crate::model::AppSettings;
+use crate::model::ChannelRecord;
 use crate::security::credentials::CredentialStore;
 use crate::security::crypto::FieldCipher;
 use crate::storage::config::ConfigRepository;
@@ -52,7 +52,14 @@ pub struct CoreState {
     pub credentials: CredentialStore,
     pub cipher: std::sync::Arc<FieldCipher>,
     pub cancel_token: std::sync::Arc<Mutex<Option<crate::worker::CancellationToken>>>,
+    /// Applies the autostart setting to the OS (register/unregister the
+    /// LaunchAgent / login item). Injected by the app shell from the Tauri
+    /// autostart plugin; defaults to a no-op so pure command tests can run.
+    pub autostart_control: AutostartControl,
 }
+
+/// Applies an autostart on/off request. Returns an error message on failure.
+pub type AutostartControl = std::sync::Arc<dyn Fn(bool) -> Result<(), String> + Send + Sync>;
 
 impl CoreState {
     pub fn new(
@@ -71,6 +78,7 @@ impl CoreState {
             credentials,
             cipher,
             cancel_token: std::sync::Arc::new(Mutex::new(None)),
+            autostart_control: std::sync::Arc::new(|_| Ok(())),
         }
     }
 }
@@ -156,7 +164,7 @@ pub(crate) fn update_error(code: &str, message: &str) -> AppError {
 /// `get_bootstrap_state`
 pub(crate) fn bootstrap_state(state: &CoreState) -> Result<BootstrapState, AppError> {
     let settings = state.config.get_settings()?;
-    let snapshot = build_health_snapshot(state, &settings)?;
+    let snapshot = build_health_snapshot(state)?;
     let pending = snapshot.pending_jobs;
     let failed = snapshot.failed_jobs;
     Ok(BootstrapState {
@@ -171,14 +179,10 @@ pub(crate) fn bootstrap_state(state: &CoreState) -> Result<BootstrapState, AppEr
 
 /// `get_health_snapshot`
 pub(crate) fn health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> {
-    let settings = state.config.get_settings()?;
-    build_health_snapshot(state, &settings)
+    build_health_snapshot(state)
 }
 
-fn build_health_snapshot(
-    state: &CoreState,
-    settings: &AppSettings,
-) -> Result<HealthSnapshot, AppError> {
+fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> {
     use crate::health::{HealthInputs, project_health};
 
     let stats = state.queue.queue_stats()?;
@@ -203,19 +207,19 @@ fn build_health_snapshot(
         expired_jobs: stats.expired,
         spool_count: 0,
         rejected_count: 0,
-        last_success_at: last_success(settings),
+        last_success_at: last_success(&channels),
         ..HealthInputs::default()
     };
     Ok(project_health(&inputs))
 }
 
-fn last_success(settings: &AppSettings) -> Option<chrono::DateTime<Utc>> {
-    // ponytail: the channels table holds per-channel last_succeeded_at; the
-    // overview "last success" is the most recent. Aggregating here keeps the
-    // snapshot pure-ish; promote to a dedicated query if it shows up in
-    // profiling.
-    let _ = settings;
-    None
+fn last_success(channels: &[ChannelRecord]) -> Option<chrono::DateTime<Utc>> {
+    // The channels table holds per-channel last_succeeded_at; the overview
+    // "last success" is the most recent across them.
+    channels
+        .iter()
+        .filter_map(|channel| channel.last_succeeded_at)
+        .max()
 }
 
 pub(crate) fn channel_kind_code(kind: crate::model::ChannelKind) -> String {

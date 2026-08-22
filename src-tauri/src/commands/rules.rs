@@ -276,12 +276,18 @@ pub(crate) fn preview_notification_impl(
     Ok(doc)
 }
 
-pub(crate) fn send_rule_test_impl(
+pub(crate) async fn send_rule_test_impl(
     state: &CoreState,
     input: SendRuleTestInput,
 ) -> Result<(), AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
     let channel = state.config.get_channel(channel_id)?;
+    // A DingTalk keyword robot only accepts messages containing the configured
+    // keyword, so the test must carry it exactly like a real delivery.
+    let keyword_prefix = match &channel.public_config {
+        crate::model::ChannelPublicConfig::DingTalk { keyword_prefix } => keyword_prefix.as_deref(),
+        crate::model::ChannelPublicConfig::WeCom => None,
+    };
     let document = NotificationDocument {
         title: "CC Reminder rule test".into(),
         severity: Severity::Info,
@@ -292,12 +298,15 @@ pub(crate) fn send_rule_test_impl(
         body: "Rule test from CC Reminder.".into(),
         footer: None,
     };
-    let factory = crate::worker::ProductionSenderFactory::new(
-        state.credentials.clone(),
-        tokio::runtime::Handle::current(),
-    );
+    let factory = crate::worker::ProductionSenderFactory::new(state.credentials.clone());
     factory
-        .send(channel.kind, &channel.credential_ref, document)
+        .send(
+            channel.kind,
+            &channel.credential_ref,
+            keyword_prefix,
+            document,
+        )
+        .await
         .map(|_| ())
         .map_err(|e| crate::error::AppError {
             domain: crate::error::ErrorDomain::Delivery,
@@ -433,10 +442,9 @@ pub async fn send_rule_test(
     state: State<'_, CoreState>,
     input: SendRuleTestInput,
 ) -> Result<(), AppError> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || send_rule_test_impl(&state, input))
-        .await
-        .map_err(|_| configuration_error("join_failed", "command join failed"))?
+    // The impl awaits the (async) sender factory directly, so it must run on
+    // the async runtime — not inside spawn_blocking.
+    send_rule_test_impl(state.inner(), input).await
 }
 
 #[cfg(test)]
