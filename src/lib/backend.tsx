@@ -164,7 +164,11 @@ export class TauriBackend implements Backend {
     return invoke("save_settings", { input });
   }
   setNotificationPause(input: SetPauseInput): Promise<SettingsView> {
-    return invoke("set_notification_pause", { duration: input.duration });
+    return invoke("set_notification_pause", {
+      duration: input.duration,
+      // Tauri command args are camelCase on this side of the bridge.
+      offsetSeconds: input.offset_seconds ?? null,
+    });
   }
   clearNotificationPause(): Promise<SettingsView> {
     return invoke("clear_notification_pause");

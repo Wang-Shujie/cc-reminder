@@ -103,14 +103,20 @@ pub struct HistoryItem {
     pub project_id: Option<ProjectId>,
     pub project_display_name: Option<String>,
     pub unmatched_cwd_fingerprint: Option<String>,
+    // Internal bookkeeping the UI contract (contracts.ts) omits and nothing
+    // renders — never serialized over the wire.
+    #[serde(skip_serializing)]
     pub session_ref: Option<String>,
+    #[serde(skip_serializing)]
     pub turn_ref: Option<String>,
     pub model: Option<String>,
     pub permission_mode: Option<String>,
     pub severity: Severity,
     pub public_fields: BTreeMap<String, ScalarValue>,
     pub correlation_id: Uuid,
+    #[serde(skip_serializing)]
     pub action_id: Option<String>,
+    #[serde(skip_serializing, default)]
     pub action_capabilities: Vec<ActionCapability>,
     pub processing_outcome: EventProcessingOutcome,
     pub outcome_reason_code: Option<EventOutcomeReasonCode>,

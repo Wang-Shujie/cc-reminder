@@ -67,14 +67,33 @@ export function SettingsPage({
   const [storeIssues, setStoreIssues] = useState<HealthIssue[]>([]);
   /** Focus returns to the initiating control after dialogs close. */
   const installTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const installConfirmRef = useRef<HTMLButtonElement | null>(null);
   /** Set when a dialog closes so the post-commit effect can restore focus
    *  (restoring synchronously races the dialog's own unmount). */
   const pendingFocusRestore = useRef(false);
+  /** Last persisted theme; restores the live preview when leaving the page
+   *  without saving. */
+  const persistedThemeRef = useRef<ThemeCode>("system");
+
+  useEffect(() => {
+    // Unmount cleanup: undo any unsaved theme preview so AppShell's persisted
+    // theme applies again.
+    return () => {
+      document.documentElement.dataset.theme = persistedThemeRef.current;
+    };
+  }, []);
 
   useEffect(() => {
     if (!installConfirmOpen && pendingFocusRestore.current) {
       pendingFocusRestore.current = false;
       installTriggerRef.current?.focus();
+    }
+  }, [installConfirmOpen]);
+
+  // Focus moves to the confirm button when the install dialog opens.
+  useEffect(() => {
+    if (installConfirmOpen) {
+      installConfirmRef.current?.focus();
     }
   }, [installConfirmOpen]);
 
@@ -88,6 +107,7 @@ export function SettingsPage({
         setCloseToTray(view.close_to_tray);
         setUiLocale(view.locale);
         setTheme(view.theme);
+        persistedThemeRef.current = view.theme;
         setEventDays(String(view.event_retention_days));
         setLogDays(String(view.log_retention_days));
         setOnboardingCompleted(view.onboarding_completed);
@@ -141,6 +161,7 @@ export function SettingsPage({
     };
     try {
       const view = await backend.saveSettings(input);
+      persistedThemeRef.current = view.theme;
       setPausedUntil(view.paused_until);
       setOnboardingCompleted(view.onboarding_completed);
       setSavedOk(true);
@@ -155,7 +176,12 @@ export function SettingsPage({
     setPauseBusy(true);
     setActionError(null);
     try {
-      const view = await backend.setNotificationPause({ duration });
+      // getTimezoneOffset is minutes WEST of UTC, so negate it for the core's
+      // east-positive offset — required for a correct 暂停至今日 deadline.
+      const view = await backend.setNotificationPause({
+        duration,
+        offset_seconds: -new Date().getTimezoneOffset() * 60,
+      });
       setPausedUntil(view.paused_until);
     } catch (e: unknown) {
       setActionError(errorOf(e));
@@ -268,6 +294,9 @@ export function SettingsPage({
           <option value="zh_cn">{t.langZh}</option>
           <option value="en">{t.langEn}</option>
         </select>
+        {/* The applied locale comes from bootstrap; a changed one needs a
+            restart, so say so instead of silently doing nothing. */}
+        {hydrated && uiLocale !== locale && <p className="muted">{t.localeRestartHint}</p>}
       </div>
 
       {/* Theme */}
@@ -476,6 +505,7 @@ export function SettingsPage({
               </button>
               <button
                 type="button"
+                ref={installConfirmRef}
                 className="primary cc-focusable"
                 disabled={installing}
                 onClick={() => {

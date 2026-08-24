@@ -472,6 +472,10 @@ export type PauseDurationCode = "fifteen_minutes" | "one_hour" | "today";
 
 export interface SetPauseInput {
   duration: PauseDurationCode;
+  /** The browser's UTC offset in seconds (east-positive; negated
+   *  Date#getTimezoneOffset). Lets the core compute 暂停至今日 against the
+   *  user's real local midnight. */
+  offset_seconds?: number | null;
 }
 
 // ---------------------------------------------------------------------------

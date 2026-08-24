@@ -75,12 +75,26 @@ test("pause uses setNotificationPause; resume clears it and shows paused_until",
   await waitFor(() =>
     expect(backend.setNotificationPause).toHaveBeenCalledWith({
       duration: "fifteen_minutes",
+      // Browser UTC offset in east-positive seconds so the core can compute
+      // the local midnight for 暂停至今日.
+      offset_seconds: -new Date().getTimezoneOffset() * 60,
     }),
   );
   expect(await screen.findByText(/暂停至：/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "恢复通知" }));
   await waitFor(() => expect(backend.clearNotificationPause).toHaveBeenCalledTimes(1));
   expect(await screen.findByText("通知未暂停。")).toBeVisible();
+});
+
+test("a changed language discloses that it applies after a restart", async () => {
+  const backend = settingsBackend();
+  const user = userEvent.setup();
+  render(<SettingsPage backend={backend} />);
+  // Hydrated saved locale matches the applied one: no hint.
+  await screen.findByLabelText("语言");
+  expect(screen.queryByText(/重启后生效/)).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("语言"), "en");
+  expect(screen.getByText("语言将在重启应用后生效。")).toBeVisible();
 });
 
 test("update check reports up-to-date when nothing is available", async () => {
@@ -110,6 +124,8 @@ test("an available update installs only after explicit confirmation", async () =
   await user.click(screen.getByRole("button", { name: "安装更新" }));
   const dialog = screen.getByRole("dialog", { name: "确认安装更新" });
   expect(dialog).toBeVisible();
+  // Focus moves to the confirm button when the dialog opens.
+  expect(screen.getByRole("button", { name: "确认安装" })).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "确认安装" }));
   await waitFor(() => expect(backend.installUpdate).toHaveBeenCalledWith({ confirmed: true }));
   expect(await screen.findByText("更新程序已启动。")).toBeVisible();

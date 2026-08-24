@@ -54,6 +54,8 @@ export function OverviewPage({
   const t = dictionary(locale);
   const [snapshot, setSnapshot] = useState<HealthSnapshot | null>(null);
   const [recentFailures, setRecentFailures] = useState<HistoryItem[] | null>(null);
+  /** True when the failures query itself failed (≠ an empty failure list). */
+  const [failuresErrored, setFailuresErrored] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   /** Polite live-region content for background refreshes (never moves focus). */
   const [notice, setNotice] = useState("");
@@ -75,7 +77,14 @@ export function OverviewPage({
     ]);
     if (!mounted.current) return;
     setSnapshot(snap);
-    setRecentFailures(failedPage === null ? [] : failedPage.items);
+    if (failedPage === null) {
+      // The failures query failed: say so instead of claiming 没有失败任务.
+      setRecentFailures(null);
+      setFailuresErrored(true);
+    } else {
+      setRecentFailures(failedPage.items);
+      setFailuresErrored(false);
+    }
   }, [backend]);
 
   useEffect(() => {
@@ -209,7 +218,11 @@ export function OverviewPage({
 
       <section aria-label={t.recentFailuresTitle} className="page-subsection">
         <h2>{t.recentFailuresTitle}</h2>
-        {recentFailures === null ? null : recentFailures.length === 0 ? (
+        {recentFailures === null ? (
+          failuresErrored ? (
+            <p className="muted">{t.recentFailuresLoadFailed}</p>
+          ) : null
+        ) : recentFailures.length === 0 ? (
           <p className="muted">{t.noRecentFailures}</p>
         ) : (
           <table className="rules-table">

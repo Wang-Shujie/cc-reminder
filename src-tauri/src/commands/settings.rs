@@ -141,7 +141,9 @@ pub(crate) fn set_notification_pause_impl(
     let until = pause_until(duration.into_duration(), now);
     let mut settings = state.config.get_settings()?;
     settings.notification_pause = Some(NotificationPause {
-        started_at: Utc::now(),
+        // Same request instant as `until`: mixing in a second clock read
+        // could make started_at land after until and fail validation.
+        started_at: now.with_timezone(&Utc),
         until: until.with_timezone(&Utc),
     });
     Ok(state.config.save_settings(&settings)?.into())
@@ -176,10 +178,11 @@ pub async fn save_settings(
 pub async fn set_notification_pause(
     state: State<'_, CoreState>,
     duration: PauseDurationInput,
+    offset_seconds: Option<i32>,
 ) -> Result<SettingsView, AppError> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let now = local_now();
+        let now = local_now(offset_seconds);
         set_notification_pause_impl(&state, duration, now)
     })
     .await
@@ -196,14 +199,17 @@ pub async fn clear_notification_pause(
         .map_err(|_| configuration_error("join_failed", "command join failed"))?
 }
 
-fn local_now() -> chrono::DateTime<chrono::FixedOffset> {
-    // ponytail: chrono's local offset is unavailable in `chrono` 0.4 without
-    // the `clock` feature (we use serde). Fall back to UTC for the runtime
-    // path; the pure pause_until() is tested with explicit local offsets.
+fn local_now(offset_seconds: Option<i32>) -> chrono::DateTime<chrono::FixedOffset> {
+    // The frontend supplies its UTC offset (-Date#getTimezoneOffset()*60,
+    // east-positive seconds) because chrono's own local-offset lookup is
+    // unavailable in `chrono` 0.4 without the `clock` feature (we use serde).
+    // A missing/invalid offset falls back to UTC — the documented test
+    // fallback; the pure pause_until() is tested with explicit offsets.
     use chrono::TimeZone;
-    chrono::FixedOffset::east_opt(0)
-        .unwrap()
-        .from_utc_datetime(&Utc::now().naive_utc())
+    let seconds = offset_seconds.unwrap_or(0);
+    let offset = chrono::FixedOffset::east_opt(seconds)
+        .unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+    offset.from_utc_datetime(&Utc::now().naive_utc())
 }
 
 #[cfg(test)]
@@ -289,11 +295,32 @@ mod tests {
     }
 
     #[test]
-    fn pause_today_uses_local_midnight_and_does_not_change_rules() {
+    fn pause_today_uses_frontend_offset_for_local_midnight() {
+        // The command receives offset_seconds = 8*3600 from the frontend; the
+        // impl gets an explicit +08:00 "now" and must land on LOCAL midnight,
+        // not UTC midnight (a UTC-midnight bug would be 8 hours off here).
+        let st = state();
         let now: DateTime<chrono::FixedOffset> =
             DateTime::parse_from_rfc3339("2026-07-29T14:00:00+08:00").unwrap();
-        let result = pause_until(PauseDuration::Today, now);
-        assert_eq!(result.to_rfc3339(), "2026-07-30T00:00:00+08:00");
+        let result = set_notification_pause_impl(&st, PauseDurationInput::Today, now).unwrap();
+        assert_eq!(
+            result.paused_until,
+            Some(
+                DateTime::parse_from_rfc3339("2026-07-30T00:00:00+08:00")
+                    .unwrap()
+                    .with_timezone(&Utc)
+            )
+        );
+    }
+
+    #[test]
+    fn local_now_applies_the_frontend_offset() {
+        assert_eq!(
+            local_now(Some(8 * 3600)).offset().local_minus_utc(),
+            8 * 3600
+        );
+        // Missing offset keeps the documented UTC fallback.
+        assert_eq!(local_now(None).offset().local_minus_utc(), 0);
     }
 
     #[test]

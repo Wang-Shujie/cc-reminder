@@ -221,6 +221,7 @@ export interface Dictionary {
   noIssues: string;
   recentFailuresTitle: string;
   noRecentFailures: string;
+  recentFailuresLoadFailed: string;
   gotoAgents: string;
   gotoChannels: string;
   gotoHistory: string;
@@ -264,6 +265,7 @@ export interface Dictionary {
   languageLabel: string;
   langZh: string;
   langEn: string;
+  localeRestartHint: string;
   themeLabel: string;
   themeSystem: string;
   themeLight: string;
@@ -512,6 +514,7 @@ const zhCn: Dictionary = {
   noIssues: "当前没有待处理的问题。",
   recentFailuresTitle: "最近失败",
   noRecentFailures: "最近没有失败任务。",
+  recentFailuresLoadFailed: "失败任务列表加载失败。",
   gotoAgents: "前往 Agent 集成",
   gotoChannels: "前往渠道",
   gotoHistory: "查看通知历史",
@@ -555,6 +558,7 @@ const zhCn: Dictionary = {
   languageLabel: "语言",
   langZh: "中文（简体）",
   langEn: "English",
+  localeRestartHint: "语言将在重启应用后生效。",
   themeLabel: "主题",
   themeSystem: "跟随系统",
   themeLight: "浅色",
@@ -812,6 +816,7 @@ const en: Dictionary = {
   noIssues: "No open issues.",
   recentFailuresTitle: "Recent failures",
   noRecentFailures: "No recent failures.",
+  recentFailuresLoadFailed: "Failed to load recent failures.",
   gotoAgents: "Go to Agent integrations",
   gotoChannels: "Go to channels",
   gotoHistory: "View notification history",
@@ -855,6 +860,7 @@ const en: Dictionary = {
   languageLabel: "Language",
   langZh: "中文（简体）",
   langEn: "English",
+  localeRestartHint: "Language changes take effect after restarting the app.",
   themeLabel: "Theme",
   themeSystem: "Follow system",
   themeLight: "Light",

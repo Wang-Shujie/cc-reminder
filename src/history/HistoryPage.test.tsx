@@ -15,7 +15,10 @@ import { HistoryPage } from "./HistoryPage";
 import type {
   ChannelId,
   DeliveryAttemptDto,
+  GetHistoryDetailInput,
   HistoryItem,
+  HistoryPage as HistoryPageDto,
+  ListHistoryInput,
   ProjectId,
   ProjectSummary,
 } from "../lib/contracts";
@@ -164,16 +167,18 @@ test("time/project/Hook/channel filters reach the backend", async () => {
   render(<HistoryPage backend={backend} />);
   await screen.findByRole("table");
 
+  // Bare <input type="date"> values are transformed to whole-day RFC3339
+  // bounds so the core's DateTime<Utc> can parse them.
   fireEvent.change(screen.getByLabelText("时间从"), { target: { value: "2026-08-01" } });
   await waitFor(() =>
     expect(backend.listHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ occurred_from: "2026-08-01" }),
+      expect.objectContaining({ occurred_from: "2026-08-01T00:00:00Z" }),
     ),
   );
   fireEvent.change(screen.getByLabelText("时间至"), { target: { value: "2026-08-31" } });
   await waitFor(() =>
     expect(backend.listHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ occurred_until: "2026-08-31" }),
+      expect.objectContaining({ occurred_until: "2026-08-31T23:59:59Z" }),
     ),
   );
   await user.selectOptions(screen.getByLabelText("项目"), PROJECT_ID);
@@ -242,6 +247,8 @@ test("retry asks for confirmation, then reports the response", async () => {
   render(<HistoryPage backend={backend} />);
   await user.click(await screen.findByRole("button", { name: "重试失败任务" }));
   expect(screen.getByRole("dialog", { name: "确认手动重试" })).toBeVisible();
+  // Focus moves to the confirm button when the dialog opens.
+  expect(screen.getByRole("button", { name: "确认重试" })).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "确认重试" }));
   await waitFor(() =>
     expect(backend.manualRetryDelivery).toHaveBeenCalledWith({ job_id: "job-evt-failed" }),
@@ -289,4 +296,75 @@ test("core://history-changed refreshes through a polite live region", async () =
   });
   await waitFor(() => expect(backend.listHistory).toHaveBeenCalledTimes(2));
   expect(screen.getByRole("status")).toHaveTextContent("通知历史已更新");
+});
+
+test("a stale response cannot overwrite newer filter results", async () => {
+  const allRows = [mkItem("evt-all"), stopFailure()];
+  const backend = historyBackend(allRows);
+  // Manually gated listHistory: call order decides which resolution lands.
+  const gates: Array<(page: HistoryPageDto) => void> = [];
+  let call = 0;
+  Object.defineProperty(backend, "listHistory", {
+    value: vi.fn((_input?: ListHistoryInput): Promise<HistoryPageDto> => {
+      void _input;
+      return new Promise((resolve) => {
+        gates[call++] = resolve;
+      });
+    }),
+  });
+  const user = userEvent.setup();
+  render(<HistoryPage backend={backend} />);
+  // Switch 结果 to "failed" while the unfiltered page-1 request is in flight.
+  await user.selectOptions(screen.getByLabelText("结果"), "failed");
+  // The newer (failed) query resolves first…
+  act(() => {
+    gates[1]!({ items: [], next_offset: null });
+  });
+  await waitFor(() => expect(screen.getByText("暂无通知历史")).toBeVisible());
+  // …then the stale "all" response lands last and must be discarded.
+  act(() => {
+    gates[0]!({ items: allRows, next_offset: null });
+  });
+  expect(screen.getByText("暂无通知历史")).toBeVisible();
+  expect(screen.queryByRole("row", { name: /Stop/ })).not.toBeInTheDocument();
+});
+
+test("the drawer ignores a late response for a previously opened event", async () => {
+  const slowItem = stopFailure(); // source_event Stop, body [REDACTED]
+  const fastItem = mkItem("evt-fast", {
+    source_event: "SessionStart",
+    document: {
+      title: "快速详情",
+      severity: "info",
+      facts: [],
+      body: "fast body",
+      footer: null,
+    },
+  });
+  const backend = historyBackend([slowItem, fastItem]);
+  const resolvers = new Map<string, (page: HistoryPageDto) => void>();
+  Object.defineProperty(backend, "getHistoryDetail", {
+    value: vi.fn(
+      (input: GetHistoryDetailInput): Promise<HistoryPageDto> =>
+        new Promise((resolve) => {
+          resolvers.set(input.event_id, resolve);
+        }),
+    ),
+  });
+  const user = userEvent.setup();
+  render(<HistoryPage backend={backend} />);
+  // Open the slow event, then quickly switch the drawer to the fast one.
+  await user.click(await screen.findByRole("row", { name: /Stop.*失败/ }));
+  await user.click(await screen.findByRole("row", { name: /SessionStart/ }));
+  act(() => {
+    resolvers.get("evt-fast")?.({ items: [fastItem], next_offset: null });
+  });
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() => expect(dialog).toHaveTextContent("快速详情"));
+  // The slow event's late response must not replace B's drawer body.
+  act(() => {
+    resolvers.get("evt-stop")?.({ items: [slowItem], next_offset: null });
+  });
+  expect(dialog).toHaveTextContent("快速详情");
+  expect(dialog).not.toHaveTextContent("[REDACTED]");
 });

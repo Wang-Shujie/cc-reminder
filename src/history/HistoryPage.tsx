@@ -42,8 +42,10 @@ const EMPTY_FILTERS: Filters = {
 
 function filterInput(f: Filters): ListHistoryInput {
   return {
-    occurred_from: f.occurred_from === "" ? null : f.occurred_from,
-    occurred_until: f.occurred_until === "" ? null : f.occurred_until,
+    // <input type="date"> yields bare YYYY-MM-DD; the core's DateTime<Utc>
+    // needs RFC3339. "From" covers its whole first day, "until" its last.
+    occurred_from: f.occurred_from === "" ? null : `${f.occurred_from}T00:00:00Z`,
+    occurred_until: f.occurred_until === "" ? null : `${f.occurred_until}T23:59:59Z`,
     project_id: f.project_id === "" ? null : f.project_id,
     source_event: f.source_event === "" ? null : f.source_event,
     channel_id: f.channel_id === "" ? null : f.channel_id,
@@ -79,6 +81,9 @@ export function HistoryPage({
   const [detailEventId, setDetailEventId] = useState<string | null>(null);
   const [detailItem, setDetailItem] = useState<HistoryItem | null>(null);
   const [detailError, setDetailError] = useState<PageError | null>(null);
+  /** Latest drawer request; late get_history_detail responses for other ids
+   *  are dropped instead of leaking into the open drawer. */
+  const detailRequestRef = useRef<string | null>(null);
   const [retryTarget, setRetryTarget] = useState<HistoryItem | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [retryQueuedNotice, setRetryQueuedNotice] = useState(false);
@@ -87,6 +92,7 @@ export function HistoryPage({
   /** Focus management: return to the initiating control when dialogs close. */
   const triggerRef = useRef<HTMLElement | null>(null);
   const retryTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const retryConfirmRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   /** Set when the retry dialog closes; a post-commit effect restores focus
    *  (a synchronous focus call races the dialog's own unmount). */
@@ -99,32 +105,52 @@ export function HistoryPage({
     }
   }, [retryTarget]);
 
+  // Focus moves to the confirm button when the retry dialog opens.
+  useEffect(() => {
+    if (retryTarget !== null) {
+      retryConfirmRef.current?.focus();
+    }
+  }, [retryTarget]);
+
+  /** Monotonic request sequence: only the latest load may touch state, so a
+   *  slow response can never overwrite a newer filter's results. */
+  const seqRef = useRef(0);
+
   const load = useCallback(
-    async (offset: number, append: boolean): Promise<void> => {
-      const page = await backend.listHistory({
-        ...filterInput(filters),
-        offset,
-        limit: PAGE_SIZE,
-      });
-      setItems((prev) => (append && prev !== null ? [...prev, ...page.items] : page.items));
-      setNextOffset(page.next_offset);
-      setLoadError(null);
+    async (offset: number, append: boolean): Promise<boolean> => {
+      const seq = ++seqRef.current;
+      try {
+        const page = await backend.listHistory({
+          ...filterInput(filters),
+          offset,
+          limit: PAGE_SIZE,
+        });
+        if (seq !== seqRef.current) {
+          return false;
+        }
+        setItems((prev) => (append && prev !== null ? [...prev, ...page.items] : page.items));
+        setNextOffset(page.next_offset);
+        setLoadError(null);
+        return true;
+      } catch (e: unknown) {
+        // A superseded failure is discarded too; an append failure keeps the
+        // already-loaded rows.
+        if (seq !== seqRef.current) {
+          return false;
+        }
+        if (!append) {
+          setItems([]);
+          setNextOffset(null);
+        }
+        setLoadError(errorOf(e));
+        return false;
+      }
     },
     [backend, filters],
   );
 
   useEffect(() => {
-    let cancelled = false;
-    load(0, false).catch((e: unknown) => {
-      if (!cancelled) {
-        setItems([]);
-        setNextOffset(null);
-        setLoadError(errorOf(e));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
+    void load(0, false);
   }, [load]);
 
   useEffect(() => {
@@ -150,8 +176,10 @@ export function HistoryPage({
   useEffect(() => {
     const subscription = backend.subscribe("core://history-changed", (revision: number) => {
       load(0, false)
-        .then(() => {
-          setBgNotice(`${t.historyUpdated}(#${revision})`);
+        .then((applied) => {
+          if (applied) {
+            setBgNotice(`${t.historyUpdated}(#${revision})`);
+          }
         })
         .catch(() => {});
     });
@@ -160,19 +188,26 @@ export function HistoryPage({
     };
   }, [backend, load, t.historyUpdated]);
 
-  // Focus moves into the drawer once it opens.
+  // Focus moves into the drawer once it opens. The request id is checked on
+  // resolution so switching drawers discards the previous event's response.
   useEffect(() => {
+    detailRequestRef.current = detailEventId;
     if (detailEventId !== null) {
+      const requestedId = detailEventId;
       setDetailItem(null);
       setDetailError(null);
       closeRef.current?.focus();
       backend
-        .getHistoryDetail({ event_id: detailEventId })
+        .getHistoryDetail({ event_id: requestedId })
         .then((page) => {
-          setDetailItem(page.items[0] ?? null);
+          if (detailRequestRef.current === requestedId) {
+            setDetailItem(page.items[0] ?? null);
+          }
         })
         .catch((e: unknown) => {
-          setDetailError(errorOf(e));
+          if (detailRequestRef.current === requestedId) {
+            setDetailError(errorOf(e));
+          }
         });
     }
   }, [backend, detailEventId]);
@@ -394,7 +429,6 @@ export function HistoryPage({
             onClick={() => {
               setLoadingMore(true);
               load(nextOffset, true)
-                .catch((e: unknown) => setLoadError(errorOf(e)))
                 .finally(() => setLoadingMore(false));
             }}
           >
@@ -451,6 +485,7 @@ export function HistoryPage({
               </button>
               <button
                 type="button"
+                ref={retryConfirmRef}
                 className="primary cc-focusable"
                 disabled={retrying}
                 onClick={() => {

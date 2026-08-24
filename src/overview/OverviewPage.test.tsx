@@ -163,6 +163,15 @@ test("recent failures list comes from the failed delivery history", async () => 
   expect(screen.getAllByText(/发送失败|failed/i).length).toBeGreaterThan(0);
 });
 
+test("a failed failures-query shows an error line, not 没有失败任务", async () => {
+  const backend = configuredBackend({
+    historyListError: { code: "storage.unavailable", message: "历史库暂不可用。" },
+  });
+  render(<OverviewPage backend={backend} />);
+  expect(await screen.findByText("失败任务列表加载失败。")).toBeVisible();
+  expect(screen.queryByText("最近没有失败任务。")).not.toBeInTheDocument();
+});
+
 test("查看失败任务 navigates to history pre-filtered to failed jobs", async () => {
   const onNavigate = vi.fn();
   const user = userEvent.setup();
