@@ -14,19 +14,25 @@ export interface Dictionary {
   failedJobs: string;
   loading: string;
   pagePlaceholder: string;
+  navLabel: string;
   onboardingDetect: string;
   onboardingInstall: string;
   onboardingChannel: string;
   onboardingDefaults: string;
   onboardingTest: string;
+  onboardingSteps: string;
   next: string;
   installHook: string;
   detectedAgents: string;
+  detectFailed: string;
   trustPending: string;
   trustCommand: string;
   recheck: string;
   copyCommand: string;
   channelName: string;
+  channelKind: string;
+  kindWeCom: string;
+  kindDingTalk: string;
   webhookUrl: string;
   saveChannel: string;
   useDefaults: string;
@@ -47,19 +53,25 @@ const zhCn: Dictionary = {
   failedJobs: "失败任务",
   loading: "加载中…",
   pagePlaceholder: "此页面将在后续版本中提供。",
+  navLabel: "主导航",
   onboardingDetect: "检测 Agent",
   onboardingInstall: "安装 Hooks",
   onboardingChannel: "添加渠道",
   onboardingDefaults: "选择默认规则",
   onboardingTest: "发送测试",
+  onboardingSteps: "设置步骤",
   next: "下一步",
   installHook: "安装 Hook",
   detectedAgents: "检测结果",
+  detectFailed: "检测结果获取失败，请重试。",
   trustPending: "Codex 需要确认 Hook：请运行官方命令后重新检测。",
   trustCommand: "/hooks",
   recheck: "重新检测",
   copyCommand: "复制命令",
   channelName: "渠道名称",
+  channelKind: "渠道类型",
+  kindWeCom: "企业微信",
+  kindDingTalk: "钉钉",
   webhookUrl: "Webhook 地址",
   saveChannel: "保存渠道",
   useDefaults: "使用默认规则",
@@ -80,20 +92,26 @@ const en: Dictionary = {
   failedJobs: "Failed jobs",
   loading: "Loading…",
   pagePlaceholder: "This page arrives in a later release.",
+  navLabel: "Navigation",
   onboardingDetect: "Detect Agents",
   onboardingInstall: "Install Hooks",
   onboardingChannel: "Add Channel",
   onboardingDefaults: "Choose Default Rules",
   onboardingTest: "Send Test",
+  onboardingSteps: "Setup steps",
   next: "Next",
   installHook: "Install Hook",
   detectedAgents: "Detection results",
+  detectFailed: "Detection failed. Please retry.",
   trustPending:
     "Codex needs hook confirmation: run the official command, then re-check.",
   trustCommand: "/hooks",
   recheck: "Recheck",
   copyCommand: "Copy command",
   channelName: "Channel name",
+  channelKind: "Channel kind",
+  kindWeCom: "WeCom",
+  kindDingTalk: "DingTalk",
   webhookUrl: "Webhook URL",
   saveChannel: "Save channel",
   useDefaults: "Use default rules",

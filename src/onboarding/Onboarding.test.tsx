@@ -6,6 +6,10 @@ import {
   onboardingBackend,
   type FakeBackend,
 } from "../test/TestApp";
+import type {
+  AgentIntegrationSummary,
+  ChannelSummary,
+} from "../lib/contracts";
 
 async function completeDetectAndInstall(user: ReturnType<typeof userEvent.setup>) {
   // Detection runs on mount; wait for its results before advancing.
@@ -69,22 +73,97 @@ test("onboarding resumes at the first incomplete step", async () => {
   // A channel already exists, so detect/install/channel are done: the flow
   // resumes at "choose default rules" instead of restarting from detection.
   render(
-    <TestApp
-      backend={onboardingBackend({
-        channels: [
-          {
-            id: "channel-1",
-            kind: "we_com",
-            name: "已有渠道",
-            credential_present: true,
-            health: "unknown",
-            paused: false,
-            last_succeeded_at: null,
-          },
-        ],
-      })}
-    />,
+    <TestApp backend={onboardingBackend({ channels: [existingChannel()] })} />,
   );
   expect(await screen.findByRole("heading", { name: "选择默认规则" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "检测 Agent" })).not.toBeInTheDocument();
+});
+
+function existingChannel(): ChannelSummary {
+  return {
+    id: "channel-1",
+    kind: "we_com",
+    name: "已有渠道",
+    credential_present: true,
+    health: "unknown",
+    paused: false,
+    last_succeeded_at: null,
+  };
+}
+
+function detectionResults(codexNeedsConfirmation: boolean): AgentIntegrationSummary[] {
+  return [
+    {
+      agent: "claude-code",
+      installed: true,
+      version: "2.1.218",
+      executable_path: "/usr/local/bin/claude",
+      health: "detected",
+      needs_compatible_version_confirmation: false,
+    },
+    {
+      agent: "codex",
+      installed: true,
+      version: "0.145.0",
+      executable_path: "/usr/local/bin/codex",
+      health: "detected",
+      needs_compatible_version_confirmation: codexNeedsConfirmation,
+    },
+  ];
+}
+
+test("resume with a channel still blocks on a pending Codex trust confirmation", async () => {
+  const user = userEvent.setup();
+  let codexNeedsConfirmation = true;
+  const backend = onboardingBackend({
+    channels: [existingChannel()],
+    detectResults: () => detectionResults(codexNeedsConfirmation),
+  });
+  render(<TestApp backend={backend} />);
+  // The trust checklist is shown even though a channel already exists; the
+  // flow must NOT jump straight to the defaults step.
+  expect(await screen.findByText("/hooks")).toBeVisible();
+  expect(screen.getByRole("button", { name: "下一步" })).toBeDisabled();
+  expect(
+    screen.queryByRole("heading", { name: "选择默认规则" }),
+  ).not.toBeInTheDocument();
+  // A recheck that comes back clean clears the gate and resumes to defaults.
+  codexNeedsConfirmation = false;
+  await user.click(screen.getByRole("button", { name: "重新检测" }));
+  expect(
+    await screen.findByRole("heading", { name: "选择默认规则" }),
+  ).toBeVisible();
+});
+
+test("a failed detection shows an alert with retry and keeps Next disabled", async () => {
+  const user = userEvent.setup();
+  const backend = onboardingBackend();
+  vi.mocked(backend.detectAgents).mockRejectedValueOnce(new Error("detect down"));
+  render(<TestApp backend={backend} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("检测结果获取失败");
+  expect(screen.getByRole("button", { name: "下一步" })).toBeDisabled();
+  // Retrying without the injected failure recovers the normal detect list.
+  await user.click(screen.getByRole("button", { name: "重新检测" }));
+  expect(await screen.findByText("codex")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "下一步" })).toBeEnabled();
+});
+
+test("a failed channel save surfaces an error instead of advancing", async () => {
+  const user = userEvent.setup();
+  const backend = onboardingBackend();
+  vi.spyOn(backend, "saveChannel").mockRejectedValue(new Error("webhook rejected"));
+  render(<TestApp backend={backend} />);
+  await completeDetectAndInstall(user);
+  await screen.findByRole("heading", { name: "添加渠道" });
+  await user.type(screen.getByLabelText("渠道名称"), "工程群");
+  await user.type(
+    screen.getByLabelText("Webhook 地址"),
+    "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc123",
+  );
+  await user.click(screen.getByRole("button", { name: "保存渠道" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("webhook rejected");
+  expect(
+    screen.queryByRole("heading", { name: "选择默认规则" }),
+  ).not.toBeInTheDocument();
 });

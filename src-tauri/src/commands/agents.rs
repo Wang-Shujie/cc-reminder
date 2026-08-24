@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::{CoreState, configuration_error, integration_error};
+use crate::agents::EntryHealth;
 use crate::error::AppError;
 use crate::installer::lifecycle::{HookAction, HookInstaller};
-use crate::model::AgentKind;
+use crate::model::{AgentKind, TrustStatus};
 use crate::rules::resolve::required_hook_selection;
 
 // ---------------------------------------------------------------------------
@@ -89,11 +90,13 @@ pub struct HookHealthView {
     pub entries: Vec<HookEntryView>,
 }
 
+/// Serialized with the enums' own serde snake_case renames — never
+/// `format!("{:?}")`, which would leak PascalCase Debug strings to the UI.
 #[derive(Clone, Debug, Serialize)]
 pub struct HookEntryView {
     pub source_event: String,
-    pub trust_status: String,
-    pub health: String,
+    pub trust_status: TrustStatus,
+    pub health: EntryHealth,
 }
 
 // ---------------------------------------------------------------------------
@@ -232,8 +235,8 @@ pub(crate) fn apply_hook_action_impl(
             .into_iter()
             .map(|e| HookEntryView {
                 source_event: e.source_event,
-                trust_status: format!("{:?}", e.trust_status),
-                health: format!("{:?}", e.health),
+                trust_status: e.trust_status,
+                health: e.health,
             })
             .collect(),
     })
@@ -344,4 +347,32 @@ pub async fn apply_hook_action(
     tauri::async_runtime::spawn_blocking(move || apply_hook_action_impl(&state, input))
         .await
         .map_err(|_| configuration_error("join_failed", "command join failed"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The frontend mirrors these as snake_case codes; Debug formatting would
+    /// emit PascalCase (`NotRequired`/`Healthy`) and break every consumer.
+    #[test]
+    fn hook_entry_view_serializes_snake_case_codes() {
+        let view = HookEntryView {
+            source_event: "Stop".into(),
+            trust_status: TrustStatus::NeedsUserConfirmation,
+            health: EntryHealth::AgentUpgradeRequired,
+        };
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["trust_status"], "needs_user_confirmation");
+        assert_eq!(json["health"], "agent_upgrade_required");
+
+        let clean = HookEntryView {
+            source_event: "Stop".into(),
+            trust_status: TrustStatus::NotRequired,
+            health: EntryHealth::Healthy,
+        };
+        let json = serde_json::to_value(&clean).unwrap();
+        assert_eq!(json["trust_status"], "not_required");
+        assert_eq!(json["health"], "healthy");
+    }
 }

@@ -12,7 +12,12 @@ import {
 } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
-import type { HealthSnapshot, LocaleCode, ThemeCode } from "../lib/contracts";
+import {
+  CORE_EVENTS,
+  type HealthSnapshot,
+  type LocaleCode,
+  type ThemeCode,
+} from "../lib/contracts";
 import { dictionary, type Dictionary } from "../lib/i18n";
 
 export type PageId =
@@ -74,13 +79,7 @@ export function AppShell({
         });
     };
     refresh();
-    const subscriptions = (
-      [
-        "core://health-changed",
-        "core://queue-changed",
-        "core://history-changed",
-      ] as const
-    ).map((event) =>
+    const subscriptions = CORE_EVENTS.map((event) =>
       backend.subscribe(event, () => {
         refresh();
       }),
@@ -120,7 +119,7 @@ export function AppShell({
           {health?.failed_jobs ?? 0}
         </span>
       </header>
-      <nav className="shell-nav" aria-label={t.statusTitle}>
+      <nav className="shell-nav" aria-label={t.navLabel}>
         {PAGES.map(({ id, icon: Icon, label }) => (
           <button
             key={id}

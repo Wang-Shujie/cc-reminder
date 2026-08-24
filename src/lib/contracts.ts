@@ -24,6 +24,14 @@ export type TrustStatusCode =
   | "needs_user_confirmation"
   | "observed_working";
 export type InstallationHealthCode = "unknown" | "healthy" | "needs_repair" | "error";
+/** Mirrors agents::EntryHealth — a DIFFERENT enum from InstallationHealthCode. */
+export type EntryHealthCode =
+  | "healthy"
+  | "missing"
+  | "drifted"
+  | "helper_mismatch"
+  | "needs_trust"
+  | "agent_upgrade_required";
 export type DeliveryStatusCode =
   | "not_queued"
   | "pending"
@@ -47,20 +55,26 @@ export type CoreEventName = (typeof CORE_EVENTS)[number];
 export interface HealthIssue {
   issue_code: string;
   level: HealthLevelCode;
+  message: string;
   suggested_command: string | null;
   suggested_action: string | null;
 }
 
 export interface AgentIntegrationHealth {
-  agent: string;
-  health: string;
+  agent: AgentKindCode;
+  installed: boolean;
+  version: string | null;
+  health: HealthLevelCode;
+  summary: string;
 }
 
 export interface ChannelHealthState {
   channel_id: string;
   name: string;
-  health: string;
+  kind: ChannelKindCode;
+  health: HealthLevelCode;
   paused: boolean;
+  summary: string;
 }
 
 export interface HealthSnapshot {
@@ -112,7 +126,7 @@ export interface ApplyHookActionInput {
 export interface HookApplyEntry {
   source_event: string;
   trust_status: TrustStatusCode;
-  health: InstallationHealthCode;
+  health: EntryHealthCode;
 }
 
 export interface HookInstallationResult {
@@ -294,7 +308,7 @@ export interface ProjectSummary {
   name: string;
   canonical_root: string;
   worktree_mode: WorktreeModeCode;
-  paths: { path: string; kind: string }[];
+  paths: { id: string; kind: string; canonical_path: string }[];
 }
 
 export interface SaveProjectInput {
@@ -306,12 +320,11 @@ export interface SaveProjectInput {
 
 export interface AddProjectAliasInput {
   project_id: ProjectId;
-  path: string;
+  canonical_path: string;
 }
 
 export interface RemoveProjectAliasInput {
-  project_id: ProjectId;
-  path: string;
+  path_id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +381,12 @@ export interface ListHistoryInput {
   source_event?: string | null;
   channel_id?: ChannelId | null;
   delivery_status?: DeliveryStatusCode | null;
+  processing_outcome?:
+    | "queued"
+    | "suppressed"
+    | "expired"
+    | "no_targets"
+    | null;
   offset?: number;
   limit?: number;
 }

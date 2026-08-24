@@ -25,7 +25,6 @@ import type {
   ManualRetryInput,
   NotificationDocument,
   PreviewNotificationInput,
-  ProjectId,
   ProjectSummary,
   RemoveProjectAliasInput,
   ReplaceChannelCredentialInput,
@@ -39,6 +38,7 @@ import type {
   SetPauseInput,
   SettingsView,
   TestChannelInput,
+  UpdateCheckResult,
 } from "./contracts";
 
 export interface Backend {
@@ -58,7 +58,7 @@ export interface Backend {
   replaceChannelCredential(
     input: ReplaceChannelCredentialInput,
   ): Promise<ChannelSummary>;
-  deleteChannel(input: { channel_id: ProjectId | string }): Promise<void>;
+  deleteChannel(input: DeleteChannelInput): Promise<void>;
   testChannel(input: TestChannelInput): Promise<DeliveryReceiptDto>;
   listProjects(): Promise<ProjectSummary[]>;
   saveProject(input: SaveProjectInput): Promise<ProjectSummary>;
@@ -71,12 +71,7 @@ export interface Backend {
   saveSettings(input: SaveSettingsInput): Promise<SettingsView>;
   setNotificationPause(input: SetPauseInput): Promise<SettingsView>;
   clearNotificationPause(): Promise<SettingsView>;
-  checkForUpdates(): Promise<{
-    available: boolean;
-    version: string | null;
-    notes: string | null;
-    installable: boolean;
-  }>;
+  checkForUpdates(): Promise<UpdateCheckResult>;
   installUpdate(input: InstallUpdateInput): Promise<void>;
   subscribe(
     event: CoreEventName,
@@ -132,8 +127,8 @@ export class TauriBackend implements Backend {
   ): Promise<ChannelSummary> {
     return invoke("replace_channel_credential", { input });
   }
-  deleteChannel(input: { channel_id: ProjectId | string }): Promise<void> {
-    return invoke("delete_channel", input);
+  deleteChannel(input: DeleteChannelInput): Promise<void> {
+    return invoke("delete_channel", { input });
   }
   testChannel(input: TestChannelInput): Promise<DeliveryReceiptDto> {
     return invoke("test_channel", { input });
@@ -151,7 +146,10 @@ export class TauriBackend implements Backend {
     return invoke("remove_project_alias", { input });
   }
   listHistory(input?: ListHistoryInput): Promise<HistoryPage> {
-    return invoke("list_history", { filter: input ?? {}, page: { offset: 0, limit: 50 } });
+    return invoke("list_history", {
+      filter: input ?? {},
+      page: { offset: input?.offset ?? 0, limit: input?.limit ?? 50 },
+    });
   }
   getHistoryDetail(input: GetHistoryDetailInput): Promise<HistoryPage> {
     return invoke("get_history_detail", { input });
@@ -171,12 +169,7 @@ export class TauriBackend implements Backend {
   clearNotificationPause(): Promise<SettingsView> {
     return invoke("clear_notification_pause");
   }
-  checkForUpdates(): Promise<{
-    available: boolean;
-    version: string | null;
-    notes: string | null;
-    installable: boolean;
-  }> {
+  checkForUpdates(): Promise<UpdateCheckResult> {
     return invoke("check_for_updates");
   }
   installUpdate(input: InstallUpdateInput): Promise<void> {

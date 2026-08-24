@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { BackendProvider, TauriBackend, useBackend } from "./lib/backend";
 import type { BootstrapState } from "./lib/contracts";
+import { dictionary } from "./lib/i18n";
 import { Onboarding } from "./onboarding/Onboarding";
 import { AppShell } from "./shell/AppShell";
 
@@ -30,9 +31,12 @@ export function AppRoot(): ReactNode {
   }, [backend]);
 
   if (!boot) {
+    // Locale is unknown before bootstrap resolves; zh-CN is the authoritative
+    // default per the i18n dictionary.
     return (
       <main className="app-loading">
         <p>CC Reminder</p>
+        <p>{dictionary("zh_cn").loading}</p>
       </main>
     );
   }
