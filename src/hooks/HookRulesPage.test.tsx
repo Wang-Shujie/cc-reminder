@@ -47,12 +47,30 @@ function projectRuleWithDeliveryOverride(): FakeBackend {
   });
 }
 
-function rulesBackendWithSelectionOutOfDate(): FakeBackend {
+/** Drift is derived client-side from the rows themselves: PermissionRequest
+ *  is required but uninstalled (→ added) and PreToolUse is installed but
+ *  disabled (→ removed), so the Claude tab owns both drift directions (F1). */
+function claudeDriftBackend(options: FakeBackendOptions = {}): FakeBackend {
   return rulesBackend({
-    rules: claudeRulesFixtures().map((row) =>
-      row.source_event === "PermissionRequest" ? { ...row, installed: false } : row,
-    ),
-    selectionOutOfDate: true,
+    ...options,
+    rules: claudeRulesFixtures().map((row) => {
+      if (row.source_event === "PermissionRequest") {
+        return { ...row, installed: false };
+      }
+      return row.source_event === "PreToolUse" ? { ...row, installed: true } : row;
+    }),
+  });
+}
+
+/** Drift exists ONLY on the Codex tab: SessionEnd installed but disabled. */
+function codexDriftOnlyBackend(): FakeBackend {
+  return rulesBackend({
+    rules: [
+      ...claudeRulesFixtures(),
+      ...codexRulesFixtures().map((row) =>
+        row.source_event === "SessionEnd" ? { ...row, installed: true } : row,
+      ),
+    ],
   });
 }
 
@@ -114,7 +132,7 @@ test("filters combine name phase enabled and sensitivity", async () => {
   expect(await screen.findAllByRole("row")).toHaveLength(7);
 
   await user.type(screen.getByRole("searchbox", { name: "搜索 Hook" }), "permission");
-  await user.selectOptions(screen.getByLabelText("阶段"), "permission");
+  await user.selectOptions(screen.getByLabelText("阶段"), "request");
   expect(screen.getAllByRole("row")).toHaveLength(2);
 
   // Search clear icon exists while a query is active.
@@ -168,7 +186,7 @@ test("reset icon removes one override and restores inherited display", async () 
 });
 
 test("rule selection drift requires one explicit Hook apply action", async () => {
-  const backend = rulesBackendWithSelectionOutOfDate();
+  const backend = claudeDriftBackend();
   const user = userEvent.setup();
   renderRules({ backend });
   await user.click(await screen.findByRole("button", { name: "应用 Hook 变更" }));
@@ -181,20 +199,126 @@ test("rule selection drift requires one explicit Hook apply action", async () =>
 
   await user.click(screen.getByRole("button", { name: "确认应用 Hook 变更" }));
   expect(backend.applyHookAction).toHaveBeenCalledWith(
-    expect.objectContaining({ action: "repair" }),
+    expect.objectContaining({ action: "repair", confirm_compatible_version: false }),
   );
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "应用 Hook 变更" })).toBeNull(),
   );
 });
 
+test("drift banner is per agent: codex-only drift stays hidden on the claude tab", async () => {
+  const user = userEvent.setup();
+  renderRules({ backend: codexDriftOnlyBackend() });
+  await screen.findByRole("row", { name: /PermissionRequest/ });
+  // No global drift signal leaks onto the Claude tab.
+  expect(screen.queryByRole("button", { name: "应用 Hook 变更" })).toBeNull();
+
+  await user.click(screen.getByRole("tab", { name: "Codex" }));
+  expect(await screen.findByRole("button", { name: "应用 Hook 变更" })).toBeVisible();
+});
+
 test("codex drift apply warns that changes return to /hooks review", async () => {
   const user = userEvent.setup();
-  renderRules({ backend: rulesBackend({ selectionOutOfDate: true }) });
+  renderRules({ backend: codexDriftOnlyBackend() });
   await user.click(await screen.findByRole("tab", { name: "Codex" }));
   await user.click(await screen.findByRole("button", { name: "应用 Hook 变更" }));
   const dialog = screen.getByRole("dialog", { name: "确认应用 Hook 变更" });
   expect(within(dialog).getByText(/\/hooks/)).toBeVisible();
+});
+
+test("repair asks for version consent before acknowledging a compatible version", async () => {
+  const backend = claudeDriftBackend({ applyConfirmationRequired: true });
+  const user = userEvent.setup();
+  renderRules({ backend });
+  await user.click(await screen.findByRole("button", { name: "应用 Hook 变更" }));
+
+  await user.click(screen.getByRole("button", { name: "确认应用 Hook 变更" }));
+  // First attempt is unconsented…
+  await waitFor(() =>
+    expect(backend.applyHookAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "repair", confirm_compatible_version: false }),
+    ),
+  );
+  // …the dialog then discloses the compatibility caveat…
+  const dialog = screen.getByRole("dialog", { name: "确认应用 Hook 变更" });
+  expect(within(dialog).getByText(/尚未经精确验证/)).toBeVisible();
+
+  // …and the second explicit confirm retries WITH consent.
+  await user.click(within(dialog).getByRole("button", { name: "确认应用 Hook 变更" }));
+  await waitFor(() =>
+    expect(backend.applyHookAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "repair", confirm_compatible_version: true }),
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "确认应用 Hook 变更" })).toBeNull(),
+  );
+});
+
+test("confirmation lists see project patches even in global scope", async () => {
+  const backend = rulesBackend({
+    projects: [
+      {
+        id: PROJECT_ID,
+        name: "演示项目",
+        canonical_root: "/tmp/demo",
+        worktree_mode: "alias",
+        paths: [],
+      },
+    ],
+    rules: claudeRulesFixtures().map((row) => {
+      if (row.source_event === "Stop") {
+        // Installed but globally disabled; only its project patch keeps it
+        // required — the naive global-only view would list it for removal.
+        return {
+          ...row,
+          enabled: false,
+          installed: true,
+          config: { ...row.config, enabled: false },
+        };
+      }
+      return row.source_event === "Elicitation" ? { ...row, installed: false } : row;
+    }),
+    projectPatches: {
+      [`${PROJECT_ID}:claude-code:Stop`]: { enabled: true },
+      [`${PROJECT_ID}:claude-code:Elicitation`]: { enabled: true },
+    },
+  });
+  const user = userEvent.setup();
+  renderRules({ backend });
+  // Patch-only drift still raises the banner on the global tab (F5).
+  await user.click(await screen.findByRole("button", { name: "应用 Hook 变更" }));
+
+  const dialog = screen.getByRole("dialog", { name: "确认应用 Hook 变更" });
+  // Elicitation is enabled only by the project patch and not installed → added.
+  expect(within(dialog).getByText("Elicitation")).toBeVisible();
+  // Stop stays required through its patch → NOT listed for removal.
+  expect(within(dialog).queryByText("Stop")).toBeNull();
+});
+
+test("bounded numeric fields commit once on blur instead of per keystroke", async () => {
+  const backend = rulesBackend();
+  const user = userEvent.setup();
+  renderRules({ backend });
+  await openStopDrawer(user);
+
+  const cooldown = screen.getByLabelText("冷却（秒）");
+  await user.clear(cooldown);
+  await user.type(cooldown, "30");
+  // Partial values never reach the backend while typing (F4).
+  expect(backend.saveGlobalRule).not.toHaveBeenCalled();
+
+  await user.tab();
+  await waitFor(() => expect(backend.saveGlobalRule).toHaveBeenCalledTimes(1));
+  expect(backend.saveGlobalRule).toHaveBeenCalledWith(
+    expect.objectContaining({
+      agent: "claude-code",
+      source_event: "Stop",
+      config: expect.objectContaining<Partial<RuleConfig>>({
+        delivery: expect.objectContaining({ cooldown_seconds: 30 }),
+      }),
+    }),
+  );
 });
 
 test("global scope edits save the full rule config", async () => {

@@ -8,7 +8,6 @@ import { useBackend } from "../lib/backend";
 import type {
   AgentKindCode,
   ChannelSummary,
-  HealthSnapshot,
   HookRuleRow,
   ListHookRulesInput,
   LocaleCode,
@@ -23,20 +22,44 @@ export type RulesScope =
   | { scope: "global" }
   | { scope: "project"; project_id: string; project_name: string };
 
-const DRIFT_ISSUE_CODE = "hooks.selection_out_of_date";
+const AGENT_CONFIRMATION_REQUIRED = "integration.agent_confirmation_required";
+
+/**
+ * Extract the backend error code from a rejected invoke. Tauri serializes the
+ * Rust error DTO ({code, message}) as a plain object/string, not an Error.
+ */
+function errorCodeOf(e: unknown): string | null {
+  if (typeof e === "string") {
+    return e.includes(AGENT_CONFIRMATION_REQUIRED) ? AGENT_CONFIRMATION_REQUIRED : e;
+  }
+  if (e instanceof Error) {
+    return e.message.includes(AGENT_CONFIRMATION_REQUIRED)
+      ? AGENT_CONFIRMATION_REQUIRED
+      : e.message;
+  }
+  if (e !== null && typeof e === "object" && "code" in e) {
+    return String((e as { code: unknown }).code);
+  }
+  return null;
+}
 
 type EnabledFilter = "all" | "enabled" | "disabled";
 type SensitivityFilter = "all" | "public" | "sensitive" | "forbidden";
 
+/** One merged entry per source_event across global + project-scope rows. */
+interface DriftBasisRow {
+  source_event: string;
+  installed: boolean;
+  enabledAnywhere: boolean;
+  available: boolean;
+}
+
 export function HookRulesPage({
   locale,
   initialScope,
-  health: healthProp,
 }: {
   locale: LocaleCode;
   initialScope?: RulesScope;
-  /** Shared health from AppShell; when absent the page fetches its own. */
-  health?: HealthSnapshot | null;
 }): ReactNode {
   const backend = useBackend();
   const t = dictionary(locale);
@@ -45,31 +68,39 @@ export function HookRulesPage({
   const [rows, setRows] = useState<HookRuleRow[] | null>(null);
   const [channels, setChannels] = useState<ChannelSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [ownHealth, setOwnHealth] = useState<HealthSnapshot | null>(null);
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState("all");
   const [enabledFilter, setEnabledFilter] = useState<EnabledFilter>("all");
   const [sensitivity, setSensitivity] = useState<SensitivityFilter>("all");
   const [drawerEvent, setDrawerEvent] = useState<string | null>(null);
   const [confirmingApply, setConfirmingApply] = useState(false);
+  /** Set after the backend rejects with agent_confirmation_required; the open
+   *  dialog then discloses the compatibility caveat before retrying with
+   *  confirm_compatible_version=true. */
+  const [needsVersionConsent, setNeedsVersionConsent] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  /** Rows across global + every project scope (drift must see patches). */
+  const [unionRows, setUnionRows] = useState<HookRuleRow[] | null>(null);
 
   const projectId = scope.scope === "project" ? scope.project_id : null;
-  // Prop presence is stable per mount; keeps `refresh` identity calm.
-  const wantsOwnHealth = healthProp === undefined;
 
   const refresh = useCallback(async (): Promise<void> => {
     const input: ListHookRulesInput = { agent, project_id: projectId };
-    const [ruleRows, channelList, snapshot] = await Promise.all([
+    // Drift lists must also see project patches, so fetch the global list plus
+    // every project's effective rows for the active agent in the same pass.
+    const unionLists: ListHookRulesInput[] = [
+      { agent, project_id: null },
+      ...projects.map((p) => ({ agent, project_id: p.id })),
+    ];
+    const [ruleRows, channelList, union] = await Promise.all([
       backend.listHookRules(input),
       backend.listChannels().catch(() => []),
-      wantsOwnHealth ? backend.getHealthSnapshot().catch(() => null) : Promise.resolve(null),
+      Promise.all(unionLists.map((scope) => backend.listHookRules(scope).catch(() => []))),
     ]);
     setRows(ruleRows);
     setChannels(channelList);
-    if (wantsOwnHealth) {
-      setOwnHealth(snapshot);
-    }
-  }, [backend, agent, projectId, wantsOwnHealth]);
+    setUnionRows(union.flat());
+  }, [backend, agent, projectId, projects]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,29 +154,55 @@ export function HookRulesPage({
     [agentRows, query, phase, enabledFilter, sensitivity],
   );
 
-  /** Effective enablement drives the drift diff (global-scope view). */
-  const addedEvents = agentRows.filter((row) => row.available && row.enabled && !row.installed);
-  const removedEvents = agentRows.filter((row) => row.installed && !row.enabled);
-  const activeHealth = healthProp !== undefined ? healthProp : ownHealth;
-  const drift =
-    activeHealth?.issues.some((issue) => issue.issue_code === DRIFT_ISSUE_CODE) ?? false;
-
-  async function toggleRow(row: HookRuleRow, next: boolean): Promise<void> {
-    if (scope.scope === "project") {
-      await backend.saveProjectRulePatch({
-        project_id: scope.project_id,
-        agent,
+  // Per-agent drift derivation (F1): the global health issue is cross-agent,
+  // so drift is computed client-side from this tab's rows only. An event is
+  // REQUIRED (per required_hook_selection in apply_hook_action) when it is
+  // enabled globally OR enabled by any project patch (F5), while installed
+  // state comes from the agent itself. A tab "has own drift" exactly when its
+  // added/removed lists below are non-empty.
+  const driftBasis = useMemo<DriftBasisRow[]>(() => {
+    const source =
+      unionRows !== null ? unionRows.filter((row) => row.agent === agent) : agentRows;
+    const byEvent = new Map<string, DriftBasisRow>();
+    for (const row of source) {
+      const prev = byEvent.get(row.source_event);
+      byEvent.set(row.source_event, {
         source_event: row.source_event,
-        patch: { enabled: next },
-      });
-    } else {
-      await backend.saveGlobalRule({
-        agent,
-        source_event: row.source_event,
-        config: { ...row.config, enabled: next },
+        installed: prev?.installed ?? row.installed,
+        enabledAnywhere: (prev?.enabledAnywhere ?? false) || row.enabled,
+        available: prev?.available ?? row.available,
       });
     }
-    await refresh();
+    return [...byEvent.values()];
+  }, [unionRows, agentRows, agent]);
+
+  const addedEvents = driftBasis.filter(
+    (row) => row.available && row.enabledAnywhere && !row.installed,
+  );
+  const removedEvents = driftBasis.filter((row) => row.installed && !row.enabledAnywhere);
+  const drift = addedEvents.length > 0 || removedEvents.length > 0;
+
+  async function toggleRow(row: HookRuleRow, next: boolean): Promise<void> {
+    try {
+      if (scope.scope === "project") {
+        await backend.saveProjectRulePatch({
+          project_id: scope.project_id,
+          agent,
+          source_event: row.source_event,
+          patch: { enabled: next },
+        });
+      } else {
+        await backend.saveGlobalRule({
+          agent,
+          source_event: row.source_event,
+          config: { ...row.config, enabled: next },
+        });
+      }
+      setActionError(null);
+      await refresh();
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function applyRepair(): Promise<void> {
@@ -154,13 +211,24 @@ export function HookRulesPage({
         agent,
         action: "repair",
         expected_health_revision: 0,
-        // The explicit confirmation dialog above IS the version acknowledgment.
-        confirm_compatible_version: true,
+        // Only true after the user saw the compatibility disclosure and
+        // confirmed a second time (F2).
+        confirm_compatible_version: needsVersionConsent,
       });
-    } finally {
       setConfirmingApply(false);
-      await refresh();
+      setNeedsVersionConsent(false);
+    } catch (e: unknown) {
+      if (!needsVersionConsent && errorCodeOf(e) === AGENT_CONFIRMATION_REQUIRED) {
+        // Keep the dialog open; the disclosure line appears for round two.
+        setNeedsVersionConsent(true);
+        return;
+      }
+      setConfirmingApply(false);
+      setNeedsVersionConsent(false);
+      setActionError(e instanceof Error ? e.message : String(e));
+      return;
     }
+    await refresh();
   }
 
   function openDrawer(row: HookRuleRow): void {
@@ -189,6 +257,8 @@ export function HookRulesPage({
   return (
     <section aria-label={t.navHooks}>
       <h1>{t.navHooks}</h1>
+
+      {actionError !== null && <p role="alert">{actionError}</p>}
 
       {drift && (
         <p className="drift-status" role="status">
@@ -341,9 +411,9 @@ export function HookRulesPage({
         <thead>
           <tr>
             <th>{t.colSwitch}</th>
-            <th>Hook</th>
+            <th>{t.colHook}</th>
             <th>{t.colPhase}</th>
-            <th>Agent</th>
+            <th>{t.colAgent}</th>
             <th>{t.colFrequency}</th>
             <th>{t.colChannels}</th>
             <th>{t.colSource}</th>
@@ -407,7 +477,9 @@ export function HookRulesPage({
 
       {drawerRow !== null && (
         <HookRuleDrawer
-          key={`${drawerRow.agent}:${drawerRow.source_event}:${scope.scope}`}
+          key={`${drawerRow.agent}:${drawerRow.source_event}:${scope.scope}:${
+            scope.scope === "project" ? scope.project_id : ""
+          }`}
           locale={locale}
           agent={agent}
           rule={drawerRow}
@@ -445,8 +517,16 @@ export function HookRulesPage({
               <p className="muted">—</p>
             )}
             {agent === "codex" && <p className="trust-item">{t.codexReviewWarn}</p>}
+            {needsVersionConsent && <p className="trust-item">{t.versionConsentDisclosure}</p>}
             <div className="row-end">
-              <button type="button" className="cc-focusable" onClick={() => setConfirmingApply(false)}>
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setConfirmingApply(false);
+                  setNeedsVersionConsent(false);
+                }}
+              >
                 {t.cancel}
               </button>
               <button

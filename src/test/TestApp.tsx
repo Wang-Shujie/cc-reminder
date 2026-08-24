@@ -59,6 +59,11 @@ export interface FakeBackendOptions {
   rules?: HookRuleRow[];
   /** Keyed `${project_id}:${agent}:${source_event}` → present top-level fields. */
   projectPatches?: Record<string, Partial<RuleConfig>>;
+  /** Projects returned by list_projects (needed for cross-scope drift tests). */
+  projects?: ProjectSummary[];
+  /** First apply_hook_action without consent rejects with
+   *  integration.agent_confirmation_required (F2 gate simulation). */
+  applyConfirmationRequired?: boolean;
   selectionOutOfDate?: boolean;
   previewBody?: string;
   previewError?: string;
@@ -111,6 +116,7 @@ export interface RuleFixture {
 
 function mkRow(fixture: RuleFixture): HookRuleRow {
   const config = { ...defaultRuleConfig(fixture.enabled ?? false), ...fixture.config };
+  const available = fixture.available ?? true;
   return {
     agent: fixture.agent,
     source_event: fixture.source_event,
@@ -118,12 +124,14 @@ function mkRow(fixture: RuleFixture): HookRuleRow {
     version: 1,
     config,
     patched_fields: [],
-    installed: fixture.installed ?? true,
+    // Steady-state invariant (installed == enabled∧available) by default so
+    // drift stays row-derivable; tests opt out explicitly.
+    installed: fixture.installed ?? Boolean(config.enabled && available),
     phase: fixture.phase ?? "stop",
     sensitivity: fixture.sensitivity ?? "sensitive",
     high_frequency: fixture.high_frequency ?? false,
     status: fixture.status ?? "stable",
-    available: fixture.available ?? true,
+    available,
     input_fields: [
       { name: "session_id", sensitivity: "sensitive" },
       { name: "tool_input", sensitivity: "sensitive" },
@@ -153,7 +161,8 @@ export function claudeRulesFixtures(): HookRuleRow[] {
       agent: "claude-code",
       source_event: "PermissionRequest",
       enabled: true,
-      phase: "permission",
+      // Mirrors the real catalog vocabulary (resources/capabilities/*.json).
+      phase: "request",
     }),
     mkRow({
       agent: "claude-code",
@@ -255,6 +264,8 @@ export class FakeBackend implements Backend {
       | "channels"
       | "rules"
       | "projectPatches"
+      | "projects"
+      | "applyConfirmationRequired"
       | "selectionOutOfDate"
       | "previewBody"
       | "previewError"
@@ -264,6 +275,7 @@ export class FakeBackend implements Backend {
   private channelsState: ChannelSummary[];
   private rulesState: HookRuleRow[];
   private patchesState: Map<string, Partial<RuleConfig>>;
+  private applyConfirmationRequired: boolean;
   private projectsState: ProjectSummary[];
   private settings: SettingsView;
   private savedSettingsInputs: SaveSettingsInput[] = [];
@@ -305,7 +317,8 @@ export class FakeBackend implements Backend {
         clone(patch),
       ]),
     );
-    this.projectsState = [];
+    this.applyConfirmationRequired = options.applyConfirmationRequired ?? false;
+    this.projectsState = options.projects ? clone(options.projects) : [];
     this.selectionOutOfDate = options.selectionOutOfDate ?? false;
     this.settings = {
       autostart: false,
@@ -337,8 +350,21 @@ export class FakeBackend implements Backend {
     );
     this.applyHookAction = vi.fn(
       async (input): Promise<HookInstallationResult> => {
-        // Applying the installer reconciles installed rows with the rules.
+        if (this.applyConfirmationRequired && !input.confirm_compatible_version) {
+          // Serialized shape mirrors the Rust integration_error DTO.
+          throw {
+            code: "integration.agent_confirmation_required",
+            message: "agent version requires explicit confirmation",
+          };
+        }
         this.selectionOutOfDate = false;
+        // The repair reconciles installed hooks with the required selection:
+        // enabled∧available events become installed, everything else removed.
+        this.rulesState = this.rulesState.map((row) =>
+          row.agent !== input.agent
+            ? row
+            : { ...row, installed: row.enabled && row.available },
+        );
         return { agent: input.agent, selection_out_of_date: false, entries: [] };
       },
     );
@@ -350,7 +376,7 @@ export class FakeBackend implements Backend {
         version: 0,
         config: clone(input.config),
         patched_fields: [],
-        installed: true,
+        installed: input.config.enabled,
         phase: "stop",
         sensitivity: "sensitive",
         high_frequency: false,

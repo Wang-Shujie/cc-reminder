@@ -51,6 +51,7 @@ export interface Dictionary {
   enabledOn: string;
   enabledOff: string;
   colSwitch: string;
+  colHook: string;
   colAgent: string;
   colPhase: string;
   colFrequency: string;
@@ -71,6 +72,7 @@ export interface Dictionary {
   confirmApplyTitle: string;
   applyAdded: string;
   applyRemoved: string;
+  versionConsentDisclosure: string;
   codexReviewWarn: string;
   cancel: string;
   confirmApply: string;
@@ -179,6 +181,7 @@ const zhCn: Dictionary = {
   enabledOn: "已启用",
   enabledOff: "已停用",
   colSwitch: "开关",
+  colHook: "Hook",
   colAgent: "Agent",
   colPhase: "阶段",
   colFrequency: "频率",
@@ -199,6 +202,7 @@ const zhCn: Dictionary = {
   confirmApplyTitle: "确认应用 Hook 变更",
   applyAdded: "将新增",
   applyRemoved: "将移除",
+  versionConsentDisclosure: "检测到的 Agent 版本尚未经精确验证，确认后将继续安装。",
   codexReviewWarn: "Codex 的变更将在应用后回到 /hooks 等待确认。",
   cancel: "取消",
   confirmApply: "确认应用 Hook 变更",
@@ -250,7 +254,8 @@ const zhCn: Dictionary = {
   quietWeekdays: "生效日",
   bypassSeverity: "高于此严重度绕过",
   bypassNone: "无",
-  previewTitle: "实时预览（脱敏后）",
+  // Preview reflects the SAVED rule; unsaved edits are deliberately excluded.
+  previewTitle: "已保存配置的预览（脱敏后）",
   sendTestAction: "发送测试",
   sendConfirmTitle: "确认发送测试到",
   confirmSend: "确认发送",
@@ -307,6 +312,7 @@ const en: Dictionary = {
   enabledOn: "Enabled",
   enabledOff: "Disabled",
   colSwitch: "Switch",
+  colHook: "Hook",
   colAgent: "Agent",
   colPhase: "Phase",
   colFrequency: "Rate",
@@ -327,6 +333,8 @@ const en: Dictionary = {
   confirmApplyTitle: "Confirm applying hook changes",
   applyAdded: "To add",
   applyRemoved: "To remove",
+  versionConsentDisclosure:
+    "The detected agent version is not exactly verified; confirming continues the installation.",
   codexReviewWarn:
     "Codex changes return to /hooks for review after applying.",
   cancel: "Cancel",
@@ -380,7 +388,8 @@ const en: Dictionary = {
   quietWeekdays: "Active weekdays",
   bypassSeverity: "Bypass at or above severity",
   bypassNone: "None",
-  previewTitle: "Live preview (redacted)",
+  // Preview reflects the SAVED rule; unsaved edits are deliberately excluded.
+  previewTitle: "Saved-config preview (redacted)",
   sendTestAction: "Send test",
   sendConfirmTitle: "Confirm test send to",
   confirmSend: "Send now",

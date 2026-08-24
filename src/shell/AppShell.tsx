@@ -136,7 +136,7 @@ export function AppShell({
       </nav>
       <main className="shell-content">
         {page === "hooks" ? (
-          <HookRulesPage locale={locale} health={health} />
+          <HookRulesPage locale={locale} />
         ) : (
           <>
             <h1>{labelFor(page)}</h1>

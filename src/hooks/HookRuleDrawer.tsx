@@ -7,10 +7,11 @@
 //   field as a Partial<RuleConfig> patch; an explicitly cleared quiet-hours
 //   value is sent as `quiet_hours: null`, while the reset button removes the
 //   patch key entirely via reset_project_rule_field.
-// - Preview is debounced 250 ms and stale responses are dropped by a
-//   monotonic request id; only backend-redacted documents are rendered.
+// - Preview reflects the SAVED rule: it is debounced 250 ms, stale responses
+//   are dropped by a monotonic request id, and unsaved text edits deliberately
+//   do not trigger refetches; only backend-redacted documents are rendered.
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Send, X } from "lucide-react";
+import { RotateCcw, Send, X } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
 import type {
@@ -82,6 +83,10 @@ function Segmented<T extends string>({
   );
 }
 
+/** Bounded numeric input that commits ONCE on blur (or Enter) instead of per
+ *  keystroke, so partial input like "3" never reaches the backend mid-typing.
+ *  The typed text stays local until commit; an empty or unparseable edit
+ *  reverts to the current value without saving. */
 function NumberField({
   id,
   label,
@@ -99,6 +104,27 @@ function NumberField({
   disabled: boolean;
   onChange: (value: number) => void;
 }): ReactNode {
+  const [text, setText] = useState(() => String(value));
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+  function commit(): void {
+    if (text.trim() === "") {
+      setText(String(value));
+      return;
+    }
+    const parsed = Number(text);
+    if (Number.isNaN(parsed)) {
+      setText(String(value));
+      return;
+    }
+    const next = Math.max(min, Math.min(max, Math.trunc(parsed)));
+    if (next !== value) {
+      onChange(next);
+    } else {
+      setText(String(value));
+    }
+  }
   return (
     <div>
       <label htmlFor={id}>{label}</label>
@@ -107,12 +133,61 @@ function NumberField({
         type="number"
         min={min}
         max={max}
-        value={value}
+        value={text}
         disabled={disabled}
-        onChange={(event) => {
-          const parsed = Number(event.target.value);
-          if (!Number.isNaN(parsed)) {
-            onChange(Math.max(min, Math.min(max, Math.trunc(parsed))));
+        onChange={(event) => setText(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/** Quiet-hours time input; commits only a complete HH:MM value on blur. */
+function TimeField({
+  id,
+  label,
+  value,
+  disabled,
+  onCommit,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  disabled: boolean;
+  onCommit: (value: string) => void;
+}): ReactNode {
+  const [text, setText] = useState(value);
+  useEffect(() => {
+    setText(value);
+  }, [value]);
+  return (
+    <div>
+      <label htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="time"
+        value={text}
+        disabled={disabled}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={() => {
+          // Partial ("22:0") or cleared values are reverted, never saved —
+          // the backend rejects them and would raise spurious alerts.
+          if (/^\d{2}:\d{2}$/.test(text)) {
+            if (text !== value) {
+              onCommit(text);
+            }
+          } else {
+            setText(value);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
           }
         }}
       />
@@ -146,13 +221,13 @@ export function HookRuleDrawer({
   const projectId = isProject ? scope.project_id : null;
 
   // Local draft of the effective config; resyncs whenever the parent reloads
-  // and hands us a fresh row object.
+  // and hands us a fresh row object — but NEVER while the user has uncommitted
+  // edits (dirty text fields, or focus inside the drawer): a server resync
+  // racing mid-typing must not eat input. The next successful commit (whose
+  // saved state matches the draft) or a drawer reopen resumes syncing.
+  const asideRef = useRef<HTMLElement | null>(null);
+  const dirtyRef = useRef(false);
   const [draft, setDraft] = useState<RuleConfig>(() => structuredClone(rule.config));
-  useEffect(() => {
-    setDraft(structuredClone(rule.config));
-    setTemplateText(rule.config.targets[0]?.template ?? "");
-    setPatternText(rule.config.privacy.extra_redaction_patterns.join(", "));
-  }, [rule]);
 
   const [templateText, setTemplateText] = useState(
     () => rule.config.targets[0]?.template ?? "",
@@ -170,6 +245,28 @@ export function HookRuleDrawer({
   const [previewError, setPreviewError] = useState<string | null>(null);
   /** Field whose override was last removed; surfaces one 继承全局 status. */
   const [resetFieldCode, setResetFieldCode] = useState<PatchFieldCode | null>(null);
+
+  // Resync from the parent's fresh row (see the draft comment above).
+  useEffect(() => {
+    if (
+      dirtyRef.current ||
+      (asideRef.current !== null && asideRef.current.contains(document.activeElement))
+    ) {
+      return;
+    }
+    setDraft(structuredClone(rule.config));
+    setTemplateText(rule.config.targets[0]?.template ?? "");
+    setPatternText(rule.config.privacy.extra_redaction_patterns.join(", "));
+    // A resync also clears transient UI state from the previous rule view.
+    // resetFieldCode is intentionally NOT cleared: the 继承全局 status is set
+    // by the very reset that triggers this resync, and the drawer key already
+    // remounts (fresh state) whenever agent/event/project change.
+    setError(null);
+    setSentOk(false);
+    setPreviewDoc(null);
+    setPreviewError(null);
+    setSendChannelId(channels[0]?.id ?? "");
+  }, [rule]);
 
   // Debounced redacted preview: monotonic request id drops stale responses.
   const requestSeq = useRef(0);
@@ -198,7 +295,9 @@ export function HookRuleDrawer({
     return () => {
       clearTimeout(timer);
     };
-  }, [backend, agent, rule.source_event, projectId, templateText]);
+  // Deps deliberately exclude templateText/patternText: the preview shows the
+  // SAVED config (已保存配置的预览), so typing must not imply a refetch.
+  }, [backend, agent, rule.source_event, projectId]);
 
   function overridden(field: PatchFieldCode): boolean {
     return rule.patched_fields.includes(field);
@@ -214,7 +313,11 @@ export function HookRuleDrawer({
     if (!isProject) {
       backend
         .saveGlobalRule({ agent, source_event: rule.source_event, config: next })
-        .then(onChanged)
+        .then(() => {
+          // Committed state matches the server: resume resyncing.
+          dirtyRef.current = false;
+          onChanged();
+        })
         .catch(failure);
       return;
     }
@@ -228,7 +331,10 @@ export function HookRuleDrawer({
         source_event: rule.source_event,
         patch,
       })
-      .then(onChanged)
+      .then(() => {
+        dirtyRef.current = false;
+        onChanged();
+      })
       .catch(failure);
   }
 
@@ -279,7 +385,7 @@ export function HookRuleDrawer({
                 void resetField(field);
               }}
             >
-              <span aria-hidden="true">↺</span>
+              <RotateCcw size={14} aria-hidden="true" />
             </button>
           </>
         )}
@@ -299,7 +405,7 @@ export function HookRuleDrawer({
   const weekdayLabels = locale === "en" ? WEEKDAY_LABELS_EN : WEEKDAY_LABELS_ZH;
 
   return (
-    <aside className="drawer" aria-label={rule.source_event}>
+    <aside ref={asideRef} className="drawer" aria-label={rule.source_event}>
       <div className="drawer-head">
         <h2>{rule.source_event}</h2>
         {!rule.available && <span className="badge">{t.unsupportedVersion}</span>}
@@ -368,7 +474,10 @@ export function HookRuleDrawer({
           id="drawer-template"
           value={templateText}
           disabled={!editable}
-          onChange={(event) => setTemplateText(event.target.value)}
+          onChange={(event) => {
+            dirtyRef.current = true;
+            setTemplateText(event.target.value);
+          }}
           onBlur={() => {
             const first = draft.targets[0];
             if (!editable || !first || (first.template ?? "") === templateText) {
@@ -486,7 +595,10 @@ export function HookRuleDrawer({
           id="drawer-patterns"
           value={patternText}
           disabled={!editable}
-          onChange={(event) => setPatternText(event.target.value)}
+          onChange={(event) => {
+            dirtyRef.current = true;
+            setPatternText(event.target.value);
+          }}
           onBlur={() => {
             const patterns = patternText
               .split(",")
@@ -667,21 +779,19 @@ export function HookRuleDrawer({
         </label>
         {quiet !== null && (
           <>
-            <label htmlFor="drawer-quiet-start">{t.quietStart}</label>
-            <input
+            <TimeField
               id="drawer-quiet-start"
-              type="time"
+              label={t.quietStart}
               value={quiet.start_local}
               disabled={!editable}
-              onChange={(event) => commitQuietHours({ ...quiet, start_local: event.target.value })}
+              onCommit={(value) => commitQuietHours({ ...quiet, start_local: value })}
             />
-            <label htmlFor="drawer-quiet-end">{t.quietEnd}</label>
-            <input
+            <TimeField
               id="drawer-quiet-end"
-              type="time"
+              label={t.quietEnd}
               value={quiet.end_local}
               disabled={!editable}
-              onChange={(event) => commitQuietHours({ ...quiet, end_local: event.target.value })}
+              onCommit={(value) => commitQuietHours({ ...quiet, end_local: value })}
             />
             <fieldset>
               <legend>{t.quietWeekdays}</legend>
