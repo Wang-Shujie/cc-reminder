@@ -206,6 +206,8 @@ export interface Dictionary {
   allAgentsOption: string;
   noProjects: string;
   scanBoundaryNote: string;
+  listLoadFailed: string;
+  listSeparator: string;
 }
 
 const zhCn: Dictionary = {
@@ -412,6 +414,8 @@ const zhCn: Dictionary = {
   allAgentsOption: "全部 Agent",
   noProjects: "尚未添加项目",
   scanBoundaryNote: "仅检查你明确选择的目录及其上级目录以识别 Git 根，不会扫描整个磁盘。",
+  listLoadFailed: "列表加载失败，页面数据可能不完整。",
+  listSeparator: "、",
 };
 
 const en: Dictionary = {
@@ -627,6 +631,8 @@ const en: Dictionary = {
   scanBoundaryNote:
     "Only the chosen directory and its parents are inspected to find a Git root; the whole disk is never scanned.",
   noProjects: "No projects yet",
+  listLoadFailed: "This list failed to load; page data may be incomplete.",
+  listSeparator: ", ",
 };
 
 export function dictionary(locale: LocaleCode): Dictionary {

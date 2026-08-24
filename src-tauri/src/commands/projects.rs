@@ -207,17 +207,59 @@ fn path_kind_code(kind: ProjectPathKind) -> String {
 
 /// Walk from `start` upward looking for a `.git` entry, inspecting ONLY the
 /// selected directory and its ancestors — never siblings or unrelated
-/// directories. Bounded depth guards against pathological hierarchies.
+/// directories. ponytail: nesting deeper than 32 levels silently degrades to
+/// "no git root found" (independent project); raise the bound if that ever
+/// bites a real tree. A real linked worktree has `.git` as a FILE pointing at
+/// `<owner>/.git/worktrees/<name>`; such gitfiles resolve to the owning
+/// repository's working tree so alias-mode saves can join it.
 fn probe_git_root(start: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut current = Some(start.to_path_buf());
     for _ in 0..32 {
         let dir = current?;
-        if dir.join(".git").exists() {
+        let dot_git = dir.join(".git");
+        if dot_git.exists() {
+            if dot_git.is_file()
+                && let Some(owner) = resolve_worktree_gitfile(&dir, &dot_git)
+            {
+                return Some(owner);
+            }
             return Some(dir);
         }
         current = dir.parent().map(std::path::Path::to_path_buf);
     }
     None
+}
+
+/// Parse a `.git` gitfile of the form `gitdir: <path>` written by real
+/// `git worktree` checkouts. When the target contains `/.git/worktrees/`,
+/// everything from that marker onward is stripped: the remainder is the
+/// owning repository's working tree, canonicalized (or lexically normalized
+/// when it no longer exists). Anything else — submodule-style pointers,
+/// unreadable files — yields `None` so the caller treats `dir` as its own
+/// root, unchanged.
+fn resolve_worktree_gitfile(
+    dir: &std::path::Path,
+    gitfile: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let contents = std::fs::read_to_string(gitfile).ok()?;
+    let pointer = contents.strip_prefix("gitdir: ")?.trim_end();
+    let gitdir = std::path::PathBuf::from(pointer);
+    let gitdir = if gitdir.is_absolute() {
+        gitdir
+    } else {
+        dir.join(gitdir)
+    };
+    let text = gitdir.to_string_lossy();
+    let marker = "/.git/worktrees/";
+    let index = text.find(marker)?;
+    let owner = std::path::PathBuf::from(&text[..index]);
+    if owner.as_os_str().is_empty() {
+        return None;
+    }
+    match std::fs::canonicalize(&owner) {
+        Ok(canon) => Some(canon),
+        Err(_) => Some(normalize_lexical(&owner)),
+    }
 }
 
 /// Find the registered project that owns `root` as its canonical root (or as
@@ -355,6 +397,72 @@ mod tests {
     #[test]
     fn selected_worktree_with_alias_mode_joins_the_existing_project() {
         let (repo, wt, state) = worktree_fixture();
+        save_project_impl(
+            &state,
+            SaveProjectInput {
+                project_id: None,
+                name: "主仓库".into(),
+                canonical_root: repo.to_string_lossy().into_owned(),
+                worktree_mode: WorktreeModeInput::Separate,
+                selected_path: None,
+            },
+        )
+        .unwrap();
+
+        let view = save_project_impl(
+            &state,
+            SaveProjectInput {
+                project_id: None,
+                name: "wt".into(),
+                canonical_root: wt.to_string_lossy().into_owned(),
+                worktree_mode: WorktreeModeInput::Alias,
+                selected_path: Some(wt.to_string_lossy().into_owned()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.name, "主仓库");
+        assert_eq!(view.git_root.as_deref(), Some(repo.to_str().unwrap()));
+        assert!(
+            view.paths
+                .iter()
+                .any(|p| p.kind == "worktree" && p.canonical_path == wt.to_string_lossy())
+        );
+    }
+
+    /// REAL linked-worktree shape: `<root>/repo` keeps `.git` as a DIRECTORY
+    /// while the sibling checkout `<root>/wt` has `.git` as a regular FILE
+    /// containing `gitdir: <repo>/.git/worktrees/wt`.
+    fn real_worktree_fixture() -> (std::path::PathBuf, std::path::PathBuf, CoreState) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let wt = root.path().join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}\n", repo.join(".git/worktrees/wt").display()),
+        )
+        .unwrap();
+        // The DB lives OUTSIDE both trees so probe_git_root never sees it.
+        let db_dir = root.path().join("com.ccreminder.app");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let state = command_state(&db_dir.join("cc-reminder.sqlite3"));
+        let repo_path = repo.canonicalize().unwrap();
+        let wt_path = wt.canonicalize().unwrap();
+        std::mem::forget(root);
+        (repo_path, wt_path, state)
+    }
+
+    #[test]
+    fn real_worktree_gitfile_resolves_to_the_owning_repo() {
+        let (repo, wt, _state) = real_worktree_fixture();
+        assert_eq!(probe_git_root(&wt).as_deref(), Some(repo.as_path()));
+    }
+
+    #[test]
+    fn real_linked_worktree_with_alias_mode_joins_the_existing_project() {
+        let (repo, wt, state) = real_worktree_fixture();
         save_project_impl(
             &state,
             SaveProjectInput {

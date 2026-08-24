@@ -56,6 +56,8 @@ export function ChannelsPage({
   const [testConfirm, setTestConfirm] = useState<ChannelSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<ChannelSummary | null>(null);
   const [error, setError] = useState<PageError | null>(null);
+  /** Initial load of the PRIMARY list (list_channels) failed. */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [receipts, setReceipts] = useState<
     Record<string, DeliveryReceiptDto & { at: Date }>
   >({});
@@ -67,7 +69,13 @@ export function ChannelsPage({
   }, [backend]);
 
   useEffect(() => {
-    refresh().catch(() => setChannels([]));
+    refresh()
+      .then(() => setLoadFailed(false))
+      .catch(() => {
+        // Surface the failure instead of silently showing an empty list.
+        setChannels([]);
+        setLoadFailed(true);
+      });
   }, [refresh]);
 
   function startAdd(): void {
@@ -172,6 +180,8 @@ export function ChannelsPage({
           </button>
         </div>
       </div>
+
+      {loadFailed && <p role="alert">{t.listLoadFailed}</p>}
 
       {error !== null && (
         <p role="alert">

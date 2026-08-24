@@ -6,7 +6,6 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ClipboardCopy } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
-import { driftEvents, mergeRowsForDrift } from "../lib/drift";
 import {
   AGENT_CONFIRMATION_REQUIRED,
   errorOf,
@@ -94,6 +93,8 @@ export function AgentsPage({
   const [busy, setBusy] = useState<Busy | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<PageError | null>(null);
+  /** Initial load of the PRIMARY list (list_agent_integrations) failed. */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<AgentKindCode | null>(null);
   /** Set after the backend rejects with agent_confirmation_required; the open
    *  dialog discloses the compatibility caveat before retrying with true. */
@@ -118,16 +119,18 @@ export function AgentsPage({
   }, [backend]);
 
   useEffect(() => {
-    refresh().catch(() => setSummaries([]));
+    refresh()
+      .then(() => setLoadFailed(false))
+      .catch(() => {
+        // Surface the incomplete data instead of silently showing an empty
+        // (drift-misleading) list; the rest of the page stays usable.
+        setSummaries([]);
+        setLoadFailed(true);
+      });
   }, [refresh]);
 
   function hasInstalledHooks(agent: AgentKindCode): boolean {
     return rows.some((row) => row.agent === agent && row.installed);
-  }
-
-  function hasDrift(agent: AgentKindCode): boolean {
-    return driftEvents(mergeRowsForDrift(rows.filter((row) => row.agent === agent))).added
-      .length > 0;
   }
 
   async function apply(
@@ -144,7 +147,17 @@ export function AgentsPage({
         expected_health_revision: 0,
         confirm_compatible_version: confirmCompatibleVersion,
       });
-      setEntries((prev) => ({ ...prev, [agent]: result.entries }));
+      // Uninstall leaves nothing applied: drop the entry entirely so
+      // 最近应用结果 never shows stale pre-uninstall health.
+      setEntries((prev) => {
+        const next = { ...prev };
+        if (action === "uninstall") {
+          delete next[agent];
+        } else {
+          next[agent] = result.entries;
+        }
+        return next;
+      });
       setNeedsConsent(null);
       setUninstallTarget(null);
       await refresh();
@@ -197,6 +210,8 @@ export function AgentsPage({
           </button>
         </div>
       </div>
+
+      {loadFailed && <p role="alert">{t.listLoadFailed}</p>}
 
       {error !== null && (
         <p role="alert">
@@ -261,9 +276,11 @@ export function AgentsPage({
                         void apply(agent, hasInstalledHooks(agent) ? "repair" : "install", false);
                       }}
                     >
+                      {/* Label follows the actual action: Repair only when
+                          installed hooks exist, otherwise Install. */}
                       {hookActionLabel(
                         t,
-                        hasInstalledHooks(agent) || hasDrift(agent)
+                        hasInstalledHooks(agent)
                           ? "agentRepairPrefix"
                           : "agentInstallPrefix",
                         agent,
@@ -416,6 +433,7 @@ export function AgentsPage({
               <button
                 type="button"
                 className="primary cc-focusable"
+                disabled={busy !== null}
                 onClick={() => {
                   void apply(needsConsent.agent, needsConsent.action, true);
                 }}

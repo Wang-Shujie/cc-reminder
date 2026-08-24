@@ -126,3 +126,35 @@ test("no whole-disk scan action exists", async () => {
   // The page states the boundary explicitly.
   expect(screen.getByText(/不会.*整个磁盘|不扫描整个磁盘/)).toBeVisible();
 });
+
+test("failed primary project list surfaces an incomplete-data alert", async () => {
+  const backend = projectsBackend();
+  backend.listProjects = async () => {
+    throw { code: "internal_error", message: "boom" };
+  };
+  render(<ProjectsPage backend={backend} dialog={dialogReturning(null)} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("列表加载失败");
+});
+
+test("agent names join with a locale-aware separator", async () => {
+  // Both agents override on the same project: zh joins with 、, en with ", ".
+  const zh = projectsBackend({
+    rules: [...claudeRulesFixtures(), ...codexRulesFixtures()],
+    projectPatches: {
+      [`${PROJECT_ID}:claude-code:Stop`]: { enabled: true },
+      [`${PROJECT_ID}:codex:Stop`]: { enabled: true },
+    },
+  });
+  render(<ProjectsPage backend={zh} />);
+  expect(await screen.findByText("Claude Code、Codex")).toBeVisible();
+
+  const en = projectsBackend({
+    rules: [...claudeRulesFixtures(), ...codexRulesFixtures()],
+    projectPatches: {
+      [`${PROJECT_ID}:claude-code:Stop`]: { enabled: true },
+      [`${PROJECT_ID}:codex:Stop`]: { enabled: true },
+    },
+  });
+  render(<ProjectsPage locale="en" backend={en} />);
+  expect(await screen.findByText("Claude Code, Codex")).toBeVisible();
+});

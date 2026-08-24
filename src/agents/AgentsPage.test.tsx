@@ -2,7 +2,7 @@
 // block is authoritative; surrounding assertions lock action→backend mapping,
 // the compatible-version consent flow, Codex /hooks trust handling, loading
 // states and redacted actionable errors.
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 
@@ -196,4 +196,84 @@ test("errors surface the redacted message plus suggested action", async () => {
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Helper 版本不匹配，已拒绝修改 Hook。");
   expect(alert).toHaveTextContent("先升级 CC Reminder，再执行修复。");
+});
+
+test("repair label appears only when the action really is repair; drift-only shows install", async () => {
+  // Claude Code installed but NO hooks installed while events are enabled →
+  // the action is "install", so the button must not claim to repair.
+  const user = userEvent.setup();
+  const backend = agentsBackend({
+    rules: claudeRulesFixtures().map((row) => ({
+      ...row,
+      agent: "claude-code" as const,
+      enabled: true,
+      installed: false,
+    })),
+  });
+  render(<AgentsPage backend={backend} />);
+  // Settle the initial load so the button node is the final one.
+  await screen.findByText("2.1.218");
+  const button = screen.getByRole("button", { name: "安装 Claude Code Hook" });
+  expect(button).toBeEnabled();
+  expect(
+    screen.queryByRole("button", { name: /修复 Claude Code Hook/ }),
+  ).toBeNull();
+  await user.click(button);
+  await waitFor(() =>
+    expect(backend.applyHookAction).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "claude-code", action: "install" }),
+    ),
+  );
+});
+
+test("version-consent confirm disables while applying", async () => {
+  const user = userEvent.setup();
+  const gated = agentsBackend({ applyConfirmationRequired: true });
+  render(<AgentsPage backend={gated} />);
+  await user.click(await screen.findByRole("button", { name: "修复 Claude Code Hook" }));
+  await screen.findByText(/尚未经精确验证/);
+  let release!: (value: HookInstallationResult) => void;
+  vi.mocked(gated.applyHookAction).mockImplementationOnce(
+    () =>
+      new Promise<HookInstallationResult>((resolve) => {
+        release = resolve;
+      }),
+  );
+  await user.click(screen.getByRole("button", { name: "确认继续" }));
+  expect(screen.getByRole("button", { name: "确认继续" })).toBeDisabled();
+  release({ agent: "claude-code", selection_out_of_date: false, entries: [] });
+  // The dialog closes once the retried apply succeeds.
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "确认继续" })).toBeNull(),
+  );
+});
+
+test("failed primary integration list surfaces an incomplete-data alert", async () => {
+  const backend = agentsBackend();
+  backend.listAgentIntegrations = async () => {
+    throw { code: "internal_error", message: "boom" };
+  };
+  render(<AgentsPage backend={backend} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("列表加载失败");
+});
+
+test("successful uninstall clears stale applied-entry health", async () => {
+  const user = userEvent.setup();
+  const backend = agentsBackend({
+    applyEntries: () => [
+      { source_event: "Stop", trust_status: "not_required", health: "healthy" },
+    ],
+  });
+  render(<AgentsPage backend={backend} />);
+  await screen.findByText("2.1.218");
+  // 升级 Helper exists per agent row; scope to the Claude Code row.
+  const claudeRow = screen.getByText("Claude Code").closest("tr")!;
+  await user.click(within(claudeRow).getByRole("button", { name: "升级 Helper" }));
+  expect(await screen.findByText(/Stop · 健康/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "卸载 Claude Code Hook" }));
+  await user.click(screen.getByRole("button", { name: "确认卸载" }));
+  await waitFor(() =>
+    expect(screen.queryByText(/最近应用结果/)).toBeNull(),
+  );
+  expect(screen.queryByText(/Stop · 健康/)).toBeNull();
 });

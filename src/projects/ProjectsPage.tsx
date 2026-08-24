@@ -57,6 +57,8 @@ export function ProjectsPage({
   const [nameDraft, setNameDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<PageError | null>(null);
+  /** Initial load of the PRIMARY list (list_projects) failed. */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [confirmRemovePath, setConfirmRemovePath] = useState<{
     path_id: string;
     path: string;
@@ -91,7 +93,13 @@ export function ProjectsPage({
   }, [backend]);
 
   useEffect(() => {
-    refresh().catch(() => setProjects([]));
+    refresh()
+      .then(() => setLoadFailed(false))
+      .catch(() => {
+        // Surface the failure instead of silently showing an empty list.
+        setProjects([]);
+        setLoadFailed(true);
+      });
   }, [refresh]);
 
   async function addProject(): Promise<void> {
@@ -198,6 +206,8 @@ export function ProjectsPage({
       {/* Explicit boundary statement: selection-driven inspection only. */}
       <p className="muted">{t.scanBoundaryNote}</p>
 
+      {loadFailed && <p role="alert">{t.listLoadFailed}</p>}
+
       {/* Page-level error only when no modal owns it (the modal renders its
           own alert so a failed save never produces two alerts at once). */}
       {modal === null && error !== null && (
@@ -267,7 +277,7 @@ export function ProjectsPage({
                 ) : (
                   (overrideAgents.get(project.id) ?? [])
                     .map((agent) => (agent === "codex" ? t.agentCodex : t.agentClaudeCode))
-                    .join("、")
+                    .join(t.listSeparator)
                 )}
               </td>
               <td>{overrideCount(project)}</td>

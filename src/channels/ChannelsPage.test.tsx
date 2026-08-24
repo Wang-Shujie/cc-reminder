@@ -177,3 +177,12 @@ test("multiple instances each keep their own actions and edit target", async () 
   expect(screen.getByLabelText("Webhook")).toHaveValue("");
   expect(document.body.textContent).not.toContain("key=second");
 });
+
+test("failed primary channel list surfaces an incomplete-data alert", async () => {
+  const backend = await savedDingTalkBackend();
+  backend.listChannels = async () => {
+    throw { code: "internal_error", message: "boom" };
+  };
+  render(<ChannelsPage backend={backend} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("列表加载失败");
+});
