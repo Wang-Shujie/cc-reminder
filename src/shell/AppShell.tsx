@@ -14,8 +14,11 @@ import {
 import { useBackend } from "../lib/backend";
 import { AgentsPage } from "../agents/AgentsPage";
 import { ChannelsPage } from "../channels/ChannelsPage";
+import { HistoryPage } from "../history/HistoryPage";
 import { HookRulesPage } from "../hooks/HookRulesPage";
+import { OverviewPage, type HistorySeed } from "../overview/OverviewPage";
 import { ProjectsPage } from "../projects/ProjectsPage";
+import { SettingsPage } from "../settings/SettingsPage";
 import {
   CORE_EVENTS,
   type HealthSnapshot,
@@ -64,6 +67,7 @@ export function AppShell({
   const backend = useBackend();
   const t = dictionary(locale);
   const [page, setPage] = useState<PageId>(savedPage);
+  const [historySeed, setHistorySeed] = useState<HistorySeed | undefined>(undefined);
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
 
   // One snapshot on mount; revision events trigger a refetch. Event payloads
@@ -100,18 +104,15 @@ export function AppShell({
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  function openPage(id: PageId): void {
+  function openPage(id: PageId, seed?: HistorySeed): void {
     setPage(id);
+    if (id === "history") {
+      setHistorySeed(seed);
+    }
     localStorage.setItem(LAST_PAGE_KEY, id);
   }
 
-  function labelFor(id: PageId): string {
-    const page = PAGES.find((candidate) => candidate.id === id);
-    return page ? page.label(t) : "";
-  }
-
   const overall = health?.overall ?? "ok";
-  const active = PAGES.find((candidate) => candidate.id === page);
 
   return (
     <div className="shell-root" data-overall={overall}>
@@ -138,19 +139,23 @@ export function AppShell({
         ))}
       </nav>
       <main className="shell-content">
-        {page === "hooks" ? (
-          <HookRulesPage locale={locale} />
+        {page === "overview" ? (
+          <OverviewPage locale={locale} onNavigate={openPage} />
         ) : page === "agents" ? (
           <AgentsPage locale={locale} />
+        ) : page === "hooks" ? (
+          <HookRulesPage locale={locale} />
         ) : page === "channels" ? (
           <ChannelsPage locale={locale} />
         ) : page === "projects" ? (
           <ProjectsPage locale={locale} />
+        ) : page === "history" ? (
+          <HistoryPage
+            locale={locale}
+            initialDeliveryStatus={historySeed?.delivery_status ?? null}
+          />
         ) : (
-          <>
-            <h1>{labelFor(page)}</h1>
-            <p className="muted">{active ? t.pagePlaceholder : ""}</p>
-          </>
+          <SettingsPage locale={locale} />
         )}
       </main>
     </div>

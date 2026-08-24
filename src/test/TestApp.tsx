@@ -14,13 +14,18 @@ import type {
   ChannelSummary,
   CoreEventName,
   DeleteChannelInput,
+  GetHistoryDetailInput,
   HealthSnapshot,
+  HistoryItem,
   HistoryPage,
   HookApplyEntry,
   HookInstallationResult,
   HookRuleRow,
+  InstallUpdateInput,
   ListHookRulesInput,
+  ListHistoryInput,
   LocaleCode,
+  ManualRetryInput,
   PatchFieldCode,
   ProjectId,
   ProjectSummary,
@@ -32,8 +37,10 @@ import type {
   SaveSettingsInput,
   SensitivityCode,
   SettingsView,
+  SetPauseInput,
   TestChannelInput,
   ThemeCode,
+  UpdateCheckResult,
 } from "../lib/contracts";
 import type { ReactNode } from "react";
 
@@ -108,6 +115,20 @@ export interface FakeBackendOptions {
   testChannelError?: FakeAppError;
   /** When true, project saves/alias adds reject with configuration.path_conflict. */
   projectConflict?: boolean;
+  /** Merged over the neutral ok snapshot (Task 19 overview/settings tests). */
+  health?: Partial<HealthSnapshot>;
+  /** getHealthSnapshot rejects like the serialized AppError when set. */
+  snapshotError?: boolean;
+  /** In-memory history rows; listHistory filters + paginates them for real. */
+  historyItems?: HistoryItem[];
+  /** listHistory rejects with this serialized AppError when set. */
+  historyListError?: FakeAppError;
+  /** manualRetryDelivery rejects with this serialized AppError when set. */
+  retryError?: FakeAppError;
+  /** Result returned by checkForUpdates. */
+  updateCheck?: UpdateCheckResult;
+  /** installUpdate rejects with this serialized AppError when set. */
+  installUpdateError?: FakeAppError;
 }
 
 /** Neutral default RuleConfig matching rules::resolve::default_rule. */
@@ -316,11 +337,25 @@ export class FakeBackend implements Backend {
       | "testChannelResult"
       | "testChannelError"
       | "projectConflict"
+      | "health"
+      | "snapshotError"
+      | "historyItems"
+      | "historyListError"
+      | "retryError"
+      | "updateCheck"
+      | "installUpdateError"
     >
   > & Pick<
     FakeBackendOptions,
     "detectResults" | "previewBody" | "previewError" | "sendError" | "applyEntries"
   >;
+  private healthOverride: Partial<HealthSnapshot> | undefined;
+  private snapshotError: boolean | undefined;
+  private historyItemsState: HistoryItem[];
+  private historyListError: FakeAppError | undefined;
+  private retryError: FakeAppError | undefined;
+  private updateCheckResult: UpdateCheckResult;
+  private installUpdateError: FakeAppError | undefined;
   private channelsState: ChannelSummary[];
   private rulesState: HookRuleRow[];
   private patchesState: Map<string, Partial<RuleConfig>>;
@@ -344,6 +379,14 @@ export class FakeBackend implements Backend {
   readonly saveProject: Backend["saveProject"];
   readonly addProjectAlias: Backend["addProjectAlias"];
   readonly removeProjectAlias: Backend["removeProjectAlias"];
+  readonly listHistory: Backend["listHistory"];
+  readonly getHistoryDetail: Backend["getHistoryDetail"];
+  readonly manualRetryDelivery: Backend["manualRetryDelivery"];
+  readonly getSettings: Backend["getSettings"];
+  readonly setNotificationPause: Backend["setNotificationPause"];
+  readonly clearNotificationPause: Backend["clearNotificationPause"];
+  readonly checkForUpdates: Backend["checkForUpdates"];
+  readonly installUpdate: Backend["installUpdate"];
 
   constructor(options: FakeBackendOptions = {}) {
     this.opts = {
@@ -379,6 +422,19 @@ export class FakeBackend implements Backend {
       options.testChannelResult ?? { http_status: 200, platform_code: null };
     this.testChannelError = options.testChannelError;
     this.projectConflict = options.projectConflict ?? false;
+    this.healthOverride = options.health;
+    this.snapshotError = options.snapshotError;
+    this.historyItemsState = options.historyItems ? clone(options.historyItems) : [];
+    this.historyListError = options.historyListError;
+    this.retryError = options.retryError;
+    this.updateCheckResult =
+      options.updateCheck ?? {
+        available: false,
+        version: null,
+        notes: null,
+        installable: false,
+      };
+    this.installUpdateError = options.installUpdateError;
     this.channelsState = options.channels ? clone(options.channels) : [];
     this.rulesState = options.rules ? clone(options.rules) : [];
     this.patchesState = new Map(
@@ -400,9 +456,12 @@ export class FakeBackend implements Backend {
       onboarding_completed: this.opts.onboardingCompleted,
       paused_until: null,
     };
-    this.getHealthSnapshot = vi.fn(async (): Promise<HealthSnapshot> =>
-      clone(this.snapshot()),
-    );
+    this.getHealthSnapshot = vi.fn(async (): Promise<HealthSnapshot> => {
+      if (this.snapshotError) {
+        throw { code: "health.unavailable", message: "健康状态暂不可用。" };
+      }
+      return clone(this.snapshot());
+    });
     this.saveSettings = vi.fn(async (input: SaveSettingsInput): Promise<SettingsView> => {
       this.savedSettingsInputs.push(clone(input));
       this.settings = { ...this.settings, ...input };
@@ -602,6 +661,81 @@ export class FakeBackend implements Backend {
         project.paths = project.paths.filter((path) => path.id !== input.path_id);
       }
     });
+
+    // History: real filtering + bounded pagination over the fixture rows, so
+    // offset/next_offset behavior matches the core's page semantics.
+    this.listHistory = vi.fn(async (input: ListHistoryInput = {}): Promise<HistoryPage> => {
+      if (this.historyListError) {
+        throw { ...this.historyListError };
+      }
+      const limit = input.limit ?? 50;
+      const offset = input.offset ?? 0;
+      const filtered = this.historyItemsState.filter((item) => {
+        if (
+          input.delivery_status !== undefined &&
+          input.delivery_status !== null &&
+          item.delivery_status !== input.delivery_status
+        ) {
+          return false;
+        }
+        if (input.project_id && item.project_id !== input.project_id) return false;
+        if (input.source_event && item.source_event !== input.source_event) return false;
+        if (input.channel_id && item.channel_id !== input.channel_id) return false;
+        if (input.occurred_from && item.occurred_at < input.occurred_from) return false;
+        if (input.occurred_until && item.occurred_at > input.occurred_until) return false;
+        return true;
+      });
+      const slice = filtered.slice(offset, offset + limit);
+      const next = offset + slice.length < filtered.length ? offset + slice.length : null;
+      return { items: clone(slice), next_offset: next };
+    });
+    this.getHistoryDetail = vi.fn(
+      async (input: GetHistoryDetailInput): Promise<HistoryPage> => {
+        const found = this.historyItemsState.find(
+          (item) => item.event_id === input.event_id,
+        );
+        if (!found) {
+          throw { code: "history.event_not_found", message: "event not found" };
+        }
+        return { items: [clone(found)], next_offset: null };
+      },
+    );
+    this.manualRetryDelivery = vi.fn(async (input: ManualRetryInput): Promise<void> => {
+      if (this.retryError) {
+        throw { ...this.retryError };
+      }
+      void input;
+    });
+    this.getSettings = vi.fn(async (): Promise<SettingsView> => clone(this.settings));
+    this.setNotificationPause = vi.fn(
+      async (input: SetPauseInput): Promise<SettingsView> => {
+        const now = new Date();
+        let until: Date;
+        if (input.duration === "fifteen_minutes") {
+          until = new Date(now.getTime() + 15 * 60_000);
+        } else if (input.duration === "one_hour") {
+          until = new Date(now.getTime() + 60 * 60_000);
+        } else {
+          until = new Date(now);
+          until.setHours(24, 0, 0, 0); // local end of today
+        }
+        this.settings.paused_until = until.toISOString();
+        return clone(this.settings);
+      },
+    );
+    this.clearNotificationPause = vi.fn(async (): Promise<SettingsView> => {
+      this.settings.paused_until = null;
+      return clone(this.settings);
+    });
+    this.checkForUpdates = vi.fn(
+      async (): Promise<UpdateCheckResult> => clone(this.updateCheckResult),
+    );
+    this.installUpdate = vi.fn(async (input: InstallUpdateInput): Promise<void> => {
+      if (this.installUpdateError) {
+        throw { ...this.installUpdateError };
+      }
+      void input;
+    });
   }
 
   /** Last input passed to saveSettings (for persistence assertions). */
@@ -611,6 +745,9 @@ export class FakeBackend implements Backend {
 
   private snapshot(): HealthSnapshot {
     const snap = okSnapshot();
+    if (this.healthOverride) {
+      Object.assign(snap, clone(this.healthOverride));
+    }
     snap.pending_jobs = Math.max(snap.pending_jobs, 0);
     if (this.selectionOutOfDate) {
       snap.issues.push({
@@ -677,34 +814,6 @@ export class FakeBackend implements Backend {
   async listProjects(): Promise<ProjectSummary[]> {
     return clone(this.projectsState);
   }
-
-  async listHistory(): Promise<HistoryPage> {
-    return { items: [], next_offset: null };
-  }
-
-  async getHistoryDetail(): Promise<HistoryPage> {
-    return { items: [], next_offset: null };
-  }
-
-  async manualRetryDelivery(): Promise<void> {}
-
-  async getSettings(): Promise<SettingsView> {
-    return clone(this.settings);
-  }
-
-  async setNotificationPause(): Promise<SettingsView> {
-    return clone(this.settings);
-  }
-
-  async clearNotificationPause(): Promise<SettingsView> {
-    return clone(this.settings);
-  }
-
-  async checkForUpdates() {
-    return { available: false, version: null, notes: null, installable: false };
-  }
-
-  async installUpdate(): Promise<void> {}
 
   async subscribe(
     event: CoreEventName,

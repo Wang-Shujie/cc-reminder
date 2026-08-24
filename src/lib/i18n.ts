@@ -208,6 +208,89 @@ export interface Dictionary {
   scanBoundaryNote: string;
   listLoadFailed: string;
   listSeparator: string;
+  // Overview page (Task 19)
+  metricPending: string;
+  metricRetry: string;
+  metricFailed: string;
+  metricExpired: string;
+  metricSpool: string;
+  metricRejected: string;
+  lastSuccessLabel: string;
+  viewFailedJobs: string;
+  overviewIssues: string;
+  noIssues: string;
+  recentFailuresTitle: string;
+  noRecentFailures: string;
+  gotoAgents: string;
+  gotoChannels: string;
+  gotoHistory: string;
+  overviewLoadFailed: string;
+  refreshedNotice: string;
+  // History page (Task 19)
+  filterResult: string;
+  filterTimeFrom: string;
+  filterTimeUntil: string;
+  stNotQueued: string;
+  stPending: string;
+  stSending: string;
+  stRetryWait: string;
+  stSucceeded: string;
+  stFailed: string;
+  stExpired: string;
+  colTime: string;
+  retryFailedJob: string;
+  retryExpiredJob: string;
+  retryExpiredHint: string;
+  retryConfirmTitle: string;
+  retryConfirmNote: string;
+  confirmRetry: string;
+  retryQueued: string;
+  loadMore: string;
+  emptyHistory: string;
+  detailTitle: string;
+  detailOccurred: string;
+  detailReceived: string;
+  detailModel: string;
+  detailMode: string;
+  detailUnmatchedFingerprint: string;
+  detailAttempts: string;
+  detailNoDocument: string;
+  historyUpdated: string;
+  unmatchedProject: string;
+  // Settings page (Task 19)
+  sectionStartup: string;
+  autostartLabel: string;
+  closeToTrayLabel: string;
+  languageLabel: string;
+  langZh: string;
+  langEn: string;
+  themeLabel: string;
+  themeSystem: string;
+  themeLight: string;
+  themeDark: string;
+  retentionSection: string;
+  eventRetentionLabel: string;
+  logRetentionLabel: string;
+  retentionBounds: string;
+  savedOk: string;
+  settingsLoadFailed: string;
+  pauseSection: string;
+  pausedUntilPrefix: string;
+  notPaused: string;
+  pause15m: string;
+  pause1h: string;
+  pauseToday: string;
+  resumeNotifications: string;
+  updatesSection: string;
+  checkUpdates: string;
+  checkingUpdates: string;
+  upToDate: string;
+  updateAvailablePrefix: string;
+  installUpdateAction: string;
+  installConfirmTitle: string;
+  confirmInstall: string;
+  updateInstalled: string;
+  credentialStoreSection: string;
 }
 
 const zhCn: Dictionary = {
@@ -416,6 +499,89 @@ const zhCn: Dictionary = {
   scanBoundaryNote: "仅检查你明确选择的目录及其上级目录以识别 Git 根，不会扫描整个磁盘。",
   listLoadFailed: "列表加载失败，页面数据可能不完整。",
   listSeparator: "、",
+  // Overview page (Task 19)
+  metricPending: "{n} 个待发送任务",
+  metricRetry: "{n} 个等待重试任务",
+  metricFailed: "{n} 个失败任务",
+  metricExpired: "{n} 个过期任务",
+  metricSpool: "{n} 个暂存事件",
+  metricRejected: "{n} 个被拒绝事件",
+  lastSuccessLabel: "上次成功：{time}",
+  viewFailedJobs: "查看失败任务",
+  overviewIssues: "待处理问题",
+  noIssues: "当前没有待处理的问题。",
+  recentFailuresTitle: "最近失败",
+  noRecentFailures: "最近没有失败任务。",
+  gotoAgents: "前往 Agent 集成",
+  gotoChannels: "前往渠道",
+  gotoHistory: "查看通知历史",
+  overviewLoadFailed: "健康状态加载失败，请稍后重试。",
+  refreshedNotice: "数据已刷新。",
+  // History page (Task 19)
+  filterResult: "结果",
+  filterTimeFrom: "时间从",
+  filterTimeUntil: "时间至",
+  stNotQueued: "未入队",
+  stPending: "待发送",
+  stSending: "发送中",
+  stRetryWait: "等待重试",
+  stSucceeded: "已成功",
+  stFailed: "发送失败",
+  stExpired: "已过期",
+  colTime: "时间",
+  retryFailedJob: "重试失败任务",
+  retryExpiredJob: "重试过期任务",
+  retryExpiredHint: "过期任务不可重试。",
+  retryConfirmTitle: "确认手动重试",
+  retryConfirmNote: "该任务将立即重新投递到原渠道。",
+  confirmRetry: "确认重试",
+  retryQueued: "重试已加入队列。",
+  loadMore: "加载更多",
+  emptyHistory: "暂无通知历史",
+  detailTitle: "通知详情（脱敏）",
+  detailOccurred: "发生时间",
+  detailReceived: "接收时间",
+  detailModel: "模型",
+  detailMode: "权限模式",
+  detailUnmatchedFingerprint: "未匹配项目指纹（仅哈希）",
+  detailAttempts: "投递尝试",
+  detailNoDocument: "（无正文内容）",
+  historyUpdated: "通知历史已更新。",
+  unmatchedProject: "未匹配项目",
+  // Settings page (Task 19)
+  sectionStartup: "启动与窗口",
+  autostartLabel: "开机启动",
+  closeToTrayLabel: "关闭时最小化到托盘",
+  languageLabel: "语言",
+  langZh: "中文（简体）",
+  langEn: "English",
+  themeLabel: "主题",
+  themeSystem: "跟随系统",
+  themeLight: "浅色",
+  themeDark: "深色",
+  retentionSection: "数据保留",
+  eventRetentionLabel: "历史保留天数",
+  logRetentionLabel: "日志保留天数",
+  retentionBounds: "保留天数必须是 1–365 之间的整数。",
+  savedOk: "设置已保存。",
+  settingsLoadFailed: "设置加载失败，请重新打开此页。",
+  pauseSection: "通知暂停",
+  pausedUntilPrefix: "暂停至：",
+  notPaused: "通知未暂停。",
+  pause15m: "暂停 15 分钟",
+  pause1h: "暂停 1 小时",
+  pauseToday: "暂停至今日",
+  resumeNotifications: "恢复通知",
+  updatesSection: "更新",
+  checkUpdates: "检查更新",
+  checkingUpdates: "检查中…",
+  upToDate: "已是最新版本。",
+  updateAvailablePrefix: "发现新版本：",
+  installUpdateAction: "安装更新",
+  installConfirmTitle: "确认安装更新",
+  confirmInstall: "确认安装",
+  updateInstalled: "更新程序已启动。",
+  credentialStoreSection: "凭据存储",
 };
 
 const en: Dictionary = {
@@ -633,8 +799,113 @@ const en: Dictionary = {
   noProjects: "No projects yet",
   listLoadFailed: "This list failed to load; page data may be incomplete.",
   listSeparator: ", ",
+  // Overview page (Task 19)
+  metricPending: "{n} pending jobs",
+  metricRetry: "{n} jobs waiting to retry",
+  metricFailed: "{n} failed jobs",
+  metricExpired: "{n} expired jobs",
+  metricSpool: "{n} spooled events",
+  metricRejected: "{n} rejected events",
+  lastSuccessLabel: "Last success: {time}",
+  viewFailedJobs: "View failed jobs",
+  overviewIssues: "Open issues",
+  noIssues: "No open issues.",
+  recentFailuresTitle: "Recent failures",
+  noRecentFailures: "No recent failures.",
+  gotoAgents: "Go to Agent integrations",
+  gotoChannels: "Go to channels",
+  gotoHistory: "View notification history",
+  overviewLoadFailed: "Failed to load health status. Please retry later.",
+  refreshedNotice: "Data refreshed.",
+  // History page (Task 19)
+  filterResult: "Result",
+  filterTimeFrom: "From",
+  filterTimeUntil: "Until",
+  stNotQueued: "Not queued",
+  stPending: "Pending",
+  stSending: "Sending",
+  stRetryWait: "Waiting to retry",
+  stSucceeded: "Succeeded",
+  stFailed: "Failed",
+  stExpired: "Expired",
+  colTime: "Time",
+  retryFailedJob: "Retry failed job",
+  retryExpiredJob: "Retry expired job",
+  retryExpiredHint: "Expired jobs cannot be retried.",
+  retryConfirmTitle: "Confirm manual retry",
+  retryConfirmNote: "The job will be redelivered to its original channel immediately.",
+  confirmRetry: "Retry now",
+  retryQueued: "Re-delivery queued.",
+  loadMore: "Load more",
+  emptyHistory: "No notification history",
+  detailTitle: "Notification details (redacted)",
+  detailOccurred: "Occurred at",
+  detailReceived: "Received at",
+  detailModel: "Model",
+  detailMode: "Permission mode",
+  detailUnmatchedFingerprint: "Unmatched project fingerprint (hash only)",
+  detailAttempts: "Delivery attempts",
+  detailNoDocument: "(no body content)",
+  historyUpdated: "Notification history updated.",
+  unmatchedProject: "Unmatched project",
+  // Settings page (Task 19)
+  sectionStartup: "Startup and window",
+  autostartLabel: "Launch at login",
+  closeToTrayLabel: "Close to tray",
+  languageLabel: "Language",
+  langZh: "中文（简体）",
+  langEn: "English",
+  themeLabel: "Theme",
+  themeSystem: "Follow system",
+  themeLight: "Light",
+  themeDark: "Dark",
+  retentionSection: "Data retention",
+  eventRetentionLabel: "History retention (days)",
+  logRetentionLabel: "Log retention (days)",
+  retentionBounds: "Retention must be an integer between 1 and 365.",
+  savedOk: "Settings saved.",
+  settingsLoadFailed: "Failed to load settings. Please reopen this page.",
+  pauseSection: "Notification pause",
+  pausedUntilPrefix: "Paused until:",
+  notPaused: "Notifications active.",
+  pause15m: "Pause 15 minutes",
+  pause1h: "Pause 1 hour",
+  pauseToday: "Pause until today ends",
+  resumeNotifications: "Resume notifications",
+  updatesSection: "Updates",
+  checkUpdates: "Check for updates",
+  checkingUpdates: "Checking…",
+  upToDate: "Up to date.",
+  updateAvailablePrefix: "Update available:",
+  installUpdateAction: "Install update",
+  installConfirmTitle: "Confirm update installation",
+  confirmInstall: "Install now",
+  updateInstalled: "Updater started.",
+  credentialStoreSection: "Credential store",
 };
 
 export function dictionary(locale: LocaleCode): Dictionary {
   return locale === "en" ? en : zhCn;
+}
+
+/** Localized DeliveryStatusCode label, shared by overview + history pages. */
+export function deliveryStatusText(d: Dictionary, status: string): string {
+  switch (status) {
+    case "not_queued":
+      return d.stNotQueued;
+    case "pending":
+      return d.stPending;
+    case "sending":
+      return d.stSending;
+    case "retry_wait":
+      return d.stRetryWait;
+    case "succeeded":
+      return d.stSucceeded;
+    case "failed":
+      return d.stFailed;
+    case "expired":
+      return d.stExpired;
+    default:
+      return status;
+  }
 }
