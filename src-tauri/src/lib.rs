@@ -59,6 +59,10 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // Directory-open dialog for the Projects page (Task 18). The
+        // capability grants ONLY `dialog:allow-open`; save/message prompts and
+        // file picks stay unavailable to the WebView.
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(tray_menu_state())
         .on_window_event(|window, event| {

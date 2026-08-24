@@ -338,6 +338,10 @@ export interface ProjectSummary {
   canonical_root: string;
   worktree_mode: WorktreeModeCode;
   paths: { id: string; kind: string; canonical_path: string }[];
+  /** Rules with at least one project-scope override (all agents combined). */
+  override_count?: number;
+  /** Git root found by inspecting only the selected directory + ancestors. */
+  git_root?: string | null;
 }
 
 export interface SaveProjectInput {
@@ -345,6 +349,12 @@ export interface SaveProjectInput {
   name: string;
   canonical_root: string;
   worktree_mode: WorktreeModeCode;
+  /**
+   * The user-selected directory from the native folder picker, when different
+   * bookkeeping is needed (worktree detection). The core canonicalizes this
+   * server-side and inspects ONLY that directory and its parents.
+   */
+  selected_path?: string | null;
 }
 
 export interface AddProjectAliasInput {

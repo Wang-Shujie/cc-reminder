@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type Rea
 import { Search, X } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
+import { driftEvents, mergeRowsForDrift } from "../lib/drift";
+import { AGENT_CONFIRMATION_REQUIRED, errorCodeOf } from "../lib/errors";
 import type {
   AgentKindCode,
   ChannelSummary,
@@ -22,37 +24,9 @@ export type RulesScope =
   | { scope: "global" }
   | { scope: "project"; project_id: string; project_name: string };
 
-const AGENT_CONFIRMATION_REQUIRED = "integration.agent_confirmation_required";
-
-/**
- * Extract the backend error code from a rejected invoke. Tauri serializes the
- * Rust error DTO ({code, message}) as a plain object/string, not an Error.
- */
-function errorCodeOf(e: unknown): string | null {
-  if (typeof e === "string") {
-    return e.includes(AGENT_CONFIRMATION_REQUIRED) ? AGENT_CONFIRMATION_REQUIRED : e;
-  }
-  if (e instanceof Error) {
-    return e.message.includes(AGENT_CONFIRMATION_REQUIRED)
-      ? AGENT_CONFIRMATION_REQUIRED
-      : e.message;
-  }
-  if (e !== null && typeof e === "object" && "code" in e) {
-    return String((e as { code: unknown }).code);
-  }
-  return null;
-}
 
 type EnabledFilter = "all" | "enabled" | "disabled";
 type SensitivityFilter = "all" | "public" | "sensitive" | "forbidden";
-
-/** One merged entry per source_event across global + project-scope rows. */
-interface DriftBasisRow {
-  source_event: string;
-  installed: boolean;
-  enabledAnywhere: boolean;
-  available: boolean;
-}
 
 export function HookRulesPage({
   locale,
@@ -154,33 +128,18 @@ export function HookRulesPage({
     [agentRows, query, phase, enabledFilter, sensitivity],
   );
 
-  // Per-agent drift derivation (F1): the global health issue is cross-agent,
-  // so drift is computed client-side from this tab's rows only. An event is
-  // REQUIRED (per required_hook_selection in apply_hook_action) when it is
-  // enabled globally OR enabled by any project patch (F5), while installed
-  // state comes from the agent itself. A tab "has own drift" exactly when its
-  // added/removed lists below are non-empty.
-  const driftBasis = useMemo<DriftBasisRow[]>(() => {
+  // Per-agent drift derivation (F1), shared with the Agent Integration page:
+  // the global health issue is cross-agent, so drift is computed client-side
+  // from this tab's rows only (global rows merged with every project patch).
+  const drift = useMemo(() => {
     const source =
       unionRows !== null ? unionRows.filter((row) => row.agent === agent) : agentRows;
-    const byEvent = new Map<string, DriftBasisRow>();
-    for (const row of source) {
-      const prev = byEvent.get(row.source_event);
-      byEvent.set(row.source_event, {
-        source_event: row.source_event,
-        installed: prev?.installed ?? row.installed,
-        enabledAnywhere: (prev?.enabledAnywhere ?? false) || row.enabled,
-        available: prev?.available ?? row.available,
-      });
-    }
-    return [...byEvent.values()];
+    return driftEvents(mergeRowsForDrift(source));
   }, [unionRows, agentRows, agent]);
 
-  const addedEvents = driftBasis.filter(
-    (row) => row.available && row.enabledAnywhere && !row.installed,
-  );
-  const removedEvents = driftBasis.filter((row) => row.installed && !row.enabledAnywhere);
-  const drift = addedEvents.length > 0 || removedEvents.length > 0;
+  const addedEvents = drift.added;
+  const removedEvents = drift.removed;
+  const hasDrift = addedEvents.length > 0 || removedEvents.length > 0;
 
   async function toggleRow(row: HookRuleRow, next: boolean): Promise<void> {
     try {
@@ -260,7 +219,7 @@ export function HookRulesPage({
 
       {actionError !== null && <p role="alert">{actionError}</p>}
 
-      {drift && (
+      {hasDrift && (
         <p className="drift-status" role="status">
           <span>{t.driftHint}</span>
           <button
@@ -499,8 +458,8 @@ export function HookRulesPage({
             <h3>{t.applyAdded}</h3>
             {addedEvents.length > 0 ? (
               <ul>
-                {addedEvents.map((row) => (
-                  <li key={row.source_event}>{row.source_event}</li>
+                {addedEvents.map((event) => (
+                  <li key={event}>{event}</li>
                 ))}
               </ul>
             ) : (
@@ -509,8 +468,8 @@ export function HookRulesPage({
             <h3>{t.applyRemoved}</h3>
             {removedEvents.length > 0 ? (
               <ul>
-                {removedEvents.map((row) => (
-                  <li key={row.source_event}>{row.source_event}</li>
+                {removedEvents.map((event) => (
+                  <li key={event}>{event}</li>
                 ))}
               </ul>
             ) : (

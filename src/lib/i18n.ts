@@ -130,6 +130,82 @@ export interface Dictionary {
   sendConfirmTitle: string;
   confirmSend: string;
   sentOk: string;
+  // Agent Integration page (Task 18)
+  agentDetect: string;
+  agentDetecting: string;
+  agentInstallPrefix: string;
+  agentRepairPrefix: string;
+  agentUninstallPrefix: string;
+  hookWord: string;
+  colVersion: string;
+  colState: string;
+  dsDetected: string;
+  dsMissing: string;
+  dsInvalidVersion: string;
+  dsProcessFailed: string;
+  dsTimedOut: string;
+  agentUpgradeNeeded: string;
+  upgradeHelperAction: string;
+  uninstallConfirmTitle: string;
+  uninstallScopeNote: string;
+  confirmUninstall: string;
+  versionConsentTitle: string;
+  consentContinue: string;
+  lastApplied: string;
+  ehHealthy: string;
+  ehMissing: string;
+  ehDrifted: string;
+  ehHelperMismatch: string;
+  ehNeedsTrust: string;
+  ehAgentUpgradeRequired: string;
+  trustNotice: string;
+  // Channels page (Task 18)
+  addChannelAction: string;
+  replaceCredentialAction: string;
+  deleteChannelAction: string;
+  deleteChannelConfirmTitle: string;
+  deleteChannelNote: string;
+  confirmDelete: string;
+  webhookField: string;
+  signingSecret: string;
+  keywordPrefixField: string;
+  savedCredentialBadge: string;
+  credentialReplaceHint: string;
+  testSendBtn: string;
+  testSendConfirmTitle: string;
+  testSendWarning: string;
+  lastSuccessCol: string;
+  neverSucceeded: string;
+  pausedBadge: string;
+  authPausedNote: string;
+  platformCodeLabel: string;
+  markdownFallbackNote: string;
+  testResultsTitle: string;
+  emptyChannels: string;
+  channelColName: string;
+  channelColKind: string;
+  channelColCredential: string;
+  channelColHealth: string;
+  // Projects page (Task 18)
+  addProjectBtn: string;
+  projectNameField: string;
+  worktreeChoiceLegend: string;
+  aliasChoiceLabel: string;
+  separateChoiceLabel: string;
+  saveBtn: string;
+  pickedPathLabel: string;
+  colProject: string;
+  colRoot: string;
+  colAliases: string;
+  colOverrides: string;
+  removeAliasBtn: string;
+  removeAliasConfirmTitle: string;
+  removeAliasNote: string;
+  confirmRemove: string;
+  selectAgent: string;
+  allAgentsOption: string;
+  noProjects: string;
+  scanBoundaryNote: string;
 }
 
 const zhCn: Dictionary = {
@@ -260,6 +336,82 @@ const zhCn: Dictionary = {
   sendConfirmTitle: "确认发送测试到",
   confirmSend: "确认发送",
   sentOk: "测试已发送。",
+  // Agent Integration page (Task 18)
+  agentDetect: "检测 Agent",
+  agentDetecting: "检测中…",
+  agentInstallPrefix: "安装 ",
+  agentRepairPrefix: "修复 ",
+  agentUninstallPrefix: "卸载 ",
+  hookWord: " Hook",
+  colVersion: "版本",
+  colState: "状态",
+  dsDetected: "已检测",
+  dsMissing: "未检测到",
+  dsInvalidVersion: "版本无效",
+  dsProcessFailed: "检测进程失败",
+  dsTimedOut: "检测超时",
+  agentUpgradeNeeded: "需要升级 CC Reminder",
+  upgradeHelperAction: "升级 Helper",
+  uninstallConfirmTitle: "确认卸载 Hook",
+  uninstallScopeNote: "只移除 CC Reminder 创建的 Hook，Agent 自身的其他 Hook 保持不变。",
+  confirmUninstall: "确认卸载",
+  versionConsentTitle: "确认在未验证版本上继续",
+  consentContinue: "确认继续",
+  lastApplied: "最近应用结果",
+  ehHealthy: "健康",
+  ehMissing: "缺失",
+  ehDrifted: "不一致",
+  ehHelperMismatch: "Helper 版本不匹配",
+  ehNeedsTrust: "待确认",
+  ehAgentUpgradeRequired: "需要升级 Agent",
+  trustNotice: "Codex 的 Hook 需要在官方界面确认：请运行以下命令后重新检测。",
+  // Channels page (Task 18)
+  addChannelAction: "添加渠道",
+  replaceCredentialAction: "替换凭据",
+  deleteChannelAction: "删除渠道",
+  deleteChannelConfirmTitle: "确认删除渠道",
+  deleteChannelNote: "删除后指向该渠道的规则将无法投递。",
+  confirmDelete: "确认删除",
+  webhookField: "Webhook",
+  signingSecret: "签名密钥（可选）",
+  keywordPrefixField: "关键词前缀",
+  savedCredentialBadge: "已保存凭据",
+  credentialReplaceHint: "已保存的凭据不会回填；输入新的 Webhook 以替换。",
+  testSendBtn: "测试发送",
+  testSendConfirmTitle: "确认测试发送",
+  testSendWarning: "将向目标群发送测试消息。",
+  lastSuccessCol: "上次成功",
+  neverSucceeded: "尚未成功",
+  pausedBadge: "已暂停",
+  authPausedNote: "授权已暂停：请替换凭据。",
+  platformCodeLabel: "平台返回码",
+  markdownFallbackNote: "平台不支持 Markdown 时已自动改用纯文本发送。",
+  testResultsTitle: "最近测试发送结果",
+  emptyChannels: "尚未添加渠道",
+  channelColName: "名称",
+  channelColKind: "类型",
+  channelColCredential: "凭据",
+  channelColHealth: "状态",
+  // Projects page (Task 18)
+  addProjectBtn: "添加项目",
+  projectNameField: "项目名称",
+  worktreeChoiceLegend: "该目录如何参与匹配？",
+  aliasChoiceLabel: "作为现有项目的路径别名",
+  separateChoiceLabel: "作为独立项目添加",
+  saveBtn: "保存",
+  pickedPathLabel: "所选目录",
+  colProject: "项目",
+  colRoot: "根目录",
+  colAliases: "路径别名",
+  colOverrides: "覆盖规则数",
+  removeAliasBtn: "移除别名",
+  removeAliasConfirmTitle: "确认移除路径别名",
+  removeAliasNote: "移除后该目录的事件将不再匹配此项目。",
+  confirmRemove: "确认移除",
+  selectAgent: "选择 Agent",
+  allAgentsOption: "全部 Agent",
+  noProjects: "尚未添加项目",
+  scanBoundaryNote: "仅检查你明确选择的目录及其上级目录以识别 Git 根，不会扫描整个磁盘。",
 };
 
 const en: Dictionary = {
@@ -394,6 +546,87 @@ const en: Dictionary = {
   sendConfirmTitle: "Confirm test send to",
   confirmSend: "Send now",
   sentOk: "Test sent.",
+  // Agent Integration page (Task 18)
+  agentDetect: "Detect agents",
+  agentDetecting: "Detecting…",
+  agentInstallPrefix: "Install ",
+  agentRepairPrefix: "Repair ",
+  agentUninstallPrefix: "Uninstall ",
+  hookWord: " hook",
+  colVersion: "Version",
+  colState: "State",
+  dsDetected: "Detected",
+  dsMissing: "Not found",
+  dsInvalidVersion: "Invalid version",
+  dsProcessFailed: "Detection process failed",
+  dsTimedOut: "Detection timed out",
+  agentUpgradeNeeded: "Upgrade CC Reminder required",
+  upgradeHelperAction: "Upgrade helper",
+  uninstallConfirmTitle: "Confirm hook removal",
+  uninstallScopeNote:
+    "Only hooks created by CC Reminder are removed; the agent's own hooks stay untouched.",
+  confirmUninstall: "Uninstall",
+  versionConsentTitle: "Continue on an unverified version",
+  consentContinue: "Continue",
+  lastApplied: "Last applied result",
+  ehHealthy: "Healthy",
+  ehMissing: "Missing",
+  ehDrifted: "Drifted",
+  ehHelperMismatch: "Helper mismatch",
+  ehNeedsTrust: "Needs confirmation",
+  ehAgentUpgradeRequired: "Agent upgrade required",
+  trustNotice:
+    "Codex hooks need confirmation in the official UI: run the command below, then re-check.",
+  // Channels page (Task 18)
+  addChannelAction: "Add channel",
+  replaceCredentialAction: "Replace credential",
+  deleteChannelAction: "Delete channel",
+  deleteChannelConfirmTitle: "Delete this channel?",
+  deleteChannelNote: "Rules targeting this channel will stop delivering after deletion.",
+  confirmDelete: "Delete",
+  webhookField: "Webhook",
+  signingSecret: "Signing secret (optional)",
+  keywordPrefixField: "Keyword prefix",
+  savedCredentialBadge: "Credential saved",
+  credentialReplaceHint:
+    "Saved credentials are never shown; enter a new Webhook to replace them.",
+  testSendBtn: "Send test message",
+  testSendConfirmTitle: "Confirm test send",
+  testSendWarning: "A real test message will be sent to the target group.",
+  lastSuccessCol: "Last success",
+  neverSucceeded: "Never succeeded",
+  pausedBadge: "Paused",
+  authPausedNote: "Auth paused: replace the credential.",
+  platformCodeLabel: "Platform code",
+  markdownFallbackNote:
+    "The message was re-sent as plain text because the platform lacks Markdown support.",
+  testResultsTitle: "Recent test-send results",
+  emptyChannels: "No channels yet",
+  channelColName: "Name",
+  channelColKind: "Kind",
+  channelColCredential: "Credential",
+  channelColHealth: "State",
+  // Projects page (Task 18)
+  addProjectBtn: "Add project",
+  projectNameField: "Project name",
+  worktreeChoiceLegend: "How should this directory participate in matching?",
+  aliasChoiceLabel: "As a path alias of the existing project",
+  separateChoiceLabel: "Add as an independent project",
+  saveBtn: "Save",
+  pickedPathLabel: "Selected folder",
+  colProject: "Project",
+  colRoot: "Root",
+  colAliases: "Path aliases",
+  colOverrides: "Overrides",
+  removeAliasBtn: "Remove alias",
+  removeAliasConfirmTitle: "Remove this path alias?",
+  removeAliasNote: "Events under this path will no longer match the project.",
+  confirmRemove: "Remove",
+  selectAgent: "Select agent",
+  allAgentsOption: "All agents",
+  scanBoundaryNote:
+    "Only the chosen directory and its parents are inspected to find a Git root; the whole disk is never scanned.",
+  noProjects: "No projects yet",
 };
 
 export function dictionary(locale: LocaleCode): Dictionary {

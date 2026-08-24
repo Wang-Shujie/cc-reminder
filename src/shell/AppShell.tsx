@@ -12,7 +12,10 @@ import {
 } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
+import { AgentsPage } from "../agents/AgentsPage";
+import { ChannelsPage } from "../channels/ChannelsPage";
 import { HookRulesPage } from "../hooks/HookRulesPage";
+import { ProjectsPage } from "../projects/ProjectsPage";
 import {
   CORE_EVENTS,
   type HealthSnapshot,
@@ -137,6 +140,12 @@ export function AppShell({
       <main className="shell-content">
         {page === "hooks" ? (
           <HookRulesPage locale={locale} />
+        ) : page === "agents" ? (
+          <AgentsPage locale={locale} />
+        ) : page === "channels" ? (
+          <ChannelsPage locale={locale} />
+        ) : page === "projects" ? (
+          <ProjectsPage locale={locale} />
         ) : (
           <>
             <h1>{labelFor(page)}</h1>

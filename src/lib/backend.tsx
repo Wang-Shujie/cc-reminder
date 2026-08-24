@@ -207,3 +207,26 @@ export function useBackend(): Backend {
   }
   return backend;
 }
+
+/** Context lookup that tolerates a missing provider so management pages can
+ *  take an injected `backend` prop in isolation (unit tests) while production
+ *  wiring stays context-based. */
+export function useOptionalBackend(): Backend | null {
+  return useContext(BackendContext);
+}
+
+/** Stable stand-in that throws only when a method is actually invoked, so a
+ *  page rendered without provider AND without injected prop fails loudly at
+ *  first backend use instead of breaking hook order during render. */
+const MISSING_BACKEND: Backend = new Proxy({} as Backend, {
+  get() {
+    throw new Error("BackendProvider is missing above this component");
+  },
+});
+
+/** Backend resolution for management pages: injected prop wins (tests),
+ *  otherwise context (production shell wiring). */
+export function usePageBackend(injected?: Backend): Backend {
+  const contextual = useOptionalBackend();
+  return injected ?? contextual ?? MISSING_BACKEND;
+}

@@ -4,6 +4,7 @@ import { BackendProvider } from "../lib/backend";
 import { AppRoot } from "../App";
 import type { Backend } from "../lib/backend";
 import type {
+  AddProjectAliasInput,
   AgentIntegrationSummary,
   AgentKindCode,
   BootstrapState,
@@ -12,8 +13,10 @@ import type {
   ChannelId,
   ChannelSummary,
   CoreEventName,
+  DeleteChannelInput,
   HealthSnapshot,
   HistoryPage,
+  HookApplyEntry,
   HookInstallationResult,
   HookRuleRow,
   ListHookRulesInput,
@@ -21,17 +24,44 @@ import type {
   PatchFieldCode,
   ProjectId,
   ProjectSummary,
+  RemoveProjectAliasInput,
+  ReplaceChannelCredentialInput,
   RuleConfig,
   SaveChannelInput,
+  SaveProjectInput,
   SaveSettingsInput,
   SensitivityCode,
   SettingsView,
+  TestChannelInput,
   ThemeCode,
 } from "../lib/contracts";
 import type { ReactNode } from "react";
 
+/** Serialized AppError shape the real Tauri bridge rejects with. */
+export interface FakeAppError {
+  code: string;
+  message: string;
+  suggested_action?: string | null;
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/** Mirrors channels::validate_official_webhook: only the platforms' official
+ *  webhook hosts are accepted, before any credential would be stored. */
+function assertOfficialWebhook(credential: ChannelCredentialInput): void {
+  const host = credential.webhook;
+  const ok =
+    credential.kind === "ding_talk"
+      ? host.startsWith("https://oapi.dingtalk.com/")
+      : host.startsWith("https://qyapi.weixin.qq.com/");
+  if (!ok) {
+    throw {
+      code: "configuration.invalid_webhook",
+      message: "webhook rejected: unofficial host",
+    };
+  }
 }
 
 export function okSnapshot(): HealthSnapshot {
@@ -64,10 +94,20 @@ export interface FakeBackendOptions {
   /** First apply_hook_action without consent rejects with
    *  integration.agent_confirmation_required (F2 gate simulation). */
   applyConfirmationRequired?: boolean;
+  /** Entries returned by a successful apply_hook_action (per-event health). */
+  applyEntries?: () => HookApplyEntry[];
+  /** When set, every apply_hook_action rejects with this AppError shape. */
+  applyError?: FakeAppError;
   selectionOutOfDate?: boolean;
   previewBody?: string;
   previewError?: string;
   sendError?: string;
+  /** Channel ids whose deletion is refused (configuration.channel_in_use). */
+  channelInUseIds?: ChannelId[];
+  testChannelResult?: { http_status: number; platform_code: string | null };
+  testChannelError?: FakeAppError;
+  /** When true, project saves/alias adds reject with configuration.path_conflict. */
+  projectConflict?: boolean;
 }
 
 /** Neutral default RuleConfig matching rules::resolve::default_rule. */
@@ -266,21 +306,44 @@ export class FakeBackend implements Backend {
       | "projectPatches"
       | "projects"
       | "applyConfirmationRequired"
+      | "applyEntries"
+      | "applyError"
       | "selectionOutOfDate"
       | "previewBody"
       | "previewError"
       | "sendError"
+      | "channelInUseIds"
+      | "testChannelResult"
+      | "testChannelError"
+      | "projectConflict"
     >
-  > & Pick<FakeBackendOptions, "detectResults" | "previewBody" | "previewError" | "sendError">;
+  > & Pick<
+    FakeBackendOptions,
+    "detectResults" | "previewBody" | "previewError" | "sendError" | "applyEntries"
+  >;
   private channelsState: ChannelSummary[];
   private rulesState: HookRuleRow[];
   private patchesState: Map<string, Partial<RuleConfig>>;
   private applyConfirmationRequired: boolean;
+  private applyError: FakeAppError | undefined;
   private projectsState: ProjectSummary[];
   private settings: SettingsView;
   private savedSettingsInputs: SaveSettingsInput[] = [];
   private selectionOutOfDate: boolean;
   private nextChannelId = 1;
+  private channelInUseIds: ChannelId[];
+  private testChannelResult: { http_status: number; platform_code: string | null };
+  private testChannelError: FakeAppError | undefined;
+  private projectConflict: boolean;
+  private nextPathId = 1;
+
+  readonly saveChannel: Backend["saveChannel"];
+  readonly replaceChannelCredential: Backend["replaceChannelCredential"];
+  readonly deleteChannel: Backend["deleteChannel"];
+  readonly testChannel: Backend["testChannel"];
+  readonly saveProject: Backend["saveProject"];
+  readonly addProjectAlias: Backend["addProjectAlias"];
+  readonly removeProjectAlias: Backend["removeProjectAlias"];
 
   constructor(options: FakeBackendOptions = {}) {
     this.opts = {
@@ -308,7 +371,14 @@ export class FakeBackend implements Backend {
       previewBody: options.previewBody,
       previewError: options.previewError,
       sendError: options.sendError,
+      applyEntries: options.applyEntries,
     };
+    this.applyError = options.applyError;
+    this.channelInUseIds = options.channelInUseIds ? [...options.channelInUseIds] : [];
+    this.testChannelResult =
+      options.testChannelResult ?? { http_status: 200, platform_code: null };
+    this.testChannelError = options.testChannelError;
+    this.projectConflict = options.projectConflict ?? false;
     this.channelsState = options.channels ? clone(options.channels) : [];
     this.rulesState = options.rules ? clone(options.rules) : [];
     this.patchesState = new Map(
@@ -350,6 +420,9 @@ export class FakeBackend implements Backend {
     );
     this.applyHookAction = vi.fn(
       async (input): Promise<HookInstallationResult> => {
+        if (this.applyError) {
+          throw { ...this.applyError };
+        }
         if (this.applyConfirmationRequired && !input.confirm_compatible_version) {
           // Serialized shape mirrors the Rust integration_error DTO.
           throw {
@@ -365,7 +438,11 @@ export class FakeBackend implements Backend {
             ? row
             : { ...row, installed: row.enabled && row.available },
         );
-        return { agent: input.agent, selection_out_of_date: false, entries: [] };
+        return {
+          agent: input.agent,
+          selection_out_of_date: false,
+          entries: this.opts.applyEntries?.() ?? [],
+        };
       },
     );
     this.saveGlobalRule = vi.fn(async (input) => {
@@ -433,6 +510,97 @@ export class FakeBackend implements Backend {
         body: this.opts.previewBody ?? "",
         footer: null,
       };
+    });
+
+    // Channels: mirrors commands::channels — official-host validation BEFORE
+    // any credential would be stored; delete refuses targeted channels.
+    this.saveChannel = vi.fn(async (input: SaveChannelInput): Promise<ChannelSummary> => {
+      assertOfficialWebhook(input.credential);
+      const saved: ChannelSummary = {
+        id: `channel-${this.nextChannelId++}` as ChannelId,
+        kind: input.credential.kind,
+        name: input.name,
+        credential_present: true,
+        health: "unknown",
+        paused: false,
+        last_succeeded_at: null,
+      };
+      this.channelsState.push(saved);
+      return clone(saved);
+    });
+    this.replaceChannelCredential = vi.fn(
+      async (input: ReplaceChannelCredentialInput): Promise<ChannelSummary> => {
+        const existing = this.channelsState.find((c) => c.id === input.channel_id);
+        if (!existing) throw new Error("unknown channel");
+        assertOfficialWebhook(input.credential);
+        if (input.credential.kind !== existing.kind) {
+          throw {
+            code: "configuration.channel_kind_mismatch",
+            message: "credential kind does not match channel",
+          };
+        }
+        existing.health = "unknown";
+        return clone(existing);
+      },
+    );
+    this.deleteChannel = vi.fn(async (input: DeleteChannelInput): Promise<void> => {
+      if (this.channelInUseIds.includes(input.channel_id)) {
+        throw {
+          code: "configuration.channel_in_use",
+          message: "channel is targeted by an enabled rule",
+          suggested_action: "先把指向该渠道的规则改投其他渠道，再删除。",
+        };
+      }
+      this.channelsState = this.channelsState.filter((c) => c.id !== input.channel_id);
+    });
+    this.testChannel = vi.fn(
+      async (_input: TestChannelInput): Promise<{ http_status: number; platform_code: string | null }> => {
+        void _input;
+        if (this.testChannelError) {
+          throw { ...this.testChannelError };
+        }
+        return { ...this.testChannelResult };
+      },
+    );
+
+    // Projects: mirrors configuration.path_conflict enforcement at the repo
+    // layer for duplicate/overlapping registrations.
+    this.saveProject = vi.fn(async (input: SaveProjectInput): Promise<ProjectSummary> => {
+      if (this.projectConflict) {
+        throw {
+          code: "configuration.path_conflict",
+          message: "project path is already registered",
+        };
+      }
+      const saved: ProjectSummary = {
+        id: input.project_id ?? (`project-${this.projectsState.length + 1}` as ProjectId),
+        name: input.name,
+        canonical_root: input.canonical_root,
+        worktree_mode: input.worktree_mode,
+        paths: [],
+        override_count: 0,
+      };
+      this.projectsState.push(saved);
+      return clone(saved);
+    });
+    this.addProjectAlias = vi.fn(async (input: AddProjectAliasInput): Promise<void> => {
+      if (this.projectConflict) {
+        throw {
+          code: "configuration.path_conflict",
+          message: "project path is already registered",
+        };
+      }
+      const owner = this.projectsState.find((p) => p.id === input.project_id);
+      owner?.paths.push({
+        id: `path-${this.nextPathId++}`,
+        kind: "alias",
+        canonical_path: input.canonical_path,
+      });
+    });
+    this.removeProjectAlias = vi.fn(async (input: RemoveProjectAliasInput): Promise<void> => {
+      for (const project of this.projectsState) {
+        project.paths = project.paths.filter((path) => path.id !== input.path_id);
+      }
     });
   }
 
@@ -506,62 +674,9 @@ export class FakeBackend implements Backend {
     return clone(this.channelsState);
   }
 
-  async saveChannel(input: SaveChannelInput): Promise<ChannelSummary> {
-    const kind = input.credential.kind;
-    const saved: ChannelSummary = {
-      id: `channel-${this.nextChannelId++}` as ChannelId,
-      kind,
-      name: input.name,
-      credential_present: true,
-      health: "unknown",
-      paused: false,
-      last_succeeded_at: null,
-    };
-    this.channelsState.push(saved);
-    return clone(saved);
-  }
-
-  async replaceChannelCredential(input: {
-    channel_id: ChannelId;
-    credential: ChannelCredentialInput;
-  }): Promise<ChannelSummary> {
-    const existing = this.channelsState.find((c) => c.id === input.channel_id);
-    if (!existing) throw new Error("unknown channel");
-    existing.health = "unknown";
-    return clone(existing);
-  }
-
-  async deleteChannel(input: { channel_id: ChannelId }): Promise<void> {
-    this.channelsState = this.channelsState.filter((c) => c.id !== input.channel_id);
-  }
-
-  async testChannel(): Promise<{ http_status: number; platform_code: string | null }> {
-    return { http_status: 200, platform_code: null };
-  }
-
   async listProjects(): Promise<ProjectSummary[]> {
     return clone(this.projectsState);
   }
-
-  async saveProject(input: {
-    project_id: string | null;
-    name: string;
-    canonical_root: string;
-    worktree_mode: "alias" | "separate";
-  }): Promise<ProjectSummary> {
-    const saved: ProjectSummary = {
-      id: input.project_id ?? `project-${this.projectsState.length + 1}`,
-      name: input.name,
-      canonical_root: input.canonical_root,
-      worktree_mode: input.worktree_mode,
-      paths: [],
-    };
-    this.projectsState.push(saved);
-    return clone(saved);
-  }
-
-  async addProjectAlias(): Promise<void> {}
-  async removeProjectAlias(): Promise<void> {}
 
   async listHistory(): Promise<HistoryPage> {
     return { items: [], next_offset: null };

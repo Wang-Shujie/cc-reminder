@@ -16,9 +16,13 @@ pub struct SaveProjectInput {
     pub name: String,
     pub canonical_root: String,
     pub worktree_mode: WorktreeModeInput,
+    /// The user-selected directory from the native folder picker (Task 18).
+    /// When present it wins over `canonical_root` for canonicalization and
+    /// worktree detection; the frontend never decides canonical paths.
+    pub selected_path: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorktreeModeInput {
     Alias,
@@ -53,6 +57,10 @@ pub struct ProjectView {
     pub canonical_root: String,
     pub worktree_mode: String,
     pub paths: Vec<ProjectPathView>,
+    /// Git root found by inspecting ONLY the selected directory and its
+    /// ancestors; `None` when the selected directory is its own root or no
+    /// `.git` was found nearby.
+    pub git_root: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -66,21 +74,7 @@ pub(crate) fn list_projects_impl(state: &CoreState) -> Result<Vec<ProjectView>, 
     let projects = state.config.list_projects()?;
     let mut views = Vec::with_capacity(projects.len());
     for p in projects {
-        let paths = state.config.list_project_paths(p.id)?;
-        views.push(ProjectView {
-            id: p.id.to_string(),
-            name: p.name,
-            canonical_root: p.canonical_root.to_string_lossy().into_owned(),
-            worktree_mode: worktree_mode_code(p.worktree_mode),
-            paths: paths
-                .into_iter()
-                .map(|pp| ProjectPathView {
-                    id: pp.id.to_string(),
-                    kind: path_kind_code(pp.kind),
-                    canonical_path: pp.canonical_path.to_string_lossy().into_owned(),
-                })
-                .collect(),
-        });
+        views.push(project_view(state, &p, None)?);
     }
     Ok(views)
 }
@@ -95,7 +89,33 @@ pub(crate) fn save_project_impl(
             "project name is empty",
         ));
     }
-    let canonical = canonicalize_root(&input.canonical_root)?;
+    // The user-selected directory (when supplied) is what the core
+    // canonicalizes; it never trusts the frontend's path bookkeeping.
+    let source = input
+        .selected_path
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&input.canonical_root);
+    let canonical = canonicalize_root(source)?;
+    let git_root = probe_git_root(&canonical);
+
+    // Worktree-as-alias (default): when the selected directory lives inside a
+    // registered repository, register it as a worktree path of THAT project
+    // instead of creating an independent registration.
+    if input.worktree_mode == WorktreeModeInput::Alias
+        && let Some(root) = &git_root
+        && root != &canonical
+        && let Some(owner) = find_project_owning_root(state, root)?
+    {
+        state.config.save_project_path(&ProjectPathRecord {
+            id: Uuid::now_v7(),
+            project_id: owner.id,
+            canonical_path: canonical.clone(),
+            kind: ProjectPathKind::Worktree,
+        })?;
+        return project_view(state, &owner, Some(root));
+    }
+
     let id = match input.project_id.as_deref() {
         Some(id) => parse_uuid_input(id)?,
         None => Uuid::now_v7(),
@@ -110,21 +130,7 @@ pub(crate) fn save_project_impl(
         updated_at: now,
     };
     state.config.save_project(&record)?;
-    let paths = state.config.list_project_paths(id)?;
-    Ok(ProjectView {
-        id: record.id.to_string(),
-        name: record.name,
-        canonical_root: record.canonical_root.to_string_lossy().into_owned(),
-        worktree_mode: worktree_mode_code(record.worktree_mode),
-        paths: paths
-            .into_iter()
-            .map(|pp| ProjectPathView {
-                id: pp.id.to_string(),
-                kind: path_kind_code(pp.kind),
-                canonical_path: pp.canonical_path.to_string_lossy().into_owned(),
-            })
-            .collect(),
-    })
+    project_view(state, &record, git_root.as_deref())
 }
 
 pub(crate) fn add_project_alias_impl(
@@ -199,6 +205,63 @@ fn path_kind_code(kind: ProjectPathKind) -> String {
     }
 }
 
+/// Walk from `start` upward looking for a `.git` entry, inspecting ONLY the
+/// selected directory and its ancestors — never siblings or unrelated
+/// directories. Bounded depth guards against pathological hierarchies.
+fn probe_git_root(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut current = Some(start.to_path_buf());
+    for _ in 0..32 {
+        let dir = current?;
+        if dir.join(".git").exists() {
+            return Some(dir);
+        }
+        current = dir.parent().map(std::path::Path::to_path_buf);
+    }
+    None
+}
+
+/// Find the registered project that owns `root` as its canonical root (or as
+/// one of its registered paths).
+fn find_project_owning_root(
+    state: &CoreState,
+    root: &std::path::Path,
+) -> Result<Option<ProjectRecord>, AppError> {
+    for project in state.config.list_projects()? {
+        if project.canonical_root == root {
+            return Ok(Some(project));
+        }
+        for path in state.config.list_project_paths(project.id)? {
+            if path.canonical_path == root {
+                return Ok(Some(project));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn project_view(
+    state: &CoreState,
+    record: &ProjectRecord,
+    git_root: Option<&std::path::Path>,
+) -> Result<ProjectView, AppError> {
+    let paths = state.config.list_project_paths(record.id)?;
+    Ok(ProjectView {
+        id: record.id.to_string(),
+        name: record.name.clone(),
+        canonical_root: record.canonical_root.to_string_lossy().into_owned(),
+        worktree_mode: worktree_mode_code(record.worktree_mode),
+        paths: paths
+            .into_iter()
+            .map(|pp| ProjectPathView {
+                id: pp.id.to_string(),
+                kind: path_kind_code(pp.kind),
+                canonical_path: pp.canonical_path.to_string_lossy().into_owned(),
+            })
+            .collect(),
+        git_root: git_root.map(|p| p.to_string_lossy().into_owned()),
+    })
+}
+
 #[tauri::command]
 pub async fn list_projects(state: State<'_, CoreState>) -> Result<Vec<ProjectView>, AppError> {
     let state = state.inner().clone();
@@ -238,4 +301,122 @@ pub async fn remove_project_alias(
     tauri::async_runtime::spawn_blocking(move || remove_project_alias_impl(&state, input))
         .await
         .map_err(|_| configuration_error("join_failed", "command join failed"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::CoreState;
+    use crate::security::credentials::CredentialStore;
+    use crate::security::crypto::FieldCipher;
+    use crate::storage::config::ConfigRepository;
+    use crate::storage::db::Database;
+    use crate::storage::events::EventRepository;
+    use crate::storage::integrations::IntegrationRepository;
+    use crate::storage::queue::QueueRepository;
+
+    fn command_state(database_path: &std::path::Path) -> CoreState {
+        let database = Database::open(database_path).unwrap();
+        let config = ConfigRepository::new(database.clone());
+        let events = EventRepository::new(database.clone());
+        let queue = QueueRepository::new(database.clone());
+        let integrations = IntegrationRepository::new(database.clone());
+        let credentials = CredentialStore::memory_for_test();
+        let cipher = std::sync::Arc::new(FieldCipher::from_key([7u8; 32]));
+        CoreState::new(config, events, queue, integrations, credentials, cipher)
+    }
+
+    /// Temp project tree: `<root>/repo` (git root) containing `wt`.
+    /// ponytail: leak the TempDir so its on-disk DB outlives the helper —
+    /// same rationale as the channels command tests.
+    fn worktree_fixture() -> (std::path::PathBuf, std::path::PathBuf, CoreState) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("wt")).unwrap();
+        // The DB lives OUTSIDE the repo so probe_git_root never sees it, and
+        // under the app directory name the storage layer requires.
+        let db_dir = root.path().join("com.ccreminder.app");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let state = command_state(&db_dir.join("cc-reminder.sqlite3"));
+        let repo_path = repo.canonicalize().unwrap();
+        let wt_path = repo.join("wt").canonicalize().unwrap();
+        std::mem::forget(root);
+        (repo_path, wt_path, state)
+    }
+
+    #[test]
+    fn probe_git_root_inspects_only_the_selected_chain() {
+        let (repo, wt, _state) = worktree_fixture();
+        assert_eq!(probe_git_root(&wt).as_deref(), Some(repo.as_path()));
+        assert_eq!(probe_git_root(&repo).as_deref(), Some(repo.as_path()));
+    }
+
+    #[test]
+    fn selected_worktree_with_alias_mode_joins_the_existing_project() {
+        let (repo, wt, state) = worktree_fixture();
+        save_project_impl(
+            &state,
+            SaveProjectInput {
+                project_id: None,
+                name: "主仓库".into(),
+                canonical_root: repo.to_string_lossy().into_owned(),
+                worktree_mode: WorktreeModeInput::Separate,
+                selected_path: None,
+            },
+        )
+        .unwrap();
+
+        let view = save_project_impl(
+            &state,
+            SaveProjectInput {
+                project_id: None,
+                name: "wt".into(),
+                canonical_root: wt.to_string_lossy().into_owned(),
+                worktree_mode: WorktreeModeInput::Alias,
+                selected_path: Some(wt.to_string_lossy().into_owned()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.name, "主仓库");
+        assert_eq!(view.git_root.as_deref(), Some(repo.to_str().unwrap()));
+        assert!(
+            view.paths
+                .iter()
+                .any(|p| p.kind == "worktree" && p.canonical_path == wt.to_string_lossy())
+        );
+    }
+
+    #[test]
+    fn separate_mode_creates_an_independent_project_at_the_selected_path() {
+        let (repo, wt, state) = worktree_fixture();
+        save_project_impl(
+            &state,
+            SaveProjectInput {
+                project_id: None,
+                name: "主仓库".into(),
+                canonical_root: repo.to_string_lossy().into_owned(),
+                worktree_mode: WorktreeModeInput::Separate,
+                selected_path: None,
+            },
+        )
+        .unwrap();
+
+        let view = save_project_impl(
+            &state,
+            SaveProjectInput {
+                project_id: None,
+                name: "独立".into(),
+                canonical_root: wt.to_string_lossy().into_owned(),
+                worktree_mode: WorktreeModeInput::Separate,
+                selected_path: Some(wt.to_string_lossy().into_owned()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.name, "独立");
+        assert_eq!(view.canonical_root, wt.to_string_lossy().into_owned());
+        assert_eq!(view.git_root.as_deref(), Some(repo.to_str().unwrap()));
+    }
 }

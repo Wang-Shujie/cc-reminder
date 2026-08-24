@@ -574,3 +574,34 @@ textarea {
   min-height: 72px;
   resize: vertical;
 }
+
+/* Task 18: Agent Integration / Channels / Projects pages. */
+.agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.channel-form {
+  max-width: 480px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.channel-form h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.alias-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alias-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
