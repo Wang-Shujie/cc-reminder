@@ -193,16 +193,45 @@ export interface RuleConfig {
   quiet_hours: QuietHours | null;
 }
 
+/** Mirrors events::catalog::Sensitivity (serde snake_case). */
+export type SensitivityCode = "public" | "sensitive" | "forbidden";
+
+/** Mirrors events::catalog::CapabilityStatus (serde snake_case). */
+export type CapabilityStatusCode = "stable" | "experimental" | "deprecated";
+
+export interface HookCapabilityField {
+  name: string;
+  sensitivity: SensitivityCode;
+}
+
+/**
+ * One table row of `list_hook_rules`: the stored rule merged with its project
+ * patch (when a project scope was requested) plus static capability metadata
+ * from the embedded catalog. `available=false` means the event is catalogued
+ * but not supported by the detected agent version (当前版本不支持).
+ */
 export interface HookRuleRow {
   agent: AgentKindCode;
   source_event: string;
   enabled: boolean;
   version: number;
   config: RuleConfig;
+  /** Top-level RuleConfig fields present in the project patch ([] in global scope). */
+  patched_fields: PatchFieldCode[];
+  /** Whether a hook row for this event is currently installed on the agent. */
+  installed: boolean;
+  phase: string;
+  sensitivity: SensitivityCode;
+  high_frequency: boolean;
+  status: CapabilityStatusCode;
+  available: boolean;
+  input_fields: HookCapabilityField[];
 }
 
 export interface ListHookRulesInput {
   agent: AgentKindCode;
+  /** Absent/null → global scope rows; otherwise effective rows for the project. */
+  project_id?: ProjectId | null;
 }
 
 export interface SaveGlobalRuleInput {

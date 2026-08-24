@@ -159,6 +159,18 @@ pub(crate) fn catalogued_hooks() -> BTreeSet<(AgentKind, String)> {
         .collect()
 }
 
+/// The newest verified embedded catalog for an agent, independent of runtime
+/// version resolution. Decorates rule rows with static capability metadata even
+/// when the detected version only resolves to the safe subset.
+pub fn reference_catalog(agent: AgentKind) -> CapabilityCatalog {
+    embedded_catalogs()
+        .iter()
+        .filter(|catalog| catalog.agent == agent)
+        .max_by_key(|catalog| &catalog.verified_version)
+        .cloned()
+        .expect("every supported agent has an embedded capability catalog")
+}
+
 fn embedded_catalogs() -> [CapabilityCatalog; 2] {
     [
         serde_json::from_str(CLAUDE_CODE_CATALOG)

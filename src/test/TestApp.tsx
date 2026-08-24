@@ -5,7 +5,9 @@ import { AppRoot } from "../App";
 import type { Backend } from "../lib/backend";
 import type {
   AgentIntegrationSummary,
+  AgentKindCode,
   BootstrapState,
+  CapabilityStatusCode,
   ChannelCredentialInput,
   ChannelId,
   ChannelSummary,
@@ -14,11 +16,15 @@ import type {
   HistoryPage,
   HookInstallationResult,
   HookRuleRow,
+  ListHookRulesInput,
   LocaleCode,
+  PatchFieldCode,
   ProjectId,
   ProjectSummary,
+  RuleConfig,
   SaveChannelInput,
   SaveSettingsInput,
+  SensitivityCode,
   SettingsView,
   ThemeCode,
 } from "../lib/contracts";
@@ -50,6 +56,184 @@ export interface FakeBackendOptions {
   theme?: ThemeCode;
   detectResults?: () => AgentIntegrationSummary[];
   channels?: ChannelSummary[];
+  rules?: HookRuleRow[];
+  /** Keyed `${project_id}:${agent}:${source_event}` → present top-level fields. */
+  projectPatches?: Record<string, Partial<RuleConfig>>;
+  selectionOutOfDate?: boolean;
+  previewBody?: string;
+  previewError?: string;
+  sendError?: string;
+}
+
+/** Neutral default RuleConfig matching rules::resolve::default_rule. */
+export function defaultRuleConfig(enabled = false): RuleConfig {
+  return {
+    enabled,
+    targets: [],
+    filters: {
+      tool_names: [],
+      event_subtypes: [],
+      permission_modes: [],
+      models: [],
+      statuses: [],
+    },
+    privacy: {
+      allowed_sensitive_fields: [],
+      max_body_chars: 0,
+      summary_mode: "metadata_only",
+      extra_redaction_patterns: [],
+    },
+    delivery: {
+      mode: { mode: "immediate" },
+      cooldown_seconds: 0,
+      max_per_window: 100,
+      window_seconds: 3_600,
+      quiet_behavior: "suppress",
+      ttl_seconds: 1_800,
+      max_attempts: 5,
+    },
+    quiet_hours: null,
+  };
+}
+
+export interface RuleFixture {
+  agent: AgentKindCode;
+  source_event: string;
+  enabled?: boolean;
+  phase?: string;
+  sensitivity?: SensitivityCode;
+  high_frequency?: boolean;
+  status?: CapabilityStatusCode;
+  available?: boolean;
+  installed?: boolean;
+  config?: Partial<RuleConfig>;
+}
+
+function mkRow(fixture: RuleFixture): HookRuleRow {
+  const config = { ...defaultRuleConfig(fixture.enabled ?? false), ...fixture.config };
+  return {
+    agent: fixture.agent,
+    source_event: fixture.source_event,
+    enabled: config.enabled,
+    version: 1,
+    config,
+    patched_fields: [],
+    installed: fixture.installed ?? true,
+    phase: fixture.phase ?? "stop",
+    sensitivity: fixture.sensitivity ?? "sensitive",
+    high_frequency: fixture.high_frequency ?? false,
+    status: fixture.status ?? "stable",
+    available: fixture.available ?? true,
+    input_fields: [
+      { name: "session_id", sensitivity: "sensitive" },
+      { name: "tool_input", sensitivity: "sensitive" },
+      { name: "tool_name", sensitivity: "public" },
+    ],
+  };
+}
+
+export function testChannelSummary(): ChannelSummary {
+  return {
+    id: "ch-1" as ChannelId,
+    kind: "we_com",
+    name: "值班群",
+    credential_present: true,
+    health: "unknown",
+    paused: false,
+    last_succeeded_at: null,
+  };
+}
+
+/** Claude Code table fixtures: unavailable, high-frequency, experimental and
+ *  deprecated rows plus the two rows the drawer tests open. No other event
+ *  name contains "Stop" so row-name regexes stay unambiguous. */
+export function claudeRulesFixtures(): HookRuleRow[] {
+  return [
+    mkRow({
+      agent: "claude-code",
+      source_event: "PermissionRequest",
+      enabled: true,
+      phase: "permission",
+    }),
+    mkRow({
+      agent: "claude-code",
+      source_event: "PostToolUseFailure",
+      phase: "failure",
+      available: false,
+      installed: false,
+    }),
+    mkRow({
+      agent: "claude-code",
+      source_event: "PreToolUse",
+      high_frequency: true,
+      phase: "before",
+    }),
+    mkRow({ agent: "claude-code", source_event: "Stop", enabled: true }),
+    mkRow({
+      agent: "claude-code",
+      source_event: "Elicitation",
+      status: "experimental",
+      phase: "request",
+    }),
+    mkRow({
+      agent: "claude-code",
+      source_event: "TaskCreated",
+      status: "deprecated",
+      phase: "create",
+    }),
+  ];
+}
+
+/** Small Codex fixture set for tab-scoping tests. */
+export function codexRulesFixtures(): HookRuleRow[] {
+  return [
+    mkRow({
+      agent: "codex",
+      source_event: "PermissionRequest",
+      enabled: true,
+      phase: "request",
+    }),
+    mkRow({ agent: "codex", source_event: "SessionEnd", phase: "end", installed: false }),
+    mkRow({ agent: "codex", source_event: "Stop", enabled: true }),
+  ];
+}
+
+export interface RulesScope {
+  scope: "global";
+}
+export interface ProjectRulesScope {
+  scope: "project";
+  project_id: string;
+  project_name: string;
+}
+
+export const PROJECT_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+
+export function globalScope(): RulesScope {
+  return { scope: "global" };
+}
+
+export function projectScope(): ProjectRulesScope {
+  return { scope: "project", project_id: PROJECT_ID, project_name: "演示项目" };
+}
+
+const patchKey = (scope: ProjectRulesScope["project_id"], agent: string, event: string): string =>
+  `${scope}:${agent}:${event}`;
+
+/** Two-row project fixture used by the inheritance tests. */
+export function projectRulesBackendOptions(): FakeBackendOptions {
+  return {
+    channels: [testChannelSummary()],
+    rules: [
+      mkRow({
+        agent: "claude-code",
+        source_event: "PermissionRequest",
+        enabled: true,
+        phase: "request",
+      }),
+      mkRow({ agent: "claude-code", source_event: "Stop", enabled: true }),
+    ],
+  };
 }
 
 export class FakeBackend implements Backend {
@@ -58,14 +242,32 @@ export class FakeBackend implements Backend {
   readonly saveSettings: Backend["saveSettings"];
   readonly sendRuleTest: Backend["sendRuleTest"];
   readonly detectAgents: Backend["detectAgents"];
+  readonly applyHookAction: Backend["applyHookAction"];
+  readonly saveGlobalRule: Backend["saveGlobalRule"];
+  readonly saveProjectRulePatch: Backend["saveProjectRulePatch"];
+  readonly resetProjectRuleField: Backend["resetProjectRuleField"];
+  readonly previewNotification: Backend["previewNotification"];
 
-  private opts: Required<Omit<FakeBackendOptions, "detectResults" | "channels">> &
-    Pick<FakeBackendOptions, "detectResults">;
+  private opts: Required<
+    Omit<
+      FakeBackendOptions,
+      | "detectResults"
+      | "channels"
+      | "rules"
+      | "projectPatches"
+      | "selectionOutOfDate"
+      | "previewBody"
+      | "previewError"
+      | "sendError"
+    >
+  > & Pick<FakeBackendOptions, "detectResults" | "previewBody" | "previewError" | "sendError">;
   private channelsState: ChannelSummary[];
   private rulesState: HookRuleRow[];
+  private patchesState: Map<string, Partial<RuleConfig>>;
   private projectsState: ProjectSummary[];
   private settings: SettingsView;
   private savedSettingsInputs: SaveSettingsInput[] = [];
+  private selectionOutOfDate: boolean;
   private nextChannelId = 1;
 
   constructor(options: FakeBackendOptions = {}) {
@@ -91,10 +293,20 @@ export class FakeBackend implements Backend {
           needs_compatible_version_confirmation: false,
         },
       ]),
+      previewBody: options.previewBody,
+      previewError: options.previewError,
+      sendError: options.sendError,
     };
     this.channelsState = options.channels ? clone(options.channels) : [];
-    this.rulesState = [];
+    this.rulesState = options.rules ? clone(options.rules) : [];
+    this.patchesState = new Map(
+      Object.entries(options.projectPatches ?? {}).map(([key, patch]) => [
+        key,
+        clone(patch),
+      ]),
+    );
     this.projectsState = [];
+    this.selectionOutOfDate = options.selectionOutOfDate ?? false;
     this.settings = {
       autostart: false,
       close_to_tray: true,
@@ -113,11 +325,89 @@ export class FakeBackend implements Backend {
       this.settings = { ...this.settings, ...input };
       return clone(this.settings);
     });
-    this.sendRuleTest = vi.fn(async (): Promise<void> => undefined);
+    this.sendRuleTest = vi.fn(async (input): Promise<void> => {
+      if (this.opts.sendError) {
+        throw new Error(this.opts.sendError);
+      }
+      void input;
+    });
     this.detectAgents = vi.fn(
       async (_input: { confirm_compatible_version: boolean }): Promise<AgentIntegrationSummary[]> =>
         clone(this.opts.detectResults?.() ?? []),
     );
+    this.applyHookAction = vi.fn(
+      async (input): Promise<HookInstallationResult> => {
+        // Applying the installer reconciles installed rows with the rules.
+        this.selectionOutOfDate = false;
+        return { agent: input.agent, selection_out_of_date: false, entries: [] };
+      },
+    );
+    this.saveGlobalRule = vi.fn(async (input) => {
+      const row: HookRuleRow = {
+        agent: input.agent,
+        source_event: input.source_event,
+        enabled: input.config.enabled,
+        version: 0,
+        config: clone(input.config),
+        patched_fields: [],
+        installed: true,
+        phase: "stop",
+        sensitivity: "sensitive",
+        high_frequency: false,
+        status: "stable",
+        available: true,
+        input_fields: [],
+      };
+      const index = this.rulesState.findIndex(
+        (r) => r.agent === row.agent && r.source_event === row.source_event,
+      );
+      if (index >= 0) {
+        this.rulesState[index] = row;
+      } else {
+        this.rulesState.push(row);
+      }
+      return clone(row);
+    });
+    this.saveProjectRulePatch = vi.fn(async (input): Promise<void> => {
+      const key = patchKey(input.project_id, input.agent, input.source_event);
+      const existing = this.patchesState.get(key) ?? {};
+      const merged: Partial<RuleConfig> = { ...existing };
+      for (const [field, value] of Object.entries(input.patch)) {
+        if (value === undefined) {
+          continue;
+        }
+        (merged as Record<string, unknown>)[field] = clone(value);
+      }
+      this.patchesState.set(key, merged);
+    });
+    this.resetProjectRuleField = vi.fn(
+      async (input: Parameters<Backend["resetProjectRuleField"]>[0]): Promise<void> => {
+        const key = patchKey(input.project_id, input.agent, input.source_event);
+        const existing = this.patchesState.get(key);
+        if (!existing) {
+          return;
+        }
+        const { [input.field]: _removed, ...rest } = existing;
+        void _removed;
+        if (Object.keys(rest).length === 0) {
+          this.patchesState.delete(key);
+        } else {
+          this.patchesState.set(key, rest);
+        }
+      },
+    );
+    this.previewNotification = vi.fn(async () => {
+      if (this.opts.previewError) {
+        throw new Error(this.opts.previewError);
+      }
+      return {
+        title: "预览：Stop",
+        severity: "info" as const,
+        facts: [["事件", "Stop"] as [string, string]],
+        body: this.opts.previewBody ?? "",
+        footer: null,
+      };
+    });
   }
 
   /** Last input passed to saveSettings (for persistence assertions). */
@@ -128,6 +418,16 @@ export class FakeBackend implements Backend {
   private snapshot(): HealthSnapshot {
     const snap = okSnapshot();
     snap.pending_jobs = Math.max(snap.pending_jobs, 0);
+    if (this.selectionOutOfDate) {
+      snap.issues.push({
+        issue_code: "hooks.selection_out_of_date",
+        level: "warning",
+        message: "",
+        suggested_command: null,
+        suggested_action: null,
+      });
+      snap.overall = "warning";
+    }
     return snap;
   }
 
@@ -154,38 +454,26 @@ export class FakeBackend implements Backend {
     return clone(this.opts.detectResults?.() ?? []);
   }
 
-  async applyHookAction(): Promise<HookInstallationResult> {
-    const entries: HookInstallationResult["entries"] = [];
-    return { agent: "claude-code", selection_out_of_date: false, entries };
-  }
-
-  async listHookRules(): Promise<HookRuleRow[]> {
-    return clone(this.rulesState);
-  }
-
-  async saveGlobalRule(input: Parameters<Backend["saveGlobalRule"]>[0]): Promise<HookRuleRow> {
-    const row: HookRuleRow = {
-      agent: input.agent,
-      source_event: input.source_event,
-      enabled: input.config.enabled,
-      version: 0,
-      config: clone(input.config),
-    };
-    this.rulesState.push(row);
-    return clone(row);
-  }
-
-  async saveProjectRulePatch(): Promise<void> {}
-  async resetProjectRuleField(): Promise<void> {}
-
-  async previewNotification() {
-    return {
-      title: "Preview",
-      severity: "info" as const,
-      facts: [] as [string, string][],
-      body: "",
-      footer: null,
-    };
+  async listHookRules(input: ListHookRulesInput): Promise<HookRuleRow[]> {
+    const rows = clone(this.rulesState).filter((row) => row.agent === input.agent);
+    if (!input.project_id) {
+      return rows;
+    }
+    return rows.map((row) => {
+      const patch = this.patchesState.get(
+        patchKey(input.project_id as string, row.agent, row.source_event),
+      );
+      if (!patch) {
+        return row;
+      }
+      const defined = Object.entries(patch).filter(([, value]) => value !== undefined);
+      const patchedFields = defined.map(([field]) => field) as PatchFieldCode[];
+      const config = { ...row.config };
+      for (const [field, value] of defined) {
+        (config as Record<string, unknown>)[field] = value;
+      }
+      return { ...row, enabled: config.enabled, config, patched_fields: patchedFields };
+    });
   }
 
   async listChannels(): Promise<ChannelSummary[]> {

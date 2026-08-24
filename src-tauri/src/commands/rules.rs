@@ -5,9 +5,14 @@ use tauri::State;
 
 use super::{CoreState, configuration_error, parse_uuid_input};
 use crate::error::AppError;
-use crate::events::catalog::{CapabilityResolution, CatalogVerification, catalog_for};
+use crate::events::catalog::{
+    CapabilityResolution, CapabilityStatus, CatalogVerification, HookCapability, Sensitivity,
+    catalog_for, reference_catalog,
+};
 use crate::model::{AgentKind, NotificationDocument, PatchField, RuleConfig, Severity};
-use crate::rules::resolve::{StoredGlobalRule, required_hook_selection};
+use crate::rules::resolve::{
+    StoredGlobalRule, StoredRulePatch, required_hook_selection, resolve_rule,
+};
 use crate::worker::ChannelSenderFactory;
 
 // ---------------------------------------------------------------------------
@@ -27,6 +32,15 @@ impl AgentKindInput {
             Self::Codex => AgentKind::Codex,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListHookRulesInput {
+    pub agent: AgentKindInput,
+    /// Absent/null → global-scope rows; otherwise effective rows for the
+    /// project (global config merged with the stored patch).
+    pub project_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -100,23 +114,108 @@ pub struct SendRuleTestInput {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize)]
+pub struct CapabilityFieldView {
+    pub name: String,
+    pub sensitivity: Sensitivity,
+}
+
+/// One row of the Hook Rules table: the stored global rule merged with its
+/// project patch (when a project scope was requested) plus static capability
+/// metadata from the embedded catalog. `available=false` marks events that are
+/// catalogued but not supported by the detected agent version.
+#[derive(Clone, Debug, Serialize)]
 pub struct GlobalRuleView {
     pub agent: String,
     pub source_event: String,
     pub enabled: bool,
     pub version: u64,
     pub config: RuleConfig,
+    /// Top-level RuleConfig fields present in the project patch (empty in
+    /// global scope).
+    pub patched_fields: Vec<String>,
+    pub installed: bool,
+    pub phase: String,
+    pub sensitivity: Sensitivity,
+    pub high_frequency: bool,
+    pub status: CapabilityStatus,
+    pub available: bool,
+    pub input_fields: Vec<CapabilityFieldView>,
 }
 
-impl From<StoredGlobalRule> for GlobalRuleView {
-    fn from(rule: StoredGlobalRule) -> Self {
-        Self {
-            agent: rule.agent.as_str().into(),
-            source_event: rule.source_event,
-            enabled: rule.config.enabled,
-            version: rule.version,
-            config: rule.config,
-        }
+fn build_rule_view(
+    rule: StoredGlobalRule,
+    patch: Option<&StoredRulePatch>,
+    installed: bool,
+    cap: Option<&HookCapability>,
+    available: bool,
+) -> GlobalRuleView {
+    let config = match patch {
+        Some(stored) => resolve_rule(&rule.config, Some(&stored.patch)),
+        None => rule.config.clone(),
+    };
+    let patched_fields = patch
+        .map(|stored| {
+            let mut fields = Vec::new();
+            if stored.patch.enabled.is_some() {
+                fields.push("enabled".to_owned());
+            }
+            if stored.patch.targets.is_some() {
+                fields.push("targets".to_owned());
+            }
+            if stored.patch.filters.is_some() {
+                fields.push("filters".to_owned());
+            }
+            if stored.patch.privacy.is_some() {
+                fields.push("privacy".to_owned());
+            }
+            if stored.patch.delivery.is_some() {
+                fields.push("delivery".to_owned());
+            }
+            if stored.patch.quiet_hours.is_some() {
+                fields.push("quiet_hours".to_owned());
+            }
+            fields
+        })
+        .unwrap_or_default();
+    // Metadata comes from the reference catalog so unsupported rows still
+    // render their catalog facts; legacy rows outside every catalog fall back
+    // to conservative defaults.
+    let (phase, sensitivity, high_frequency, status, input_fields) = match cap {
+        Some(hook) => (
+            hook.phase.clone(),
+            hook.sensitivity,
+            hook.high_frequency,
+            hook.status,
+            hook.input_fields
+                .iter()
+                .map(|field| CapabilityFieldView {
+                    name: field.name.clone(),
+                    sensitivity: field.sensitivity,
+                })
+                .collect(),
+        ),
+        None => (
+            "unknown".to_owned(),
+            Sensitivity::Sensitive,
+            false,
+            CapabilityStatus::Stable,
+            Vec::new(),
+        ),
+    };
+    GlobalRuleView {
+        agent: rule.agent.as_str().into(),
+        source_event: rule.source_event,
+        enabled: config.enabled,
+        version: rule.version,
+        config,
+        patched_fields,
+        installed,
+        phase,
+        sensitivity,
+        high_frequency,
+        status,
+        available,
+        input_fields,
     }
 }
 
@@ -132,13 +231,52 @@ pub struct SelectionOutOfDateView {
 // Bodies
 // ---------------------------------------------------------------------------
 
-pub(crate) fn list_hook_rules_impl(state: &CoreState) -> Result<Vec<GlobalRuleView>, AppError> {
-    Ok(state
+pub(crate) fn list_hook_rules_impl(
+    state: &CoreState,
+    input: ListHookRulesInput,
+) -> Result<Vec<GlobalRuleView>, AppError> {
+    let agent = input.agent.into_kind();
+    let project_id = match input.project_id.as_deref() {
+        Some(id) => Some(parse_uuid_input(id)?),
+        None => None,
+    };
+    // `available` reflects the CURRENT version resolution; metadata comes from
+    // the newest verified reference catalog.
+    let resolution = resolve_catalog(state, agent);
+    let reference = reference_catalog(agent);
+    let mut views = Vec::new();
+    for rule in state
         .config
         .list_global_rules()?
         .into_iter()
-        .map(GlobalRuleView::from)
-        .collect())
+        .filter(|rule| rule.agent == agent)
+    {
+        let patch = match project_id {
+            Some(pid) => state
+                .config
+                .get_project_patch(pid, agent, &rule.source_event)
+                .ok(),
+            None => None,
+        };
+        let available = resolution
+            .catalog
+            .hooks
+            .iter()
+            .any(|hook| hook.source_event == rule.source_event);
+        let cap = reference
+            .hooks
+            .iter()
+            .find(|hook| hook.source_event == rule.source_event);
+        let installed = state.integrations.hook(agent, &rule.source_event).is_ok();
+        views.push(build_rule_view(
+            rule,
+            patch.as_ref(),
+            installed,
+            cap,
+            available,
+        ));
+    }
+    Ok(views)
 }
 
 pub(crate) fn save_global_rule_impl(
@@ -173,7 +311,19 @@ pub(crate) fn save_global_rule_impl(
     // rows — but do NOT mutate Agent config (only apply_hook_action does).
     let _ = recompute_selection_health(state)?;
     let fresh = state.config.get_global_rule(agent, &stored.source_event)?;
-    Ok(GlobalRuleView::from(fresh))
+    let resolution = resolve_catalog(state, agent);
+    let reference = reference_catalog(agent);
+    let available = resolution
+        .catalog
+        .hooks
+        .iter()
+        .any(|hook| hook.source_event == fresh.source_event);
+    let cap = reference
+        .hooks
+        .iter()
+        .find(|hook| hook.source_event == fresh.source_event);
+    let installed = state.integrations.hook(agent, &fresh.source_event).is_ok();
+    Ok(build_rule_view(fresh, None, installed, cap, available))
 }
 
 pub(crate) fn save_project_rule_patch_impl(
@@ -386,9 +536,12 @@ fn recompute_selection_health(state: &CoreState) -> Result<SelectionOutOfDateVie
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn list_hook_rules(state: State<'_, CoreState>) -> Result<Vec<GlobalRuleView>, AppError> {
+pub async fn list_hook_rules(
+    state: State<'_, CoreState>,
+    input: ListHookRulesInput,
+) -> Result<Vec<GlobalRuleView>, AppError> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || list_hook_rules_impl(&state))
+    tauri::async_runtime::spawn_blocking(move || list_hook_rules_impl(&state, input))
         .await
         .map_err(|_| configuration_error("join_failed", "command join failed"))?
 }
@@ -495,6 +648,40 @@ mod tests {
     async fn rule_command_rejects_unknown_capability_and_invalid_patch() {
         let error = save_global_rule_impl(&test_state(), unknown_rule_input()).unwrap_err();
         assert_eq!(error.code, "configuration.unknown_hook");
+    }
+
+    #[test]
+    fn list_hook_rules_decorates_rows_with_capability_metadata() {
+        let state = test_state();
+        let views = list_hook_rules_impl(
+            &state,
+            ListHookRulesInput {
+                agent: AgentKindInput::ClaudeCode,
+                project_id: None,
+            },
+        )
+        .unwrap();
+
+        // ensure_global_rules seeded every catalogued event.
+        assert!(views.len() >= 30);
+        let permission = views
+            .iter()
+            .find(|view| view.source_event == "PermissionRequest")
+            .unwrap();
+        assert_eq!(permission.phase, "request");
+        assert_eq!(permission.sensitivity, Sensitivity::Sensitive);
+        assert!(permission.available);
+        assert!(!permission.installed); // nothing installed in a fresh env
+        assert!(!permission.high_frequency);
+        assert_eq!(permission.status, CapabilityStatus::Stable);
+        // Catalog input fields are exposed for the drawer's privacy section.
+        assert!(
+            permission
+                .input_fields
+                .iter()
+                .any(|field| field.name == "tool_input")
+        );
+        assert!(permission.patched_fields.is_empty());
     }
 
     #[test]

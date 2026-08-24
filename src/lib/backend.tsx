@@ -98,8 +98,8 @@ export class TauriBackend implements Backend {
   applyHookAction(input: ApplyHookActionInput): Promise<HookInstallationResult> {
     return invoke("apply_hook_action", { input });
   }
-  listHookRules(_input: ListHookRulesInput): Promise<HookRuleRow[]> {
-    return invoke("list_hook_rules");
+  listHookRules(input: ListHookRulesInput): Promise<HookRuleRow[]> {
+    return invoke("list_hook_rules", { input });
   }
   saveGlobalRule(input: SaveGlobalRuleInput): Promise<HookRuleRow> {
     return invoke("save_global_rule", { input });

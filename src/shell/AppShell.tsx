@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
+import { HookRulesPage } from "../hooks/HookRulesPage";
 import {
   CORE_EVENTS,
   type HealthSnapshot,
@@ -134,8 +135,14 @@ export function AppShell({
         ))}
       </nav>
       <main className="shell-content">
-        <h1>{labelFor(page)}</h1>
-        <p className="muted">{active ? t.pagePlaceholder : ""}</p>
+        {page === "hooks" ? (
+          <HookRulesPage locale={locale} health={health} />
+        ) : (
+          <>
+            <h1>{labelFor(page)}</h1>
+            <p className="muted">{active ? t.pagePlaceholder : ""}</p>
+          </>
+        )}
       </main>
     </div>
   );
