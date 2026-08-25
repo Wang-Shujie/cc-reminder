@@ -67,13 +67,27 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(tray_menu_state())
         .on_window_event(|window, event| {
-            // close-to-tray: hide instead of close. Quit is handled by the tray
-            // menu / app exit, which performs graceful Task-14 shutdown.
+            // 关闭时最小化到托盘 (`close_to_tray`) decides what closing the
+            // main window means: hide-and-keep-running (default) or a real
+            // quit. Both exit routes (this one and Cmd-Q / menu quit) converge
+            // on RunEvent::Exit below, which runs the graceful Task-14
+            // shutdown.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && let Some(window) = window.app_handle().get_webview_window("main")
+                && window.label() == "main"
             {
-                let _ = window.hide();
-                api.prevent_close();
+                // Persisted user preference; fall back to the documented
+                // default (`true`) if the state or DB read fails so a
+                // transient error never changes close semantics silently.
+                let close_to_tray = window
+                    .app_handle()
+                    .try_state::<CoreState>()
+                    .and_then(|state| state.config.get_settings().ok())
+                    .map(|settings| settings.close_to_tray)
+                    .unwrap_or(true);
+                if close_action(close_to_tray) == CloseAction::HideToTray {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -110,8 +124,60 @@ pub fn run() {
             commands::updates::check_for_updates,
             commands::updates::install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running CC Reminder");
+        .build(tauri::generate_context!())
+        .expect("error while building CC Reminder")
+        .run(|app, event| {
+            // Every exit route lands here (close-to-exit window, Cmd-Q / menu
+            // quit, updater relaunch): run the graceful Task-14 shutdown once,
+            // right before the process goes away.
+            if let tauri::RunEvent::Exit = event {
+                shutdown_core(app);
+            }
+        });
+}
+
+/// What a main-window `CloseRequested` should do, decided purely from the
+/// persisted 关闭时最小化到托盘 setting so both branches stay unit-testable
+/// without constructing a Tauri window (the handler above stays thin).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloseAction {
+    /// Hide the window and keep the app running in the background.
+    HideToTray,
+    /// Let the window close; the app exits through [`RunEvent::Exit`].
+    Exit,
+}
+
+pub(crate) fn close_action(close_to_tray: bool) -> CloseAction {
+    if close_to_tray {
+        CloseAction::HideToTray
+    } else {
+        CloseAction::Exit
+    }
+}
+
+/// Task-14 Step-7 shutdown, shared by EVERY exit route: stop accepting IPC
+/// (the accept loop selects on the same token), cancel the delivery-worker
+/// and retention loops, then wait ≤10s for the in-flight send pass to drain
+/// before the process goes away. Best-effort past the cancel signal — at the
+/// deadline the OS reclaims whatever is still running, exactly like a crash:
+/// stale leases/processing rows are recovered by the next startup.
+fn shutdown_core(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<CoreState>() else {
+        return;
+    };
+    if let Some(token) = state.cancel_token.lock().unwrap().take() {
+        token.cancel();
+    }
+    let worker_task = state.worker_task.lock().unwrap().take();
+    if let Some(task) = worker_task {
+        // Awaiting the join handle covers "active sends finish": `run` only
+        // returns after the current pass completes, so this waits for real
+        // work, not just the cancellation handshake.
+        let _ = tauri::async_runtime::block_on(tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            task,
+        ));
+    }
 }
 
 /// Task-14 Step-6 startup ordering:
@@ -181,14 +247,30 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         async move { pipeline_for_recovery.recover_ingress().await },
     );
 
+    // One cancel signal drives every background loop (IPC accept, delivery
+    // worker, retention): Task-14 graceful shutdown (`shutdown_core`, from
+    // RunEvent::Exit) cancels all three together.
+    let cancel = CancellationToken::new();
+
     // 6. Start IPC: drives process_live, replies Accepted only after durable
     //    commit, rejects unrecognized helpers without establishing trust.
+    //    The accept loop selects on the same cancel token so an exiting app
+    //    stops admitting hook traffic; requests already received still get
+    //    their durable reply before the loop breaks.
     let pipeline_for_ipc = pipeline.clone();
     let ipc_diagnostics = diagnostics.clone();
     let mut server =
         ipc::server::IpcServer::bind(paths.endpoint()).map_err(std::io::Error::other)?;
+    let ipc_cancel = cancel.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some((request, response)) = server.receiver.recv().await {
+        loop {
+            let received = tokio::select! {
+                _ = ipc_cancel.cancelled() => None,
+                next = server.receiver.recv() => next,
+            };
+            let Some((request, response)) = received else {
+                break;
+            };
             let reply = match pipeline_for_ipc.process_live(request).await {
                 Ok(outcome) => {
                     let event_id = match outcome {
@@ -226,9 +308,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     };
     let worker_events: Arc<Mutex<Vec<worker::CoreEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let worker = DeliveryWorker::new(worker_config, worker_events);
-    let cancel = CancellationToken::new();
     let worker_cancel = cancel.clone();
-    tauri::async_runtime::spawn(async move {
+    // Keep the join handle: RunEvent::Exit waits (≤10s) on it so an in-flight
+    // send pass finishes instead of being killed mid-write.
+    let worker_task = tauri::async_runtime::spawn(async move {
         let _ = worker.run(worker_cancel).await;
     });
 
@@ -249,7 +332,8 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     ));
 
     // Manage the shared state for commands, and stash the worker cancel token
-    // so Quit can trigger graceful shutdown (≤10s wait for active sends).
+    // + join handle so RunEvent::Exit can perform the Task-14 graceful
+    // shutdown (≤10s wait for active sends).
     let mut state = CoreState::new(
         config,
         events,
@@ -262,6 +346,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     {
         let mut guard = state.cancel_token.lock().unwrap();
         *guard = Some(cancel);
+    }
+    {
+        let mut guard = state.worker_task.lock().unwrap();
+        *guard = Some(worker_task);
     }
     {
         // Autostart is applied only from save_settings (plan Task 15); the
@@ -351,4 +439,23 @@ fn tray_menu_state() -> TrayState {
 #[derive(Default)]
 pub struct TrayState {
     _private: (),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CloseAction, close_action};
+
+    #[test]
+    fn close_to_tray_enabled_hides_the_window() {
+        // Default setting: closing the main window hides it, app keeps
+        // running in the background (hook ingress + queue stay alive).
+        assert_eq!(close_action(true), CloseAction::HideToTray);
+    }
+
+    #[test]
+    fn close_to_tray_disabled_really_closes_and_exits() {
+        // Opt-out: no prevent_close — the window closes and the process exits
+        // through RunEvent::Exit (graceful shutdown).
+        assert_eq!(close_action(false), CloseAction::Exit);
+    }
 }

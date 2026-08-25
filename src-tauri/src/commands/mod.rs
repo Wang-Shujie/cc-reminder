@@ -57,6 +57,11 @@ pub struct CoreState {
     /// the runtime log files and debug windows are process-wide.
     pub diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
     pub cancel_token: std::sync::Arc<Mutex<Option<crate::worker::CancellationToken>>>,
+    /// Join handle of the delivery-worker task, stashed by the app shell next
+    /// to `cancel_token` so `RunEvent::Exit` can wait (≤10s) for the in-flight
+    /// send pass during graceful shutdown. Always `None` in pure command
+    /// tests — no worker is running there.
+    pub worker_task: std::sync::Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     /// Applies the autostart setting to the OS (register/unregister the
     /// LaunchAgent / login item). Injected by the app shell from the Tauri
     /// autostart plugin; defaults to a no-op so pure command tests can run.
@@ -85,6 +90,7 @@ impl CoreState {
             cipher,
             diagnostics,
             cancel_token: std::sync::Arc::new(Mutex::new(None)),
+            worker_task: std::sync::Arc::new(Mutex::new(None)),
             autostart_control: std::sync::Arc::new(|_| Ok(())),
         }
     }
