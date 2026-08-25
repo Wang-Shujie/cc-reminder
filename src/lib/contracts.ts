@@ -493,8 +493,17 @@ export interface InstallUpdateInput {
   confirmed: boolean;
 }
 
-export interface ExportDiagnosticsInput {
-  selected_path: string;
+/** Mirrors commands::diagnostics::DiagnosticExportResult — a serde tagged
+ *  enum. The save dialog is opened from Rust, so the frontend neither sends
+ *  nor receives any absolute path; `filename` is the final path component. */
+export type DiagnosticExportResult =
+  | { status: "saved"; filename: string }
+  | { status: "cancelled" };
+
+/** 0 closes any open debug window; 15 / 60 open a bounded window in minutes
+ *  (mirrors commands::diagnostics::SetDebugLoggingInput). */
+export interface SetDebugLoggingInput {
+  duration_minutes: 0 | 15 | 60;
 }
 
 export interface ClearHistoryInput {

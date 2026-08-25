@@ -14,6 +14,7 @@ import type {
   ChannelSummary,
   CoreEventName,
   DeleteChannelInput,
+  DiagnosticExportResult,
   GetHistoryDetailInput,
   HealthSnapshot,
   HistoryItem,
@@ -37,6 +38,7 @@ import type {
   SaveSettingsInput,
   SensitivityCode,
   SettingsView,
+  SetDebugLoggingInput,
   SetPauseInput,
   TestChannelInput,
   ThemeCode,
@@ -389,6 +391,7 @@ export class FakeBackend implements Backend {
   readonly installUpdate: Backend["installUpdate"];
   readonly exportDiagnostics: Backend["exportDiagnostics"];
   readonly clearHistory: Backend["clearHistory"];
+  readonly setDebugLogging: Backend["setDebugLogging"];
 
   constructor(options: FakeBackendOptions = {}) {
     this.opts = {
@@ -738,18 +741,28 @@ export class FakeBackend implements Backend {
       }
       void input;
     });
-    this.exportDiagnostics = vi.fn(async (input: { selected_path: string }): Promise<string> => {
-      this.exportDiagnosticsCalls.push({ ...input });
-      return input.selected_path;
-    });
+    this.exportDiagnostics = vi.fn(
+      async (): Promise<DiagnosticExportResult> => {
+        this.exportDiagnosticsCalls += 1;
+        // The dialog runs in the core; the fake answers with the saved branch.
+        return { status: "saved", filename: "cc-reminder-diagnostics.zip" };
+      },
+    );
     this.clearHistory = vi.fn(async (input: { preserve_active_jobs: boolean }): Promise<number> => {
       this.clearHistoryCalls.push({ ...input });
       return 0;
     });
+    this.setDebugLogging = vi.fn(
+      async (input: SetDebugLoggingInput): Promise<SettingsView> => {
+        this.setDebugLoggingCalls.push(clone(input));
+        return clone(this.settings);
+      },
+    );
   }
 
-  exportDiagnosticsCalls: Array<{ selected_path: string }> = [];
+  exportDiagnosticsCalls = 0;
   clearHistoryCalls: Array<{ preserve_active_jobs: boolean }> = [];
+  setDebugLoggingCalls: SetDebugLoggingInput[] = [];
 
   /** Last input passed to saveSettings (for persistence assertions). */
   get savedSettings(): readonly SaveSettingsInput[] {

@@ -14,6 +14,7 @@ import type {
   CoreEventName,
   DeleteChannelInput,
   DeliveryReceiptDto,
+  DiagnosticExportResult,
   GetHistoryDetailInput,
   HealthSnapshot,
   HistoryPage,
@@ -35,6 +36,7 @@ import type {
   SaveProjectInput,
   SaveSettingsInput,
   SendRuleTestInput,
+  SetDebugLoggingInput,
   SetPauseInput,
   SettingsView,
   TestChannelInput,
@@ -73,8 +75,11 @@ export interface Backend {
   clearNotificationPause(): Promise<SettingsView>;
   checkForUpdates(): Promise<UpdateCheckResult>;
   installUpdate(input: InstallUpdateInput): Promise<void>;
-  exportDiagnostics(input: { selected_path: string }): Promise<string>;
+  /** Opens the native save dialog in the core (Rust); no path crosses the
+   *  bridge from this side. */
+  exportDiagnostics(): Promise<DiagnosticExportResult>;
   clearHistory(input: { preserve_active_jobs: boolean }): Promise<number>;
+  setDebugLogging(input: SetDebugLoggingInput): Promise<SettingsView>;
   subscribe(
     event: CoreEventName,
     handler: (revision: number) => void,
@@ -181,11 +186,14 @@ export class TauriBackend implements Backend {
   installUpdate(input: InstallUpdateInput): Promise<void> {
     return invoke("install_update", { input });
   }
-  exportDiagnostics(input: { selected_path: string }): Promise<string> {
-    return invoke("export_diagnostics", { input });
+  exportDiagnostics(): Promise<DiagnosticExportResult> {
+    return invoke("export_diagnostics");
   }
   clearHistory(input: { preserve_active_jobs: boolean }): Promise<number> {
     return invoke("clear_history", { input });
+  }
+  setDebugLogging(input: SetDebugLoggingInput): Promise<SettingsView> {
+    return invoke("set_debug_logging", { input });
   }
   async subscribe(
     event: CoreEventName,

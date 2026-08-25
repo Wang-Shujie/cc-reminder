@@ -297,6 +297,14 @@ export interface Dictionary {
   confirmInstall: string;
   updateInstalled: string;
   credentialStoreSection: string;
+  // Task 20 fix round 1: debug logging window + export result disclosure.
+  debugSection: string;
+  debugLoggingLabel: string;
+  debugOff: string;
+  debug15m: string;
+  debug60m: string;
+  diagnosticsSavedPrefix: string;
+  diagnosticsCancelled: string;
 }
 
 const zhCn: Dictionary = {
@@ -594,6 +602,13 @@ const zhCn: Dictionary = {
   confirmInstall: "确认安装",
   updateInstalled: "更新程序已启动。",
   credentialStoreSection: "凭据存储",
+  debugSection: "调试日志",
+  debugLoggingLabel: "调试日志时长",
+  debugOff: "关闭",
+  debug15m: "15 分钟",
+  debug60m: "60 分钟",
+  diagnosticsSavedPrefix: "诊断包已保存：",
+  diagnosticsCancelled: "已取消导出。",
 };
 
 const en: Dictionary = {
@@ -900,6 +915,13 @@ const en: Dictionary = {
   confirmInstall: "Install now",
   updateInstalled: "Updater started.",
   credentialStoreSection: "Credential store",
+  debugSection: "Debug logging",
+  debugLoggingLabel: "Debug logging duration",
+  debugOff: "Off",
+  debug15m: "15 minutes",
+  debug60m: "60 minutes",
+  diagnosticsSavedPrefix: "Diagnostics saved: ",
+  diagnosticsCancelled: "Export cancelled.",
 };
 
 export function dictionary(locale: LocaleCode): Dictionary {

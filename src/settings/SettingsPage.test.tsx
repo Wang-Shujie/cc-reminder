@@ -1,7 +1,7 @@
-// Task 19 contract tests for the Settings page. The plan's Step 3 block is
-// authoritative: native controls persisting exact values. Clear-history,
-// diagnostics export and debug-logging controls arrive in Task 20 and are
-// deliberately absent here.
+// Settings page contract tests. The plan's Step 3 block is authoritative:
+// native controls persisting exact values. Task 20 fix round 1 changed the
+// export path contract — exportDiagnostics() takes NO argument (the save
+// dialog opens inside the core) — and added the bounded debug-logging select.
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -172,12 +172,10 @@ test("exports diagnostics and clears only inactive history after confirmation", 
   render(<SettingsPage backend={backend} />);
   await screen.findByRole("heading", { name: "设置" });
 
+  // The save dialog lives in the core: the page sends NO argument at all.
   await user.click(screen.getByRole("button", { name: "导出诊断" }));
-  await waitFor(() =>
-    expect(backend.exportDiagnostics).toHaveBeenCalledWith({
-      selected_path: expect.any(String),
-    }),
-  );
+  await waitFor(() => expect(backend.exportDiagnostics).toHaveBeenCalledWith());
+  expect(await screen.findByText(/诊断包已保存：/)).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "清除历史" }));
   const dialog = screen.getByRole("dialog");
@@ -187,4 +185,37 @@ test("exports diagnostics and clears only inactive history after confirmation", 
     expect(backend.clearHistory).toHaveBeenCalledWith({ preserve_active_jobs: true }),
   );
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test("a cancelled export discloses the cancellation instead of a path", async () => {
+  const backend = settingsBackend();
+  Object.defineProperty(backend, "exportDiagnostics", {
+    value: vi.fn(async () => ({ status: "cancelled" as const })),
+  });
+  const user = userEvent.setup();
+  render(<SettingsPage backend={backend} />);
+  await user.click(await screen.findByRole("button", { name: "导出诊断" }));
+  expect(await screen.findByText("已取消导出。")).toBeVisible();
+});
+
+test("debug logging select maps 关闭/15 分钟/60 分钟 to setDebugLogging durations", async () => {
+  const backend = settingsBackend();
+  const user = userEvent.setup();
+  render(<SettingsPage backend={backend} />);
+
+  const select = await screen.findByLabelText("调试日志时长");
+  await user.selectOptions(select, "15");
+  await waitFor(() =>
+    expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 15 }),
+  );
+
+  await user.selectOptions(select, "60");
+  await waitFor(() =>
+    expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 60 }),
+  );
+
+  await user.selectOptions(select, "0");
+  await waitFor(() =>
+    expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 0 }),
+  );
 });

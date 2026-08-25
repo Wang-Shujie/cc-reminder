@@ -106,6 +106,7 @@ pub fn run() {
             commands::settings::clear_notification_pause,
             commands::diagnostics::export_diagnostics,
             commands::diagnostics::clear_history,
+            commands::diagnostics::set_debug_logging,
             commands::updates::check_for_updates,
             commands::updates::install_update,
         ])

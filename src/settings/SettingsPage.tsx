@@ -2,7 +2,9 @@
 // save_settings (the Rust side applies autostart), notification pause, and
 // the update check/install confirmation flow. The credential-store section
 // discloses a secure-store unavailability reported by shared health.
-// Clear-history / diagnostics export / debug logging arrive in Task 20.
+// Task 20 fix round 1: the diagnostics export opens its save dialog inside
+// the core (no path crosses the bridge), and a bounded debug-logging window
+// (关闭 / 15 分钟 / 60 分钟) is reachable from here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
@@ -12,6 +14,7 @@ import type {
   LocaleCode,
   PauseDurationCode,
   SaveSettingsInput,
+  SetDebugLoggingInput,
   SettingsView,
   ThemeCode,
   UpdateCheckResult,
@@ -53,6 +56,12 @@ export function SettingsPage({
 
   const [pausedUntil, setPausedUntil] = useState<string | null>(null);
   const [pauseBusy, setPauseBusy] = useState(false);
+
+  /** Bounded debug window selection (0 = off). The window itself lives in the
+   *  core; this only mirrors the last value chosen on this page. */
+  const [debugMinutes, setDebugMinutes] = useState<0 | 15 | 60>(0);
+  const [debugBusy, setDebugBusy] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
@@ -201,6 +210,38 @@ export function SettingsPage({
       setActionError(errorOf(e));
     } finally {
       setPauseBusy(false);
+    }
+  }
+
+  async function applyDebug(duration_minutes: SetDebugLoggingInput["duration_minutes"]): Promise<void> {
+    const previous = debugMinutes;
+    setDebugMinutes(duration_minutes);
+    setDebugBusy(true);
+    setActionError(null);
+    try {
+      await backend.setDebugLogging({ duration_minutes });
+    } catch (e: unknown) {
+      setDebugMinutes(previous);
+      setActionError(errorOf(e));
+    } finally {
+      setDebugBusy(false);
+    }
+  }
+
+  /** The save dialog opens inside the core; this side sends nothing and only
+   *  learns whether it was cancelled plus a safe filename. */
+  async function exportDiagnostics(): Promise<void> {
+    setExportStatus(null);
+    setActionError(null);
+    try {
+      const result = await backend.exportDiagnostics();
+      setExportStatus(
+        result.status === "saved"
+          ? `${t.diagnosticsSavedPrefix}${result.filename}`
+          : t.diagnosticsCancelled,
+      );
+    } catch (e: unknown) {
+      setActionError(errorOf(e));
     }
   }
 
@@ -423,6 +464,25 @@ export function SettingsPage({
         </div>
       </div>
 
+      {/* Debug logging: a bounded window (off / 15 / 60 minutes) applied
+          immediately via its own command, like notification pause. */}
+      <div className="settings-section">
+        <h2>{t.debugSection}</h2>
+        <label htmlFor="settings-debug">{t.debugLoggingLabel}</label>
+        <select
+          id="settings-debug"
+          value={debugMinutes}
+          disabled={debugBusy}
+          onChange={(event) => {
+            void applyDebug(Number(event.target.value) as 0 | 15 | 60);
+          }}
+        >
+          <option value={0}>{t.debugOff}</option>
+          <option value={15}>{t.debug15m}</option>
+          <option value={60}>{t.debug60m}</option>
+        </select>
+      </div>
+
       {/* Updates */}
       <div className="settings-section">
         <h2>{t.updatesSection}</h2>
@@ -521,11 +581,16 @@ export function SettingsPage({
       )}
 
       <div className="row-end">
+        {exportStatus !== null && (
+          <p role="status" className="muted">
+            {exportStatus}
+          </p>
+        )}
         <button
           type="button"
           className="cc-focusable"
           onClick={() => {
-            void backend.exportDiagnostics({ selected_path: "cc-reminder-diagnostics.zip" });
+            void exportDiagnostics();
           }}
         >
           {t.exportDiagnostics}
