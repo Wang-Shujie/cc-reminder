@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- CC Reminder app mark: a square notification outline holding two
+       terminal prompt strokes (chevron + cursor) on neutral charcoal, with
+       one red notification dot. Original artwork; no third-party marks.
+       Geometry stays bold so the mark remains legible at 16 px. -->
+  <rect width="512" height="512" rx="112" fill="#26282c"/>
+  <rect x="108" y="132" width="296" height="248" rx="40" fill="none" stroke="#ffffff" stroke-width="32"/>
+  <path d="M164 212l52 44-52 44" fill="none" stroke="#ffffff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="248" y1="300" x2="340" y2="300" stroke="#ffffff" stroke-width="32" stroke-linecap="round"/>
+  <circle cx="404" cy="132" r="46" fill="#e5484d"/>
+</svg>
