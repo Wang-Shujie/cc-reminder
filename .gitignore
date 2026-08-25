@@ -4,3 +4,7 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 .DS_Store
+
+# Playwright artifacts (baselines under tests/e2e/**/snapshots ARE committed)
+test-results/
+playwright-report/
