@@ -426,9 +426,22 @@ mod tests {
         let credentials = crate::security::credentials::CredentialStore::memory_for_test();
         let cipher = std::sync::Arc::new(FieldCipher::from_key([7u8; 32]));
         std::mem::forget(root);
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            &database_path.parent().unwrap().join("logs"),
+            1024 * 1024,
+            3,
+        ));
 
         // Insert a channel whose credential payload contains the secret marker.
-        let state = CoreState::new(config, events, queue, integrations, credentials, cipher);
+        let state = CoreState::new(
+            config,
+            events,
+            queue,
+            integrations,
+            credentials,
+            cipher,
+            diagnostics,
+        );
         let input = SaveChannelInput {
             channel_id: None,
             name: "Engineering".into(),
@@ -495,7 +508,20 @@ mod tests {
         let credentials = crate::security::credentials::CredentialStore::memory_for_test();
         let cipher = std::sync::Arc::new(FieldCipher::from_key([9u8; 32]));
         std::mem::forget(root);
-        CoreState::new(config, events, queue, integrations, credentials, cipher)
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            &database_path.parent().unwrap().join("logs"),
+            1024 * 1024,
+            3,
+        ));
+        CoreState::new(
+            config,
+            events,
+            queue,
+            integrations,
+            credentials,
+            cipher,
+            diagnostics,
+        )
     }
 
     #[test]

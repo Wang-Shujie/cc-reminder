@@ -123,6 +123,11 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let paths = paths::AppPaths::discover()?;
     paths.ensure()?;
 
+    // 0. Shared diagnostics logger: every production log line below goes
+    //    through this one instance and its mandatory-redactor chokepoint, so
+    //    diagnostic exports contain exactly what was logged at runtime.
+    let diagnostics = std::sync::Arc::new(diagnostics::Diagnostics::init(&paths.logs)?);
+
     // 1. Migrate.
     let database = Database::open(&paths.database)?;
     database.migrate()?;
@@ -178,7 +183,7 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     // 6. Start IPC: drives process_live, replies Accepted only after durable
     //    commit, rejects unrecognized helpers without establishing trust.
     let pipeline_for_ipc = pipeline.clone();
-    let ipc_paths = paths.clone();
+    let ipc_diagnostics = diagnostics.clone();
     let mut server =
         ipc::server::IpcServer::bind(paths.endpoint()).map_err(std::io::Error::other)?;
     tauri::async_runtime::spawn(async move {
@@ -191,15 +196,19 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                     };
                     IngressResponse::Accepted { event_id }
                 }
-                Err(_) => IngressResponse::Rejected {
-                    // The hook contract requires a neutral outcome + exit 0; the
-                    // rejection code is diagnostic only. An unrecognized helper
-                    // surface as `unrecognized` so the hook does not retry.
-                    error_code: "unrecognized".to_owned(),
-                },
+                Err(_) => {
+                    // Redacted one-liner through the Diagnostics chokepoint;
+                    // never the request contents.
+                    ipc_diagnostics.info("ipc", "ingress request rejected");
+                    IngressResponse::Rejected {
+                        // The hook contract requires a neutral outcome + exit 0; the
+                        // rejection code is diagnostic only. An unrecognized helper
+                        // surface as `unrecognized` so the hook does not retry.
+                        error_code: "unrecognized".to_owned(),
+                    }
+                }
             };
             let _ = response.send(reply).await;
-            let _ = &ipc_paths;
         }
     });
 
@@ -222,9 +231,33 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         let _ = worker.run(worker_cancel).await;
     });
 
+    // 8. Retention (Task 20 Step 5): one pass immediately after startup, then
+    //    every 24 hours. Spawned — never blocks setup; failures are logged
+    //    through Diagnostics and tolerated; shutdown rides the same cancel
+    //    token as the worker. This is production-only startup work: it lives
+    //    behind `run()`, which `cargo test` never invokes.
+    let retention_service =
+        storage::retention::RetentionService::new(database.clone(), paths.logs.clone());
+    let retention_diagnostics = diagnostics.clone();
+    let retention_cancel = cancel.clone();
+    tauri::async_runtime::spawn(storage::retention::run_forever(
+        retention_service,
+        retention_diagnostics,
+        std::time::Duration::from_secs(24 * 60 * 60),
+        retention_cancel,
+    ));
+
     // Manage the shared state for commands, and stash the worker cancel token
     // so Quit can trigger graceful shutdown (≤10s wait for active sends).
-    let mut state = CoreState::new(config, events, queue, integrations, credentials, cipher);
+    let mut state = CoreState::new(
+        config,
+        events,
+        queue,
+        integrations,
+        credentials,
+        cipher,
+        diagnostics,
+    );
     {
         let mut guard = state.cancel_token.lock().unwrap();
         *guard = Some(cancel);

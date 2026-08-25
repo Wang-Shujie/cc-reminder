@@ -251,7 +251,20 @@ mod tests {
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = CredentialStore::memory_for_test();
         let cipher = Arc::new(FieldCipher::from_key([7u8; 32]));
-        CoreState::new(config, events, queue, integrations, credentials, cipher)
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            &database_path.parent().unwrap().join("logs"),
+            1024 * 1024,
+            3,
+        ));
+        CoreState::new(
+            config,
+            events,
+            queue,
+            integrations,
+            credentials,
+            cipher,
+            diagnostics,
+        )
     }
 
     fn default_input() -> SaveSettingsInput {

@@ -6,11 +6,15 @@
 //! log files older than the configured log retention. Configuration (rules,
 //! channels, projects, settings) is never touched.
 
+use std::time::Duration as StdDuration;
+
 use chrono::{DateTime, Utc};
 use rusqlite::params;
 
+use crate::diagnostics::Diagnostics;
 use crate::error::{AppError, ErrorDomain};
 use crate::storage::db::Database;
+use crate::worker::CancellationToken;
 
 /// Delete in batches of this size so a single pass holds bounded row locks.
 const DELETE_BATCH: i64 = 500;
@@ -190,6 +194,49 @@ impl RetentionService {
                 }
             }
         }
+    }
+}
+
+/// Production ticker (Task 20 Step 5): one pass immediately after startup,
+/// then one pass every `period`, until `cancel` fires. Every failure is logged
+/// through the shared [`Diagnostics`] redaction chokepoint and tolerated —
+/// never propagated or panicked — so retention can never take the app down.
+/// The loop awaits on `select!`, so it neither blocks startup nor lingers
+/// after app shutdown.
+pub async fn run_forever(
+    service: RetentionService,
+    diagnostics: std::sync::Arc<Diagnostics>,
+    period: StdDuration,
+    cancel: CancellationToken,
+) {
+    run_logged_pass(&service, &diagnostics);
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The first tick completes immediately; the post-startup pass above
+    // already covered it.
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            _ = interval.tick() => run_logged_pass(&service, &diagnostics),
+            _ = cancel.cancelled() => return,
+        }
+    }
+}
+
+fn run_logged_pass(service: &RetentionService, diagnostics: &Diagnostics) {
+    match service.run_once(Utc::now()) {
+        Ok(stats) => diagnostics.info(
+            "storage",
+            &format!(
+                "retention pass complete events={} jobs={} attempts={} ingress={} vacuumed={}",
+                stats.deleted_events,
+                stats.deleted_jobs,
+                stats.deleted_attempts,
+                stats.deleted_ingress,
+                stats.vacuumed
+            ),
+        ),
+        Err(error) => diagnostics.log_error(&error),
     }
 }
 
@@ -497,6 +544,108 @@ mod tests {
             .query_row("SELECT id FROM events", [], |row| row.get(0))
             .unwrap();
         assert_eq!(surviving, active_parent.to_string());
+    }
+
+    #[tokio::test]
+    async fn ticker_runs_at_startup_then_each_period_and_stops_on_cancel() {
+        let harness = harness();
+        let events = EventRepository::new(harness.database.clone());
+        let old = Utc::now() - chrono::Duration::days(60);
+        events
+            .insert_event(
+                &envelope(uuid::Uuid::now_v7(), old),
+                None,
+                crate::storage::events::EventProcessingOutcome::Suppressed,
+                None,
+            )
+            .unwrap();
+
+        let logs = tempfile::tempdir().unwrap();
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            logs.path(),
+            1024 * 1024,
+            3,
+        ));
+        let cancel = crate::worker::CancellationToken::new();
+        let task = tokio::spawn(super::run_forever(
+            harness.service.clone(),
+            diagnostics.clone(),
+            std::time::Duration::from_millis(20),
+            cancel.clone(),
+        ));
+
+        // The post-startup pass plus at least one periodic pass must both log.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while count_pass_lines(&diagnostics) < 2 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            count_pass_lines(&diagnostics) >= 2,
+            "ticker must run once after startup and then every period"
+        );
+
+        // Cancel stops the loop cleanly (join succeeds, no panic).
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("ticker must shut down on cancel")
+            .expect("ticker task must not panic");
+    }
+
+    #[tokio::test]
+    async fn ticker_logs_and_tolerates_retention_failures_without_crashing() {
+        let harness = harness();
+        // Sabotage the database AFTER construction: every pass fails (the
+        // schema vanishes with the file), and the ticker must keep going.
+        let database_path = harness.database.path().to_path_buf();
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", database_path.display()));
+        }
+
+        let logs = tempfile::tempdir().unwrap();
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            logs.path(),
+            1024 * 1024,
+            3,
+        ));
+        let cancel = crate::worker::CancellationToken::new();
+        let task = tokio::spawn(super::run_forever(
+            harness.service.clone(),
+            diagnostics.clone(),
+            std::time::Duration::from_millis(20),
+            cancel.clone(),
+        ));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while count_error_lines(&diagnostics) < 1 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            count_error_lines(&diagnostics) >= 1,
+            "retention failures must be logged through Diagnostics"
+        );
+        assert!(
+            !String::from_utf8_lossy(&diagnostics.all_log_bytes()).contains("panic"),
+            "failures are logged, never crash the ticker"
+        );
+
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("ticker must shut down on cancel")
+            .expect("ticker task must not panic");
+    }
+
+    fn count_pass_lines(diagnostics: &crate::diagnostics::Diagnostics) -> usize {
+        String::from_utf8_lossy(&diagnostics.all_log_bytes())
+            .match_indices("retention pass complete")
+            .count()
+    }
+
+    fn count_error_lines(diagnostics: &crate::diagnostics::Diagnostics) -> usize {
+        String::from_utf8_lossy(&diagnostics.all_log_bytes())
+            .match_indices("code=storage.retention_failed")
+            .count()
     }
 
     #[test]

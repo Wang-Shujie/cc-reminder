@@ -197,7 +197,10 @@ impl CancellationToken {
         self.cancelled.load(Ordering::Acquire)
     }
 
-    async fn cancelled(&self) {
+    /// Resolves once the token is cancelled. Public so long-running
+    /// production loops beyond the delivery worker (the Task-20 retention
+    /// ticker) can select on the same shutdown signal.
+    pub async fn cancelled(&self) {
         if self.is_cancelled() {
             return;
         }

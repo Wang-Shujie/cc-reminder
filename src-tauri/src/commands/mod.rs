@@ -52,6 +52,10 @@ pub struct CoreState {
     pub integrations: IntegrationRepository,
     pub credentials: CredentialStore,
     pub cipher: std::sync::Arc<FieldCipher>,
+    /// Shared diagnostics logger (Task 20 fix round 1): the same instance the
+    /// startup wiring and the retention ticker write through, so exports see
+    /// the runtime log files and debug windows are process-wide.
+    pub diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
     pub cancel_token: std::sync::Arc<Mutex<Option<crate::worker::CancellationToken>>>,
     /// Applies the autostart setting to the OS (register/unregister the
     /// LaunchAgent / login item). Injected by the app shell from the Tauri
@@ -70,6 +74,7 @@ impl CoreState {
         integrations: IntegrationRepository,
         credentials: CredentialStore,
         cipher: std::sync::Arc<FieldCipher>,
+        diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
     ) -> Self {
         Self {
             config,
@@ -78,6 +83,7 @@ impl CoreState {
             integrations,
             credentials,
             cipher,
+            diagnostics,
             cancel_token: std::sync::Arc::new(Mutex::new(None)),
             autostart_control: std::sync::Arc::new(|_| Ok(())),
         }

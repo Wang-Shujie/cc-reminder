@@ -105,7 +105,20 @@ mod tests {
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = CredentialStore::memory_for_test();
         let cipher = std::sync::Arc::new(FieldCipher::from_key([6u8; 32]));
-        CoreState::new(config, events, queue, integrations, credentials, cipher)
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            &database_path.parent().unwrap().join("logs"),
+            1024 * 1024,
+            3,
+        ));
+        CoreState::new(
+            config,
+            events,
+            queue,
+            integrations,
+            credentials,
+            cipher,
+            diagnostics,
+        )
     }
 
     #[test]

@@ -365,7 +365,21 @@ mod tests {
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = CredentialStore::memory_for_test();
         let cipher = std::sync::Arc::new(FieldCipher::from_key([7u8; 32]));
-        CoreState::new(config, events, queue, integrations, credentials, cipher)
+        let logs_dir = database_path.parent().unwrap().join("logs");
+        let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+            &logs_dir,
+            1024 * 1024,
+            3,
+        ));
+        CoreState::new(
+            config,
+            events,
+            queue,
+            integrations,
+            credentials,
+            cipher,
+            diagnostics,
+        )
     }
 
     /// Temp project tree: `<root>/repo` (git root) containing `wt`.
