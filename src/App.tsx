@@ -2,7 +2,7 @@
 // tests render `AppRoot` through a BackendProvider with the in-memory fake.
 import { useEffect, useState, type ReactNode } from "react";
 
-import { BackendProvider, TauriBackend, useBackend } from "./lib/backend";
+import { BackendProvider, TauriBackend, useBackend, type Backend } from "./lib/backend";
 import type { BootstrapState } from "./lib/contracts";
 import { dictionary } from "./lib/i18n";
 import { Onboarding } from "./onboarding/Onboarding";
@@ -48,9 +48,49 @@ export function AppRoot(): ReactNode {
   return <AppShell locale={boot.locale} theme={boot.theme} />;
 }
 
-export default function App(): ReactNode {
+function LoadingScreen(): ReactNode {
   return (
-    <BackendProvider backend={new TauriBackend()}>
+    <main className="app-loading">
+      <p>CC Reminder</p>
+      <p>{dictionary("zh_cn").loading}</p>
+    </main>
+  );
+}
+
+async function resolveBackend(): Promise<Backend> {
+  // Compile-time selection ONLY: Vite statically replaces
+  // VITE_CC_REMINDER_TEST_BACKEND, so when the var is unset (every production
+  // build) this branch is constant-false, the dynamic import is tree-shaken,
+  // and src/test/browser-backend never ships in dist. CI greps dist for that
+  // module's marker string to keep this guarantee honest.
+  if (import.meta.env.VITE_CC_REMINDER_TEST_BACKEND === "1") {
+    const { createBrowserTestBackend } = await import("./test/browser-backend");
+    return createBrowserTestBackend();
+  }
+  return new TauriBackend();
+}
+
+export default function App(): ReactNode {
+  const [backend, setBackend] = useState<Backend | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolveBackend().then((resolved) => {
+      if (!cancelled) {
+        setBackend(resolved);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (backend === null) {
+    return <LoadingScreen />;
+  }
+
+  return (
+    <BackendProvider backend={backend}>
       <AppRoot />
     </BackendProvider>
   );

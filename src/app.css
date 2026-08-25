@@ -223,6 +223,16 @@ textarea {
   font-size: 13px;
 }
 
+/* Checkboxes and radios are controls, not 320px text fields: without this the
+   rules-table 开关 column balloons and the trailing headers collapse into
+   one-character-per-line columns at 960×640 (caught by the e2e screenshots). */
+input[type="checkbox"],
+input[type="radio"] {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+}
+
 /* ---------------------------------------------------------------------------
  * Hook Rules page (Task 17)
  * ------------------------------------------------------------------------- */
@@ -339,6 +349,8 @@ textarea {
   text-align: left;
   color: color-mix(in srgb, CanvasText 55%, transparent);
   font-weight: 600;
+  /* Column headers never wrap mid-word (CJK would break per character). */
+  white-space: nowrap;
 }
 
 .rules-table td {
@@ -355,8 +367,10 @@ textarea {
   background: var(--surface-raised);
 }
 
+/* 55% (not 50%): the blended result must keep >= 4.5:1 contrast against the
+   canvas for WCAG AA — asserted by the axe-core e2e gate. */
 .row-unavailable {
-  color: color-mix(in srgb, CanvasText 50%, transparent);
+  color: color-mix(in srgb, CanvasText 55%, transparent);
 }
 
 .badge {
@@ -368,6 +382,7 @@ textarea {
   background: var(--surface-raised);
   font-size: 11px;
   line-height: 18px;
+  white-space: nowrap;
 }
 
 .badge-strong {
