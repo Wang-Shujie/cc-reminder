@@ -1,0 +1,172 @@
+# CC Reminder continuous integration (Task 22).
+#
+# Two jobs:
+#   quality      — ubuntu-22.04: the full frontend suite, Playwright e2e,
+#                  production build + dist dead-code-elimination grep, and the
+#                  Rust fmt/clippy/test gates. Also runs the sensitive-artifact
+#                  scanner over everything that exists on this host.
+#   build-smoke  — macos-13 (x64), macos-14 (arm64), windows-2022, ubuntu-22.04:
+#                  system Tauri prerequisites, unsigned `tauri build
+#                  --no-bundle`, and the test-support-gated hook contract
+#                  suite.
+#
+# Least privilege: read-only token everywhere; no secrets are used in CI at
+# all (signing credentials live only in release.yml protected environments).
+# Caches are keyed from lockfiles only (pnpm-lock.yaml / Cargo.lock). Failure
+# uploads contain ONLY Playwright reports/screenshots — never data directories
+# or environment dumps.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: quality (ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version comes from package.json "packageManager"; store cache is
+      # keyed from pnpm-lock.yaml by setup-node.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Rust gates: registry/git/target caches derive their key from
+      # src-tauri/Cargo.lock.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # System Tauri prerequisites for building/running the Rust side on
+      # Ubuntu 22.04 (webkit2gtk 4.1 stack).
+      - name: Install Tauri system prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            fonts-noto-cjk
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend unit tests (vitest)
+        run: pnpm test
+
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # On non-macOS hosts the config's grepInvert skips only the four
+      # screenshot-comparison tests (baselines are darwin-specific); every
+      # workflow/layout/axe check still runs here.
+      - name: Browser acceptance tests (Playwright)
+        run: pnpm test:e2e
+
+      - name: Production frontend build
+        run: pnpm build
+
+      # Dead-code-elimination regression guard promised in src/App.tsx /
+      # src/test/browser-backend.tsx: a production dist must not contain the
+      # browser test backend or its markers (the "cc-reminder-e2e" /
+      # "secret-raw-value" string literals survive any minification, and the
+      # backend's identifiers must never appear either). The leading ! inverts
+      # grep's exit status so ANY match fails the job.
+      - name: Grep dist for test-backend markers
+        run: >
+          ! grep -R -E -l
+          'cc-reminder-e2e|browser-test-backend|BrowserTestBackend|createBrowserTestBackend|secret-raw-value'
+          dist/
+
+      - name: Scan runtime artifacts for planted secrets/bypass flags
+        run: ./scripts/check-sensitive-artifacts.sh .
+
+      - name: rustfmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust unit + integration tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Upload Playwright report and screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-reports
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build-smoke:
+    name: build-smoke (${{ matrix.os }})
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, windows-2022, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri system prerequisites (ubuntu only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev
+
+      # macOS and Windows runners ship the WebKit/WebView2 prerequisites.
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Unsigned compile smoke of the desktop app AND the helper binary
+      # (src/bin/cc-reminder-hook.rs is auto-discovered as a second bin).
+      # --no-bundle keeps this credential-free: updater artifact signing is
+      # only exercised in release.yml where TAURI_SIGNING_PRIVATE_KEY exists.
+      - name: Build desktop app without bundling
+        run: pnpm tauri build --no-bundle
+
+      - name: Hook contract tests (test-support)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features test-support --test hook_contract

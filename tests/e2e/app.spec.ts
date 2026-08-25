@@ -2,7 +2,7 @@
 //
 // Runs against the deterministic browser test backend selected ONLY by
 // VITE_CC_REMINDER_TEST_BACKEND=1 (see playwright.config.ts webServer and
-// src/main.tsx). Covers:
+// src/App.tsx). Covers:
 // - the project-override workflow incl. 继承全局 visibility and the invariant
 //   that raw credential material never reaches rendered output;
 // - a keyboard-only onboarding walkthrough and a keyboard-only rule edit;

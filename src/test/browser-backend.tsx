@@ -1,6 +1,6 @@
 // Deterministic in-browser Backend fake for Playwright acceptance runs
 // (Task 21). This module is loaded ONLY when
-// VITE_CC_REMINDER_TEST_BACKEND === "1" (see src/main.tsx): Vite statically
+// VITE_CC_REMINDER_TEST_BACKEND === "1" (see src/App.tsx): Vite statically
 // replaces that env var at build time, so production builds eliminate the
 // branch and drop this chunk entirely — verified in CI by grepping dist for
 // the "cc-reminder-e2e" marker string below.

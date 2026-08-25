@@ -909,7 +909,11 @@ fn trailing_comma_multi_insert_keeps_separating_commas() {
 /// created and written) must leave the original target bytes unchanged and
 /// remove the partial temp file. The pre-existing test only covered
 /// temp-creation failure.
+///
+/// Uses the `test-support` rename-failure seam, so it only exists when that
+/// feature is enabled; the rest of this suite compiles and runs unflagged.
 #[test]
+#[cfg(feature = "test-support")]
 fn atomic_rename_failure_leaves_original_unchanged() {
     use cc_reminder_lib::installer::atomic::force_rename_failure_for_test;
 
@@ -1276,7 +1280,10 @@ fn uninstall_removes_only_owned_matching_entries_and_leaves_a_lookalike() {
     );
 }
 
+/// Uses the `test-support` config-drift seam (see the rename-failure test
+/// above); the rest of this suite compiles and runs unflagged.
 #[test]
+#[cfg(feature = "test-support")]
 fn external_drift_between_inspection_and_replace_is_rejected_without_overwrite() {
     use cc_reminder_lib::installer::lifecycle::force_config_drift_for_test;
     let env = InstallerEnvironment::claude_fixture();

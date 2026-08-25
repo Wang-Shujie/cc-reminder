@@ -1,0 +1,660 @@
+# CC Reminder signed cross-platform release pipeline (Task 22).
+#
+# Runs ONLY on version tags (v*). AUTHORED AND REVIEWED, NOT YET EXECUTED: no
+# signing credentials exist in the repository yet. Maintainer checklist before
+# the first tagged release:
+#
+#   1. Generate a Tauri updater minisign keypair (once, offline):
+#        pnpm tauri signer generate -w ~/.tauri/cc-reminder.key
+#      Store the private key + password as the TAURI_SIGNING_PRIVATE_KEY /
+#      TAURI_SIGNING_PRIVATE_KEY_PASSWORD environment secrets below.
+#   2. Paste the PUBLIC key into src-tauri/tauri.conf.json
+#      plugins.updater.pubkey, and replace UPDATE_OWNER_PLACEHOLDER in
+#      plugins.updater.endpoints with the real GitHub owner/repo. Both are
+#      BUILD-TIME configuration: the endpoint is a single compile-time HTTPS
+#      URL and the pubkey is embedded in every shipped build — never runtime
+#      user settings. Until a real pubkey is present the updater stays INERT
+#      by construction (clients cannot verify any payload, preserving the
+#      Task 15 safety property: no unsigned/dev phoning home).
+#   3. Create the protected GitHub Environments referenced below and bind the
+#      secrets to exactly these environments:
+#        release-macos   : TAURI_SIGNING_PRIVATE_KEY,
+#                          TAURI_SIGNING_PRIVATE_KEY_PASSWORD,
+#                          APPLE_CERTIFICATE (base64 of a "Developer ID
+#                          Application" p12), APPLE_CERTIFICATE_PASSWORD,
+#                          APPLE_SIGNING_IDENTITY ("Developer ID Application:
+#                          ..."), APPLE_ID, APPLE_PASSWORD (app-specific),
+#                          APPLE_TEAM_ID
+#        release-windows : WINDOWS_CERTIFICATE (base64 of the Authenticode
+#                          pfx), WINDOWS_CERTIFICATE_PASSWORD,
+#                          TAURI_SIGNING_PRIVATE_KEY,
+#                          TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#        release-linux   : TAURI_SIGNING_PRIVATE_KEY,
+#                          TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#        release-publish : (no external secrets; GITHUB_TOKEN is scoped here)
+#
+# Build ordering per platform (design 9.1):
+#   helper binary first (same target) -> platform code signature applied to
+#   the helper -> embedded resources/helper-manifest.json REGENERATED from the
+#   final signed helper bytes (real length + SHA-256 replacing the committed
+#   placeholder) -> helper copied into the packaged resources ->
+#   app packaged/signed/notarized by Tauri (updater artifacts signed with the
+#   minisign key) -> verify-package MUST pass -> artifacts uploaded.
+#
+# The update feed (latest.json) is assembled only in the publish job at the
+# same compile-time HTTPS endpoint URL, and every published file gets a
+# `.sha256` sidecar. Nothing is uploaded to the release before the per-platform
+# verify-package gate has passed on its own platform (so the macOS codesign +
+# Gatekeeper/notarization gate and the Windows Authenticode gate run on their
+# native hosts).
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # macOS 12+ universal (.app + .dmg + signed updater tarball)
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: build-macos (universal)
+    runs-on: macos-14
+    timeout-minutes: 90
+    environment: release-macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Guard — tag matches app version and updater config is finalized
+        run: |
+          CONF_VERSION=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$CONF_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag v$TAG_VERSION does not match tauri.conf.json version $CONF_VERSION"
+            exit 1
+          fi
+          # Build-time updater configuration must be finalized before anything
+          # is signed: real minisign pubkey (see maintainer checklist at the
+          # top of this file) and the single compile-time HTTPS endpoint with
+          # no placeholder left.
+          if [ -z "$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'])")" ]; then
+            echo "::error::plugins.updater.pubkey is empty — paste the minisign PUBLIC key per the maintainer checklist at the top of release.yml"
+            exit 1
+          fi
+          if python3 -c "
+          import json, sys
+          eps = json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['endpoints']
+          sys.exit(0 if len(eps) == 1 and 'UPDATE_OWNER_PLACEHOLDER' not in eps[0] else 1)"; then
+            :
+          else
+            echo "::error::plugins.updater.endpoints must be exactly one HTTPS URL without UPDATE_OWNER_PLACEHOLDER — see the maintainer checklist at the top of release.yml"
+            exit 1
+          fi
+
+      # --- 1. Helper first, for BOTH slices of the universal binary --------
+      - name: Build helper (aarch64 + x86_64)
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml --release --target aarch64-apple-darwin --bin cc-reminder-hook
+          cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-apple-darwin --bin cc-reminder-hook
+
+      # --- 2. Platform code signature on each helper slice -----------------
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Never echo the certificate or password values.
+          CERT_P12="$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_P12"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -hex 24)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security import "$CERT_P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+          rm -f "$CERT_P12"
+
+      - name: Codesign helper slices and merge universal helper
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            src-tauri/target/aarch64-apple-darwin/release/cc-reminder-hook
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            src-tauri/target/x86_64-apple-darwin/release/cc-reminder-hook
+          mkdir -p src-tauri/resources/bin
+          lipo -create \
+            src-tauri/target/aarch64-apple-darwin/release/cc-reminder-hook \
+            src-tauri/target/x86_64-apple-darwin/release/cc-reminder-hook \
+            -output src-tauri/resources/bin/cc-reminder-hook
+          # A fat binary merge invalidates slice signatures: re-sign the final
+          # universal bytes. These FINAL SIGNED BYTES are what gets hashed.
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            src-tauri/resources/bin/cc-reminder-hook
+
+      # --- 3. Embedded helper manifest from the FINAL SIGNED bytes --------
+      - name: Regenerate embedded helper manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" > src-tauri/resources/helper-manifest.json <<'PYEOF'
+          import hashlib, json, os, sys
+          helper = "src-tauri/resources/bin/cc-reminder-hook"
+          data = open(helper, "rb").read()
+          print(json.dumps({
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "title": "CC Reminder signed helper manifest",
+              "description": "Generated at release time from the final signed helper bytes (see .github/workflows/release.yml).",
+              "helpers": [{
+                  "target_triple": "universal-apple-darwin",
+                  "helper_version": sys.argv[1],
+                  "filename": "cc-reminder-hook",
+                  "length": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              }],
+          }, indent=2))
+          PYEOF
+          cat src-tauri/resources/helper-manifest.json
+
+      # --- 4. Package + sign + notarize the app ----------------------------
+      # TAURI_SIGNING_* signs the .app.tar.gz updater artifact (creates .sig);
+      # APPLE_* drive Tauri's codesign + notarization + stapling of the
+      # bundle. The --config overlay appends resources/bin/cc-reminder-hook to
+      # the packaged resource list (overlay arrays REPLACE, so the original
+      # three entries are repeated).
+      - name: Build and sign universal app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >
+          pnpm tauri build --target universal-apple-darwin --config
+          '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook"]}}'
+
+      # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
+      # Sidecars record "<sha256>  <basename>" so they stay valid wherever the
+      # artifacts are later staged/published (standard sha256sum -c layout).
+      - name: Generate SHA-256 sidecars for every macOS artifact
+        run: |
+          cd src-tauri/target/universal-apple-darwin/release/bundle
+          find . -maxdepth 2 -type f \( -name '*.app.tar.gz' -o -name '*.dmg' \) \
+            -exec sh -c 'cd "$(dirname "$1")" && shasum -a 256 "$(basename "$1")" > "$(basename "$1").sha256"' _ {} \;
+
+      # Unsigned/ad-hoc/notarization failures fail LOUDLY here (darwin host):
+      # strict codesign verification + Gatekeeper assessment of the bundle,
+      # manifest hash of the shipped helper, marker/credential/bypass scans.
+      - name: Verify package (codesign + notarization + structure)
+        run: |
+          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP_TARBALL=$(find "$BUNDLE_DIR/macos" -name '*.app.tar.gz' | head -n 1)
+          ./scripts/verify-package.sh \
+            --desktop-binary src-tauri/target/universal-apple-darwin/release/cc-reminder \
+            --helper-binary src-tauri/resources/bin/cc-reminder-hook \
+            --manifest src-tauri/resources/helper-manifest.json \
+            --archive "$APP_TARBALL" \
+            --macos-app-bundle "$BUNDLE_DIR/macos/CC Reminder.app"
+
+      - name: Upload macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files-macos
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Windows 10/11 x64 signed installer (NSIS) + signed updater artifact
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: build-windows (x64)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    environment: release-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Guard — tag matches app version and updater config is finalized
+        shell: bash
+        run: |
+          CONF_VERSION=$(python -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$CONF_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag v$TAG_VERSION does not match tauri.conf.json version $CONF_VERSION"
+            exit 1
+          fi
+          # Same build-time updater-config gate as the macOS job (see the
+          # maintainer checklist at the top of this file).
+          if [ -z "$(python -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'])")" ]; then
+            echo "::error::plugins.updater.pubkey is empty — paste the minisign PUBLIC key per the maintainer checklist at the top of release.yml"
+            exit 1
+          fi
+          if python -c "
+          import json, sys
+          eps = json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['endpoints']
+          sys.exit(0 if len(eps) == 1 and 'UPDATE_OWNER_PLACEHOLDER' not in eps[0] else 1)"; then
+            :
+          else
+            echo "::error::plugins.updater.endpoints must be exactly one HTTPS URL without UPDATE_OWNER_PLACEHOLDER — see the maintainer checklist at the top of release.yml"
+            exit 1
+          fi
+
+      # --- 1. Helper first (same target: host x64 MSVC) --------------------
+      - name: Build helper
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --bin cc-reminder-hook
+
+      # --- 2. Platform code signature (Authenticode) on the helper ---------
+      - name: Import Authenticode certificate
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          # Never echo the certificate or password values.
+          $pfxPath = Join-Path $env:RUNNER_TEMP "certificate.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "WINDOWS_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Remove-Item -LiteralPath $pfxPath
+
+      - name: Sign helper
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found in Windows Kits" }
+          & $signtool sign `
+            /fd sha256 /tr https://timestamp.digicert.com /td sha256 `
+            /sha1 $env:WINDOWS_CERT_THUMBPRINT `
+            "src-tauri\target\release\cc-reminder-hook.exe"
+          & $signtool verify /pa "src-tauri\target\release\cc-reminder-hook.exe"
+
+      # --- 3. Embedded helper manifest from the FINAL SIGNED bytes --------
+      - name: Regenerate embedded helper manifest
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p src-tauri/resources/bin
+          cp src-tauri/target/release/cc-reminder-hook.exe src-tauri/resources/bin/cc-reminder-hook.exe
+          python - "$VERSION" > src-tauri/resources/helper-manifest.json <<'PYEOF'
+          import hashlib, json, os, sys
+          helper = "src-tauri/resources/bin/cc-reminder-hook.exe"
+          data = open(helper, "rb").read()
+          print(json.dumps({
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "title": "CC Reminder signed helper manifest",
+              "description": "Generated at release time from the final signed helper bytes (see .github/workflows/release.yml).",
+              "helpers": [{
+                  "target_triple": "x86_64-pc-windows-msvc",
+                  "helper_version": sys.argv[1],
+                  "filename": "cc-reminder-hook.exe",
+                  "length": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              }],
+          }, indent=2))
+          PYEOF
+          cat src-tauri/resources/helper-manifest.json
+
+      # --- 4. Package + sign the app ----------------------------------------
+      # TAURI_SIGNING_* signs the updater artifact; TAURI_WINDOWS_CERTIFICATE_
+      # THUMBPRINT makes Tauri Authenticode-sign the bundled executables and
+      # the NSIS installer. Overlay appends the signed helper resource.
+      - name: Build and sign x64 installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ env.WINDOWS_CERT_THUMBPRINT }}
+        shell: bash
+        run: >
+          pnpm tauri build --config
+          '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook.exe"]}}'
+
+      # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
+      - name: Generate SHA-256 sidecars for every Windows artifact
+        shell: pwsh
+        run: |
+          Get-ChildItem src-tauri\target\release\bundle -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".msi" } |
+            ForEach-Object {
+              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              Set-Content -LiteralPath "$($_.FullName).sha256" -Value "$hash  $($_.Name)"
+            }
+
+      # Structural checks (marker/credential/bypass scans + manifest hash of
+      # the final signed helper) on the build outputs, plus a LOUD
+      # Authenticode Valid assertion on the signed installer. An unsigned
+      # installer fails the job right here.
+      - name: Verify package (Authenticode + structure)
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri\target\release\bundle\nsis -Filter *-setup.exe |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $installer) { throw "no NSIS installer produced" }
+          ./scripts/verify-package.ps1 `
+            -DesktopBinary src-tauri\target\release\cc-reminder.exe `
+            -HelperBinary src-tauri\resources\bin\cc-reminder-hook.exe `
+            -Manifest src-tauri\resources\helper-manifest.json `
+            -Installer $installer
+
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.sig
+            src-tauri/target/release/bundle/**/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Ubuntu 22.04 x64 AppImage + deb + signed updater artifact
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: build-linux (x64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    environment: release-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri system prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Guard — tag matches app version and updater config is finalized
+        run: |
+          CONF_VERSION=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$CONF_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag v$TAG_VERSION does not match tauri.conf.json version $CONF_VERSION"
+            exit 1
+          fi
+          # Same build-time updater-config gate as the macOS job (see the
+          # maintainer checklist at the top of this file).
+          if [ -z "$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'])")" ]; then
+            echo "::error::plugins.updater.pubkey is empty — paste the minisign PUBLIC key per the maintainer checklist at the top of release.yml"
+            exit 1
+          fi
+          if python3 -c "
+          import json, sys
+          eps = json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['endpoints']
+          sys.exit(0 if len(eps) == 1 and 'UPDATE_OWNER_PLACEHOLDER' not in eps[0] else 1)"; then
+            :
+          else
+            echo "::error::plugins.updater.endpoints must be exactly one HTTPS URL without UPDATE_OWNER_PLACEHOLDER — see the maintainer checklist at the top of release.yml"
+            exit 1
+          fi
+
+      # --- 1. Helper first (same target) -----------------------------------
+      - name: Build helper
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --bin cc-reminder-hook
+
+      # No OS-level code-signing applies to ELF helper/app binaries on this
+      # platform; the updater minisign signature below is the integrity
+      # anchor. Documented deliberately instead of silently skipped.
+
+      # --- 2/3. Final helper bytes -> embedded manifest ---------------------
+      - name: Regenerate embedded helper manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p src-tauri/resources/bin
+          cp src-tauri/target/release/cc-reminder-hook src-tauri/resources/bin/cc-reminder-hook
+          python3 - "$VERSION" > src-tauri/resources/helper-manifest.json <<'PYEOF'
+          import hashlib, json, os, sys
+          helper = "src-tauri/resources/bin/cc-reminder-hook"
+          data = open(helper, "rb").read()
+          print(json.dumps({
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "title": "CC Reminder signed helper manifest",
+              "description": "Generated at release time from the final helper bytes (see .github/workflows/release.yml).",
+              "helpers": [{
+                  "target_triple": "x86_64-unknown-linux-gnu",
+                  "helper_version": sys.argv[1],
+                  "filename": "cc-reminder-hook",
+                  "length": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              }],
+          }, indent=2))
+          PYEOF
+          cat src-tauri/resources/helper-manifest.json
+
+      # --- 4. Package + sign ------------------------------------------------
+      - name: Build and sign AppImage and deb
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >
+          pnpm tauri build --bundles appimage deb --config
+          '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook"]}}'
+
+      # --- 5. Checksums + verify-package gate -------------------------------
+      # Sidecars record "<sha256>  <basename>" (standard sha256sum -c layout),
+      # matching the Windows/macOS generation steps.
+      - name: Generate SHA-256 sidecars for every Linux artifact
+        run: |
+          cd src-tauri/target/release/bundle
+          find . -type f \( -name '*.AppImage' -o -name '*.deb' \) \
+            -exec sh -c 'cd "$(dirname "$1")" && sha256sum "$(basename "$1")" > "$(basename "$1").sha256"' _ {} \;
+
+      # Unpacks the AppImage into the script's own temp dir and asserts the
+      # desktop/helper/manifest contract; also recomputes every sidecar.
+      - name: Verify package (structure + checksums)
+        run: |
+          BUNDLE="src-tauri/target/release/bundle"
+          APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' | head -n 1)
+          ./scripts/verify-package.sh \
+            --desktop-binary src-tauri/target/release/cc-reminder \
+            --helper-binary src-tauri/resources/bin/cc-reminder-hook \
+            --manifest src-tauri/resources/helper-manifest.json \
+            --archive "$APPIMAGE" \
+            --published-file "$APPIMAGE" \
+            --published-file "$(find "$BUNDLE/deb" -name '*.deb' | head -n 1)"
+
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files-linux
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/**/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Assemble latest.json at the single compile-time endpoint, attach checksums,
+  # and publish the GitHub release. Runs only after EVERY verify-package gate.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish release
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    environment: release-publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-files-*
+          path: release-staging
+          merge-multiple: true
+
+      - name: Stage flat release directory
+        run: |
+          mkdir -p dist-release
+          find release-staging -type f -exec cp {} dist-release/ \;
+          ls -la dist-release
+
+      # The updater endpoint is the single compile-time HTTPS URL from
+      # tauri.conf.json (the exact latest.json location); all feed artifact
+      # URLs below are derived from it and nowhere else.
+      - name: Resolve compile-time endpoint
+        id: endpoint
+        run: |
+          ENDPOINT=$(python3 -c "
+          import json
+          conf = json.load(open('src-tauri/tauri.conf.json'))
+          eps = conf['plugins']['updater']['endpoints']
+          assert len(eps) == 1, 'exactly one compile-time updater endpoint is allowed'
+          print(eps[0])")
+          if echo "$ENDPOINT" | grep -q "UPDATE_OWNER_PLACEHOLDER"; then
+            echo "::error::plugins.updater.endpoints still contains UPDATE_OWNER_PLACEHOLDER — complete the maintainer checklist in release.yml before tagging a release"
+            exit 1
+          fi
+          echo "base=$ENDPOINT" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble latest.json (signature = .sig contents)
+        env:
+          ENDPOINT: ${{ steps.endpoint.outputs.base }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" "$ENDPOINT" <<'PYEOF'
+          import datetime, glob, json, os, sys, urllib.parse
+          version, endpoint = sys.argv[1], sys.argv[2]
+          root = "dist-release"
+          # The compile-time endpoint IS the latest.json URL; every published
+          # artifact lives BESIDE it, so the feed URL base is the endpoint with
+          # the trailing "latest.json" stripped (keeps the exact host/path the
+          # shipped builds were compiled against).
+          normalized = endpoint.rstrip("/")
+          assert normalized.endswith("/latest.json"), (
+              f"updater endpoint must be the latest.json HTTPS URL, got {endpoint}")
+          base_url = normalized[: -len("latest.json")]
+
+          def one(pattern):
+              hits = sorted(glob.glob(os.path.join(root, pattern)))
+              assert len(hits) == 1, f"expected exactly one {pattern}, found {hits}"
+              return hits[0]
+
+          def platform_entry(url_glob):
+              artifact = one(url_glob)
+              signature_file = artifact + ".sig"
+              assert os.path.exists(signature_file), f"missing updater signature {signature_file}"
+              signature = open(signature_file, encoding="utf-8").read().strip()
+              assert signature, f"empty updater signature {signature_file}"
+              # Product names contain spaces ("CC Reminder"); percent-encode so
+              # the feed URL is directly fetchable.
+              filename = os.path.basename(artifact)
+              return {"signature": signature,
+                      "url": f"{base_url}{urllib.parse.quote(filename)}"}
+
+          latest = {
+              "version": version,
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "notes": f"CC Reminder {version}",
+              "platforms": {
+                  "darwin-aarch64": platform_entry("*_universal.app.tar.gz"),
+                  "darwin-x86_64": platform_entry("*_universal.app.tar.gz"),
+                  "windows-x86_64": platform_entry("*-setup.exe"),
+                  "linux-x86_64": platform_entry("*.AppImage"),
+              },
+          }
+          with open(os.path.join(root, "latest.json"), "w", encoding="utf-8") as fh:
+              json.dump(latest, fh, indent=2)
+              fh.write("\n")
+          PYEOF
+          cat dist-release/latest.json
+
+      - name: Checksum every published file including latest.json
+        run: |
+          cd dist-release
+          for f in *; do
+            case "$f" in *.sha256) continue ;; esac
+            sha256sum "$f" > "$f.sha256"
+          done
+          ls -la
+
+      # Last line of defense before anything leaves CI: sweep the exact bytes
+      # being published (the repo-path scanner already ran per build job).
+      - name: Scan staged files for planted markers
+        run: >
+          ! grep -rEal 'cc-reminder-e2e|secret-raw-value|VITE_CC_REMINDER_TEST_BACKEND|CC_REMINDER_TEST_DATA_DIR|-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----'
+          dist-release/
+
+      - name: Create GitHub release and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "CC Reminder ${GITHUB_REF_NAME#v}" \
+            --notes "See docs/operations.md for installation and update instructions." \
+            --verify-tag
+          gh release upload "$GITHUB_REF_NAME" dist-release/* --clobber
