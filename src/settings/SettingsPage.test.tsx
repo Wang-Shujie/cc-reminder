@@ -165,3 +165,26 @@ test("an unavailable secure credential store is disclosed on this page", async (
   expect(await screen.findByText(/凭据存储不可用，已改用内存存储。/)).toBeVisible();
   expect(screen.getByText(/检查系统钥匙串访问权限。/)).toBeVisible();
 });
+
+test("exports diagnostics and clears only inactive history after confirmation", async () => {
+  const user = userEvent.setup();
+  const backend = settingsBackend();
+  render(<SettingsPage backend={backend} />);
+  await screen.findByRole("heading", { name: "设置" });
+
+  await user.click(screen.getByRole("button", { name: "导出诊断" }));
+  await waitFor(() =>
+    expect(backend.exportDiagnostics).toHaveBeenCalledWith({
+      selected_path: expect.any(String),
+    }),
+  );
+
+  await user.click(screen.getByRole("button", { name: "清除历史" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveTextContent(/活动任务及其事件将被保留/);
+  await user.click(screen.getByRole("button", { name: "确认清除历史" }));
+  await waitFor(() =>
+    expect(backend.clearHistory).toHaveBeenCalledWith({ preserve_active_jobs: true }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

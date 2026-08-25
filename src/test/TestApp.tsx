@@ -387,6 +387,8 @@ export class FakeBackend implements Backend {
   readonly clearNotificationPause: Backend["clearNotificationPause"];
   readonly checkForUpdates: Backend["checkForUpdates"];
   readonly installUpdate: Backend["installUpdate"];
+  readonly exportDiagnostics: Backend["exportDiagnostics"];
+  readonly clearHistory: Backend["clearHistory"];
 
   constructor(options: FakeBackendOptions = {}) {
     this.opts = {
@@ -736,7 +738,18 @@ export class FakeBackend implements Backend {
       }
       void input;
     });
+    this.exportDiagnostics = vi.fn(async (input: { selected_path: string }): Promise<string> => {
+      this.exportDiagnosticsCalls.push({ ...input });
+      return input.selected_path;
+    });
+    this.clearHistory = vi.fn(async (input: { preserve_active_jobs: boolean }): Promise<number> => {
+      this.clearHistoryCalls.push({ ...input });
+      return 0;
+    });
   }
+
+  exportDiagnosticsCalls: Array<{ selected_path: string }> = [];
+  clearHistoryCalls: Array<{ preserve_active_jobs: boolean }> = [];
 
   /** Last input passed to saveSettings (for persistence assertions). */
   get savedSettings(): readonly SaveSettingsInput[] {

@@ -73,6 +73,8 @@ export interface Backend {
   clearNotificationPause(): Promise<SettingsView>;
   checkForUpdates(): Promise<UpdateCheckResult>;
   installUpdate(input: InstallUpdateInput): Promise<void>;
+  exportDiagnostics(input: { selected_path: string }): Promise<string>;
+  clearHistory(input: { preserve_active_jobs: boolean }): Promise<number>;
   subscribe(
     event: CoreEventName,
     handler: (revision: number) => void,
@@ -178,6 +180,12 @@ export class TauriBackend implements Backend {
   }
   installUpdate(input: InstallUpdateInput): Promise<void> {
     return invoke("install_update", { input });
+  }
+  exportDiagnostics(input: { selected_path: string }): Promise<string> {
+    return invoke("export_diagnostics", { input });
+  }
+  clearHistory(input: { preserve_active_jobs: boolean }): Promise<number> {
+    return invoke("clear_history", { input });
   }
   async subscribe(
     event: CoreEventName,

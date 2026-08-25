@@ -38,6 +38,7 @@ export function SettingsPage({
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   // Form state starts on safe defaults and hydrates from get_settings; saving
   // stays disabled until hydration lands so onboarding_completed is never
   // regressed by an early save.
@@ -513,6 +514,56 @@ export function SettingsPage({
                 }}
               >
                 {t.confirmInstall}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="row-end">
+        <button
+          type="button"
+          className="cc-focusable"
+          onClick={() => {
+            void backend.exportDiagnostics({ selected_path: "cc-reminder-diagnostics.zip" });
+          }}
+        >
+          {t.exportDiagnostics}
+        </button>
+        <button
+          type="button"
+          className="cc-focusable"
+          onClick={() => {
+            setClearConfirmOpen(true);
+          }}
+        >
+          {t.clearHistory}
+        </button>
+      </div>
+      {clearConfirmOpen && (
+        <div className="dialog-overlay" role="presentation">
+          <div className="dialog" role="dialog" aria-modal="true" aria-label={t.clearHistory}>
+            <h2>{t.clearHistory}</h2>
+            <p>{t.clearHistoryWarning}</p>
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setClearConfirmOpen(false);
+                }}
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                className="primary cc-focusable"
+                onClick={() => {
+                  void backend.clearHistory({ preserve_active_jobs: true });
+                  setClearConfirmOpen(false);
+                }}
+              >
+                {t.confirmClearHistory}
               </button>
             </div>
           </div>

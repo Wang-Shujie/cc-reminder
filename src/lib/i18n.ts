@@ -38,6 +38,10 @@ export interface Dictionary {
   useDefaults: string;
   selectChannel: string;
   sendTest: string;
+  exportDiagnostics: string;
+  clearHistory: string;
+  clearHistoryWarning: string;
+  confirmClearHistory: string;
   // Hook Rules page (Task 17)
   scopeLabel: string;
   scopeGlobal: string;
@@ -332,6 +336,10 @@ const zhCn: Dictionary = {
   useDefaults: "使用默认规则",
   selectChannel: "选择渠道",
   sendTest: "发送测试",
+  exportDiagnostics: "导出诊断",
+  clearHistory: "清除历史",
+  clearHistoryWarning: "将删除已完成的通知历史；活动任务及其事件将被保留。",
+  confirmClearHistory: "确认清除历史",
   scopeLabel: "作用域",
   scopeGlobal: "全局",
   scopeProject: "项目",
@@ -626,6 +634,10 @@ const en: Dictionary = {
   useDefaults: "Use default rules",
   selectChannel: "Select channel",
   sendTest: "Send test",
+  exportDiagnostics: "Export diagnostics",
+  clearHistory: "Clear history",
+  clearHistoryWarning: "Completed notification history will be deleted; active jobs and their events are preserved.",
+  confirmClearHistory: "Confirm clear history",
   scopeLabel: "Scope",
   scopeGlobal: "Global",
   scopeProject: "Project",

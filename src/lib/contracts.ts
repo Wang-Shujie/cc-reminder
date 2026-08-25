@@ -492,3 +492,11 @@ export interface UpdateCheckResult {
 export interface InstallUpdateInput {
   confirmed: boolean;
 }
+
+export interface ExportDiagnosticsInput {
+  selected_path: string;
+}
+
+export interface ClearHistoryInput {
+  preserve_active_jobs: boolean;
+}

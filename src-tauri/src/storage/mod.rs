@@ -3,4 +3,5 @@ pub mod db;
 pub mod events;
 pub mod integrations;
 pub mod queue;
+pub mod retention;
 pub mod spool;

@@ -13,6 +13,7 @@
 
 pub mod agents;
 pub mod channels;
+pub mod diagnostics;
 pub mod history;
 pub mod projects;
 pub mod rules;

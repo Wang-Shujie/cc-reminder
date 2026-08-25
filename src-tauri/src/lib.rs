@@ -2,6 +2,7 @@ pub mod actions;
 pub mod agents;
 pub mod channels;
 pub mod commands;
+pub mod diagnostics;
 pub mod error;
 pub mod events;
 pub mod health;
@@ -103,6 +104,8 @@ pub fn run() {
             commands::settings::save_settings,
             commands::settings::set_notification_pause,
             commands::settings::clear_notification_pause,
+            commands::diagnostics::export_diagnostics,
+            commands::diagnostics::clear_history,
             commands::updates::check_for_updates,
             commands::updates::install_update,
         ])
