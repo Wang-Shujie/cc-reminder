@@ -30,7 +30,11 @@ pub struct TemplateContext {
     severity: Severity,
 }
 
-pub fn build_template_context(event: &EventEnvelope, allowed_fields: &[String]) -> TemplateContext {
+pub fn build_template_context(
+    event: &EventEnvelope,
+    allowed_fields: &[String],
+    local_offset: chrono::FixedOffset,
+) -> TemplateContext {
     let mut values = BTreeMap::from([
         ("agent.name".into(), event.source.as_str().into()),
         ("agent.version".into(), event.source_version.to_string()),
@@ -39,7 +43,14 @@ pub fn build_template_context(event: &EventEnvelope, allowed_fields: &[String]) 
             "event.severity".into(),
             severity_name(event.severity).into(),
         ),
-        ("event.occurred_at".into(), event.occurred_at.to_rfc3339()),
+        (
+            "event.occurred_at".into(),
+            event
+                .occurred_at
+                .with_timezone(&local_offset)
+                .format("%Y-%m-%d %H:%M:%S%:z")
+                .to_string(),
+        ),
     ]);
     let mut authorized = BASE_TEMPLATE_FIELDS.into_iter().collect::<BTreeSet<_>>();
     if let Some(project) = &event.project_display_name {
@@ -247,6 +258,10 @@ mod tests {
     };
     use crate::security::redact::Redactor;
 
+    fn test_offset() -> chrono::FixedOffset {
+        chrono::FixedOffset::east_opt(8 * 3600).unwrap()
+    }
+
     #[test]
     fn template_cannot_access_field_removed_by_privacy_policy() {
         let context = context_with_only(&[("event.label", "需要授权")]);
@@ -346,12 +361,13 @@ mod tests {
     #[test]
     fn production_context_authorizes_summary_only_when_selected_and_catalogued() {
         let event = stop_event();
-        let unselected = build_template_context(&event, &[]);
+        let unselected = build_template_context(&event, &[], test_offset());
         let error =
             render_document("{{event.summary}}", &unselected, &redactor(), 500).unwrap_err();
         assert_eq!(error.code, "configuration.template_field_not_allowed");
 
-        let selected = build_template_context(&event, &["last_assistant_message".into()]);
+        let selected =
+            build_template_context(&event, &["last_assistant_message".into()], test_offset());
         assert_eq!(
             render_document("A{{event.summary}}B", &selected, &redactor(), 500)
                 .unwrap()
@@ -359,8 +375,11 @@ mod tests {
             "AB"
         );
 
-        let unsupported =
-            build_template_context(&permission_event(), &["last_assistant_message".into()]);
+        let unsupported = build_template_context(
+            &permission_event(),
+            &["last_assistant_message".into()],
+            test_offset(),
+        );
         let error =
             render_document("{{event.summary}}", &unsupported, &redactor(), 500).unwrap_err();
         assert_eq!(error.code, "configuration.template_field_not_allowed");
@@ -372,6 +391,7 @@ mod tests {
         let context = build_template_context(
             &event,
             &["summary".into(), "full_prompt".into(), "tool_input".into()],
+            test_offset(),
         );
         let document = render_document("{{event.tool_name}}", &context, &redactor(), 500).unwrap();
 
@@ -385,7 +405,7 @@ mod tests {
                 ("Project".into(), "cc-reminder".into()),
                 ("Hook".into(), "PermissionRequest".into()),
                 ("Status".into(), "request".into()),
-                ("Time".into(), "2026-07-29T12:00:00+00:00".into()),
+                ("Time".into(), "2026-07-29 20:00:00+08:00".into()),
             ]
         );
 

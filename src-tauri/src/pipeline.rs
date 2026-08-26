@@ -53,7 +53,10 @@ const METADATA_ONLY_TEMPLATE: &str = concat!(
     "时间：{{event.occurred_at}}",
 );
 
-fn minimal_document(envelope: &EventEnvelope) -> Result<NotificationDocument, AppError> {
+fn minimal_document(
+    envelope: &EventEnvelope,
+    local_offset: chrono::FixedOffset,
+) -> Result<NotificationDocument, AppError> {
     Ok(NotificationDocument {
         title: envelope.source_event.clone(),
         severity: envelope.severity,
@@ -64,7 +67,14 @@ fn minimal_document(envelope: &EventEnvelope) -> Result<NotificationDocument, Ap
                 envelope.project_display_name.clone().unwrap_or_default(),
             ),
             ("Hook".to_owned(), envelope.source_event.clone()),
-            ("Time".to_owned(), envelope.occurred_at.to_rfc3339()),
+            (
+                "Time".to_owned(),
+                envelope
+                    .occurred_at
+                    .with_timezone(&local_offset)
+                    .format("%Y-%m-%d %H:%M:%S%:z")
+                    .to_string(),
+            ),
         ],
         body: String::new(),
         footer: None,
@@ -226,7 +236,6 @@ impl EventPipeline {
 
         // Begin the atomic processing transaction.
         let events_repo = EventRepository::new(self.database.clone());
-        let queue_repo = QueueRepository::new(self.database.clone());
 
         let processed_event_id = redacted_envelope.id;
         let event_id_for_tx = processed_event_id;
@@ -260,7 +269,7 @@ impl EventPipeline {
             if matches!(outcome_for_tx, EventProcessingOutcome::Queued) {
                 enqueue_jobs(
                     tx,
-                    &queue_repo,
+                    self.local_offset,
                     event_id_for_tx,
                     &rule_for_jobs,
                     &targets,
@@ -289,7 +298,6 @@ impl EventPipeline {
     /// (successful or not).
     pub async fn recover_ingress(&self) -> Result<usize, AppError> {
         let events_repo = EventRepository::new(self.database.clone());
-        let queue_repo = QueueRepository::new(self.database.clone());
         let config = ConfigRepository::new(self.database.clone());
 
         let batch = events_repo.take_ingress_batch(50)?;
@@ -304,7 +312,7 @@ impl EventPipeline {
             // siblings. The failing row stays `'processing'` for the Task 15
             // startup reaper.
             if let Err(_error) = self
-                .process_safe_ingress_with(&events_repo, &queue_repo, &config, safe)
+                .process_safe_ingress_with(&events_repo, &config, safe)
                 .await
             {
                 // ponytail: no logger is wired yet (Task 15); the failed row
@@ -318,7 +326,6 @@ impl EventPipeline {
     async fn process_safe_ingress_with(
         &self,
         events_repo: &EventRepository,
-        queue_repo: &QueueRepository,
         config: &ConfigRepository,
         safe: crate::events::normalize::SafeIngressEvent,
     ) -> Result<(), AppError> {
@@ -431,7 +438,7 @@ impl EventPipeline {
             if matches!(outcome_for_tx, EventProcessingOutcome::Queued) {
                 enqueue_jobs(
                     tx,
-                    queue_repo,
+                    self.local_offset,
                     event_id,
                     &rule_for_jobs,
                     &targets,
@@ -497,7 +504,7 @@ fn suppress_reason_code(decision: &PolicyDecision) -> Option<EventOutcomeReasonC
 
 fn enqueue_jobs(
     tx: &rusqlite::Transaction<'_>,
-    _queue_repo: &QueueRepository,
+    local_offset: chrono::FixedOffset,
     event_id: Uuid,
     resolved: &ResolvedRule,
     targets: &[TargetConfig],
@@ -508,22 +515,34 @@ fn enqueue_jobs(
     let max_chars = resolved.config.privacy.max_body_chars.max(1) as usize;
     // Build a stub envelope for template context from the rule + event id.
     let envelope = load_envelope_for_template(tx, event_id)?;
-    let context =
-        build_template_context(&envelope, &resolved.config.privacy.allowed_sensitive_fields);
-    let template = resolved
-        .config
-        .targets
-        .first()
-        .and_then(|t| t.template.clone())
-        .unwrap_or_else(|| DEFAULT_TEMPLATE_ZH.to_owned());
-    // Render the per-target document. The default template references
-    // event.summary, which is only authorized when a public summary field is
-    // present; for events without one (e.g. metadata-only Stop), fall back to
-    // a minimal template so we never drop a notification solely because the
-    // template asked for a field this event doesn't have.
-    let document = render_document(&template, &context, &redactor, max_chars)
-        .or_else(|_| render_document(METADATA_ONLY_TEMPLATE, &context, &redactor, max_chars))
-        .or_else(|_| minimal_document(&envelope))?;
+    let mut document = {
+        let context = build_template_context(
+            &envelope,
+            &resolved.config.privacy.allowed_sensitive_fields,
+            local_offset,
+        );
+        let template = resolved
+            .config
+            .targets
+            .first()
+            .and_then(|t| t.template.clone())
+            .unwrap_or_else(|| DEFAULT_TEMPLATE_ZH.to_owned());
+        // Render the per-target document. The default template references
+        // event.summary, which is only authorized when a public summary field is
+        // present; for events without one (e.g. metadata-only Stop), fall back to
+        // a minimal template so we never drop a notification solely because the
+        // template asked for a field this event doesn't have.
+        render_document(&template, &context, &redactor, max_chars)
+            .or_else(|_| render_document(METADATA_ONLY_TEMPLATE, &context, &redactor, max_chars))
+            .or_else(|_| minimal_document(&envelope, local_offset))?
+    };
+    // A rendered template body already carries the full human-readable content
+    // (agent/project/hook/status/time in the user's locale). Keeping the
+    // auto-generated English fact list on top of it duplicated every line in
+    // the delivered message, so facts ship only with the body-less fallback.
+    if !document.body.is_empty() {
+        document.facts.clear();
+    }
 
     let now = Utc::now();
     let ttl_seconds = resolved.config.delivery.ttl_seconds.max(1) as i64;
