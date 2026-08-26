@@ -92,10 +92,13 @@ jobs:
       # browser test backend or its markers (the "cc-reminder-e2e" /
       # "secret-raw-value" string literals survive any minification, and the
       # backend's identifiers must never appear either). The leading ! inverts
-      # grep's exit status so ANY match fails the job.
+      # grep's exit status so ANY match fails the job. `test -d dist` first:
+      # a MISSING dist used to turn grep's exit 2 into a false pass
+      # (v2-issues).
       - name: Grep dist for test-backend markers
         run: >
-          ! grep -R -E -l
+          test -d dist
+          && ! grep -R -E -l
           'cc-reminder-e2e|browser-test-backend|BrowserTestBackend|createBrowserTestBackend|secret-raw-value'
           dist/
 
