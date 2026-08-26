@@ -337,6 +337,38 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_persists_the_reported_local_offset_for_quiet_hours() {
+        let st = state();
+        // The frontend reports -getTimezoneOffset()*60 at every bootstrap; the
+        // +08:00 report must land in persisted settings so the next pipeline
+        // construction evaluates quiet hours in local time.
+        crate::commands::bootstrap_state(&st, Some(8 * 3600)).unwrap();
+        assert_eq!(
+            st.config.get_settings().unwrap().local_offset_seconds,
+            8 * 3600
+        );
+        // Re-reporting the same value is idempotent (no extra write needed to
+        // stay correct)...
+        crate::commands::bootstrap_state(&st, Some(8 * 3600)).unwrap();
+        assert_eq!(
+            st.config.get_settings().unwrap().local_offset_seconds,
+            8 * 3600
+        );
+        // ...an absent report keeps the stored value...
+        crate::commands::bootstrap_state(&st, None).unwrap();
+        assert_eq!(
+            st.config.get_settings().unwrap().local_offset_seconds,
+            8 * 3600
+        );
+        // ...and an implausible report is ignored, never fatal, never stored.
+        crate::commands::bootstrap_state(&st, Some(i32::MAX)).unwrap();
+        assert_eq!(
+            st.config.get_settings().unwrap().local_offset_seconds,
+            8 * 3600
+        );
+    }
+
+    #[test]
     fn pause_does_not_mutate_rules() {
         // pause_until is pure: invoking it twice with the same input yields the
         // same output, and it never touches a RuleConfig. We assert purity by

@@ -874,6 +874,10 @@ fn validate_settings(settings: &AppSettings) -> Result<(), AppError> {
             .notification_pause
             .as_ref()
             .is_some_and(|pause| pause.until <= pause.started_at)
+        // The persisted frontend-reported UTC offset must be expressible as a
+        // chrono FixedOffset; anything outside ±24h would poison quiet-hours
+        // evaluation.
+        || chrono::FixedOffset::east_opt(settings.local_offset_seconds).is_none()
     {
         return Err(configuration_error(
             "settings_invalid",
@@ -1593,6 +1597,27 @@ mod tests {
             log_retention_days: 14,
             locale: Locale::En,
             theme: Theme::Dark,
+            ..AppSettings::default()
+        };
+        assert_eq!(repository.save_settings(&valid).unwrap(), valid);
+    }
+
+    #[test]
+    fn settings_reject_an_implausible_local_offset() {
+        let (_root, repository) = test_config_repository();
+        // A frontend-reported UTC offset outside chrono's ±24h FixedOffset
+        // range would poison quiet-hours evaluation, so it must never persist.
+        let invalid = AppSettings {
+            local_offset_seconds: 100_000_000,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            repository.save_settings(&invalid).unwrap_err().code,
+            "configuration.settings_invalid"
+        );
+        // A real-world east offset (+08:00) persists fine.
+        let valid = AppSettings {
+            local_offset_seconds: 8 * 3600,
             ..AppSettings::default()
         };
         assert_eq!(repository.save_settings(&valid).unwrap(), valid);

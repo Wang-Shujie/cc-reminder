@@ -15,8 +15,12 @@ export function AppRoot(): ReactNode {
 
   useEffect(() => {
     let cancelled = false;
+    // getTimezoneOffset is minutes WEST of UTC, so negate it for the core's
+    // east-positive seconds. Reported at first paint of every session so the
+    // core can persist it and evaluate quiet hours in local time (same
+    // frontend-reported pattern as the notification pause).
     backend
-      .getBootstrapState()
+      .getBootstrapState(-new Date().getTimezoneOffset() * 60)
       .then((state) => {
         if (!cancelled) {
           setBoot(state);

@@ -174,8 +174,17 @@ pub(crate) fn update_error(code: &str, message: &str) -> AppError {
 // wrappers that pull `State<CoreState>` and delegate.
 // ---------------------------------------------------------------------------
 
-/// `get_bootstrap_state`
-pub(crate) fn bootstrap_state(state: &CoreState) -> Result<BootstrapState, AppError> {
+/// `get_bootstrap_state`. The optional `offset_seconds` is the WebView's UTC
+/// offset (`-Date#getTimezoneOffset()*60`, east-positive — same Task 19
+/// pattern as `set_notification_pause`). Persisting it here delivers the
+/// timezone to the core at first paint of EVERY session, so quiet hours
+/// evaluate in local time from the second launch onward (documented fallback:
+/// UTC until the first report).
+pub(crate) fn bootstrap_state(
+    state: &CoreState,
+    offset_seconds: Option<i32>,
+) -> Result<BootstrapState, AppError> {
+    persist_reported_offset(&state.config, offset_seconds)?;
     let settings = state.config.get_settings()?;
     let snapshot = build_health_snapshot(state)?;
     let pending = snapshot.pending_jobs;
@@ -188,6 +197,27 @@ pub(crate) fn bootstrap_state(state: &CoreState) -> Result<BootstrapState, AppEr
         pending_jobs: pending,
         failed_jobs: failed,
     })
+}
+
+/// Store a frontend-reported UTC offset alongside settings. An implausible
+/// value (outside chrono's FixedOffset range) is IGNORED rather than fatal:
+/// bootstrap must never fail because the WebView reported nonsense.
+fn persist_reported_offset(
+    config: &ConfigRepository,
+    offset_seconds: Option<i32>,
+) -> Result<(), AppError> {
+    let Some(seconds) = offset_seconds else {
+        return Ok(());
+    };
+    if chrono::FixedOffset::east_opt(seconds).is_none() {
+        return Ok(());
+    }
+    let mut settings = config.get_settings()?;
+    if settings.local_offset_seconds != seconds {
+        settings.local_offset_seconds = seconds;
+        config.save_settings(&settings)?;
+    }
+    Ok(())
 }
 
 /// `get_health_snapshot`
@@ -292,9 +322,12 @@ pub(crate) fn theme_code(theme: crate::model::Theme) -> String {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn get_bootstrap_state(state: State<'_, CoreState>) -> Result<BootstrapState, AppError> {
+pub async fn get_bootstrap_state(
+    state: State<'_, CoreState>,
+    offset_seconds: Option<i32>,
+) -> Result<BootstrapState, AppError> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || bootstrap_state(&state))
+    tauri::async_runtime::spawn_blocking(move || bootstrap_state(&state, offset_seconds))
         .await
         .map_err(|_| configuration_error("join_failed", "command join failed"))?
 }

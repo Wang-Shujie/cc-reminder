@@ -44,7 +44,10 @@ import type {
 } from "./contracts";
 
 export interface Backend {
-  getBootstrapState(): Promise<BootstrapState>;
+  /** `offsetSeconds` is this side's UTC offset (-Date#getTimezoneOffset()*60,
+   *  east-positive). The core persists it at first paint so quiet hours run in
+   *  local time — same frontend-reported pattern as setNotificationPause. */
+  getBootstrapState(offsetSeconds?: number | null): Promise<BootstrapState>;
   getHealthSnapshot(): Promise<HealthSnapshot>;
   detectAgents(input: { confirm_compatible_version: boolean }): Promise<AgentIntegrationSummary[]>;
   listAgentIntegrations(): Promise<AgentIntegrationSummary[]>;
@@ -88,8 +91,11 @@ export interface Backend {
 
 /** Production Backend: one hardcoded invoke name per command. */
 export class TauriBackend implements Backend {
-  getBootstrapState(): Promise<BootstrapState> {
-    return invoke("get_bootstrap_state");
+  getBootstrapState(offsetSeconds?: number | null): Promise<BootstrapState> {
+    return invoke("get_bootstrap_state", {
+      // Tauri command args are camelCase on this side of the bridge.
+      offsetSeconds: offsetSeconds ?? null,
+    });
   }
   getHealthSnapshot(): Promise<HealthSnapshot> {
     return invoke("get_health_snapshot");

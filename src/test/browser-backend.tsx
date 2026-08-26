@@ -450,7 +450,9 @@ export class BrowserTestBackend implements Backend {
 
   // -- Bootstrap + health ---------------------------------------------------
 
-  async getBootstrapState(): Promise<BootstrapState> {
+  async getBootstrapState(_offsetSeconds?: number | null): Promise<BootstrapState> {
+    // The in-browser backend keeps its fixed settings; the reported offset is
+    // accepted for signature parity with the real core but not modelled here.
     const snap = this.snapshot();
     return this.send({
       onboarding_completed: this.settings.onboarding_completed,

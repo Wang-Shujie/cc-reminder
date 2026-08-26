@@ -37,11 +37,21 @@ use crate::storage::integrations::IntegrationRepository;
 use crate::storage::queue::QueueRepository;
 use crate::worker::{CancellationToken, DeliveryWorker, WorkerConfig};
 
-/// Local UTC offset used by the live pipeline. ponytail: chrono's local offset
-/// needs the `clock` feature which we deliberately do not enable; the app uses
-/// the system timezone via Tauri/OS at the UI layer, and the pipeline runs in
-/// UTC. Promote to a real local probe if quiet-hours tests show skew.
-const LOCAL_OFFSET_SECONDS: i32 = 0;
+/// Local UTC offset used by the live pipeline, from persisted settings.
+///
+/// The frontend reports its real zone offset (`-Date#getTimezoneOffset()*60`,
+/// east-positive seconds) at every bootstrap and we persist it alongside
+/// settings — the same frontend-reported pattern as the Task 19 pause fix,
+/// because chrono's own local-offset lookup needs the `clock` feature we
+/// deliberately do not enable. Documented fallback: `0` (= UTC) until the
+/// first report lands, so quiet hours are correct in local time from the
+/// first run AFTER the first launch. A stale stored value (out of chrono's
+/// range) degrades to UTC rather than failing startup.
+fn local_offset_from_stored(stored_seconds: i32) -> FixedOffset {
+    FixedOffset::east_opt(stored_seconds).unwrap_or_else(|| {
+        FixedOffset::east_opt(0).expect("the zero offset is always representable")
+    })
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -267,7 +277,12 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let correlation_key = CorrelationKey::load_or_create(&paths.data_dir)?;
     let key_bytes = *correlation_key.expose_for_hmac();
     let projects = load_project_registrations(&config);
-    let local_offset = FixedOffset::east_opt(LOCAL_OFFSET_SECONDS).unwrap();
+    let local_offset = local_offset_from_stored(
+        config
+            .get_settings()
+            .map(|settings| settings.local_offset_seconds)
+            .unwrap_or(0),
+    );
     let pipeline = EventPipeline::new(
         database.clone(),
         cipher.clone(),
@@ -548,5 +563,20 @@ mod tests {
                 focus: true
             }
         );
+    }
+
+    #[test]
+    fn stored_local_offsets_map_to_fixed_offsets_with_utc_fallback() {
+        // The persisted frontend report (+08:00) drives quiet hours in local
+        // time...
+        assert_eq!(
+            super::local_offset_from_stored(8 * 3600).local_minus_utc(),
+            8 * 3600
+        );
+        // ...the documented pre-first-report fallback is UTC...
+        assert_eq!(super::local_offset_from_stored(0).local_minus_utc(), 0);
+        // ...and a stale/corrupt stored value degrades to UTC instead of
+        // failing startup.
+        assert_eq!(super::local_offset_from_stored(i32::MAX).local_minus_utc(), 0);
     }
 }

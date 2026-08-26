@@ -1204,6 +1204,83 @@ async fn pipeline_quiet_hours_use_local_offset() {
     let _ = now;
 }
 
+/// The persisted frontend-reported offset (+08:00) must make a LOCAL-night
+/// quiet window silence an event whose UTC time is daytime. Mirrors the
+/// discriminating style of `pipeline_quiet_hours_use_local_offset` (+12:00):
+/// the window is ±60s around the local (+08:00) time now, so it contains
+/// local-now but NEVER contains UTC-now (8 hours away). Under the fix the
+/// event is suppressed; a UTC-evaluating pipeline would queue it.
+#[tokio::test]
+async fn pipeline_quiet_hours_are_silent_in_local_night_under_reported_plus_eight_offset() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    let offset = chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap();
+    let local_now = Utc::now().with_timezone(&offset);
+    let start_local = (local_now - Duration::seconds(60))
+        .format("%H:%M")
+        .to_string();
+    let end_local = (local_now + Duration::seconds(60))
+        .format("%H:%M")
+        .to_string();
+    harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+        rule.quiet_hours = Some(cc_reminder_lib::model::QuietHours {
+            start_local: start_local.clone(),
+            end_local: end_local.clone(),
+            weekdays: vec![1, 2, 3, 4, 5, 6, 7],
+            bypass_at_or_above: None,
+        });
+    });
+    harness.install_hook(AgentKind::Codex, "Stop", "fp");
+
+    // +08:00 pipeline (what bootstrap persistence feeds after the first
+    // report): local night → suppressed, nothing queued.
+    let pipeline = harness.pipeline_with_offset(offset);
+    pipeline
+        .process_live(harness.ingress_request("Stop", "fp"))
+        .await
+        .unwrap();
+    assert_eq!(
+        harness.pending_jobs(),
+        0,
+        "a +08:00 local-night quiet window must silence the event"
+    );
+
+    // Contrast: the SAME rule evaluated in UTC (the pre-fix behavior) is
+    // outside the window at this instant, so the event is queued. This proves
+    // the assertion above is driven by the offset, not by something else.
+    let utc_harness = PipelineHarness::new();
+    let utc_chan = utc_harness.add_channel(ChannelKind::WeCom, "a");
+    utc_harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: utc_chan,
+            template: None,
+        }];
+        rule.quiet_hours = Some(cc_reminder_lib::model::QuietHours {
+            start_local,
+            end_local,
+            weekdays: vec![1, 2, 3, 4, 5, 6, 7],
+            bypass_at_or_above: None,
+        });
+    });
+    utc_harness.install_hook(AgentKind::Codex, "Stop", "fp");
+    let utc_pipeline = utc_harness.pipeline_with_offset(chrono::FixedOffset::east_opt(0).unwrap());
+    utc_pipeline
+        .process_live(utc_harness.ingress_request("Stop", "fp"))
+        .await
+        .unwrap();
+    assert_eq!(
+        utc_harness.pending_jobs(),
+        1,
+        "the same instant under UTC is daytime, so the window must NOT silence it"
+    );
+}
+
 /// Mandatory public-field redaction must run on the persisted envelope. A
 /// `public_fields` string matching a mandatory pattern (Authorization header)
 /// must be replaced with `[REDACTED]` in `public_fields_json`, not stored raw.

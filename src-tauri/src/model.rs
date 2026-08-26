@@ -348,6 +348,14 @@ pub struct AppSettings {
     pub notification_pause: Option<NotificationPause>,
     pub debug_until: Option<DateTime<Utc>>,
     pub onboarding_completed: bool,
+    /// The WebView's UTC offset in seconds (east-positive), reported at every
+    /// bootstrap (`-Date#getTimezoneOffset()*60`) and persisted here — the same
+    /// frontend-reported pattern as the Task 19 pause fix. Feeds quiet-hours
+    /// evaluation in the live pipeline; chrono's own local-offset lookup is
+    /// unavailable without its `clock` feature. `0` (= UTC) until the first
+    /// report; `#[serde(default)]` keeps older persisted JSON loadable.
+    #[serde(default)]
+    pub local_offset_seconds: i32,
 }
 
 impl Default for AppSettings {
@@ -362,6 +370,7 @@ impl Default for AppSettings {
             notification_pause: None,
             debug_until: None,
             onboarding_completed: false,
+            local_offset_seconds: 0,
         }
     }
 }

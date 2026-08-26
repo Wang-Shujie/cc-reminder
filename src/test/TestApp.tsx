@@ -795,7 +795,9 @@ export class FakeBackend implements Backend {
     }
   }
 
-  async getBootstrapState(): Promise<BootstrapState> {
+  async getBootstrapState(_offsetSeconds?: number | null): Promise<BootstrapState> {
+    // The fake keeps its fixed settings; the reported offset is accepted for
+    // signature parity with the real core but not modelled here.
     const snap = this.snapshot();
     return {
       onboarding_completed: this.settings.onboarding_completed,
