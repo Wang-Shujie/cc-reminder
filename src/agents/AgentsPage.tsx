@@ -3,7 +3,7 @@
 // enum, per-agent drift from the shared derivation, per-event health of the
 // last applied result, and the Codex /hooks trust handoff.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ClipboardCopy } from "lucide-react";
+import { ArrowRight, ClipboardCopy } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
 import {
@@ -102,6 +102,7 @@ export function AgentsPage({
   /** Initial load of the PRIMARY list (list_agent_integrations) failed. */
   const [loadFailed, setLoadFailed] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<AgentKindCode | null>(null);
+  const [trustGuideOpen, setTrustGuideOpen] = useState(false);
   /** Set after the backend rejects with agent_confirmation_required; the open
    *  dialog discloses the compatibility caveat before retrying with true. */
   const [needsConsent, setNeedsConsent] = useState<{
@@ -390,33 +391,59 @@ export function AgentsPage({
               {codexConfirmed ? (
                 <span>{t.trustDoneAwaiting}</span>
               ) : (
-                <>
-                  <span>
-                    {t.trustNotice} <code>{t.trustCommand}</code>
-                  </span>
-                  <button
-                    type="button"
-                    className="cc-focusable"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(t.trustCommand);
-                    }}
-                  >
-                    <ClipboardCopy size={14} aria-hidden="true" /> {t.copyCommand}
-                  </button>
-                  <button
-                    type="button"
-                    className="cc-focusable"
-                    onClick={() => {
-                      void detect();
-                    }}
-                  >
-                    {t.recheck}
-                  </button>
-                </>
+                /* 长指引文字弹窗化(用户裁决):行内只留入口箭头。 */
+                <button
+                  type="button"
+                  className="cc-focusable link-arrow"
+                  onClick={() => setTrustGuideOpen(true)}
+                >
+                  {t.trustViewGuide}
+                  <ArrowRight size={14} aria-hidden="true" />
+                </button>
               )}
             </p>
           )}
         </section>
+      )}
+
+      {trustGuideOpen && (
+        <div className="dialog-overlay">
+          <div role="dialog" aria-label={t.trustGuideTitle} className="dialog">
+            <h2>{t.trustGuideTitle}</h2>
+            <p>{t.trustNotice}</p>
+            <p className="trust-command">
+              <code>{t.trustCommand}</code>
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(t.trustCommand);
+                }}
+              >
+                <ClipboardCopy size={14} aria-hidden="true" /> {t.copyCommand}
+              </button>
+            </p>
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setTrustGuideOpen(false);
+                  void detect();
+                }}
+              >
+                {t.recheck}
+              </button>
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => setTrustGuideOpen(false)}
+              >
+                {t.drawerClose}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {uninstallTarget !== null && (
