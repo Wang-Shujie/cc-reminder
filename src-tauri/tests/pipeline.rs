@@ -719,19 +719,34 @@ fn safe_ingress_for_event_with_project(
 struct WorkerHarness {
     _pipeline_root: TempDir,
     pipeline_harness: PipelineHarness,
-    events_sink: Arc<Mutex<Vec<cc_reminder_lib::worker::CoreEvent>>>,
+    /// Sender half handed to the worker; `drain_core_events` reads the
+    /// receiving half after a run so tests can assert on emissions.
+    core_events_tx: cc_reminder_lib::worker::CoreEventSink,
+    core_events_rx: tokio::sync::mpsc::Receiver<cc_reminder_lib::worker::CoreEvent>,
     factory: Arc<MockSenderFactory>,
 }
 
 impl WorkerHarness {
     fn new() -> Self {
         let pipeline_harness = PipelineHarness::new();
+        let (core_events_tx, core_events_rx) = tokio::sync::mpsc::channel(64);
         Self {
             _pipeline_root: tempdir().unwrap(),
             pipeline_harness,
-            events_sink: Arc::new(Mutex::new(Vec::new())),
+            core_events_tx,
+            core_events_rx,
             factory: Arc::new(MockSenderFactory::default()),
         }
+    }
+
+    /// Drain every core event emitted so far (bounded channel; the worker uses
+    /// try_send, so nothing here can block).
+    fn drain_core_events(&mut self) -> Vec<cc_reminder_lib::worker::CoreEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.core_events_rx.try_recv() {
+            events.push(event);
+        }
+        events
     }
 
     fn enqueue_job(&self, channel: ChannelId) -> Uuid {
@@ -794,7 +809,7 @@ impl WorkerHarness {
             lease_duration: Duration::seconds(60),
             tick_interval: std::time::Duration::from_millis(10),
         };
-        DeliveryWorker::new(config, self.events_sink.clone())
+        DeliveryWorker::new(config, self.core_events_tx.clone())
     }
 
     fn job_state(&self, job_id: Uuid) -> DeliveryStatus {
@@ -1401,7 +1416,7 @@ async fn recover_ingress_skips_bad_row_and_processes_siblings() {
 /// a `_` local and returned without pushing anything.
 #[tokio::test]
 async fn three_strike_auth_pause_emits_health_changed() {
-    let harness = WorkerHarness::new();
+    let mut harness = WorkerHarness::new();
     let chan_a = harness
         .pipeline_harness
         .add_channel(ChannelKind::WeCom, "a");
@@ -1424,11 +1439,13 @@ async fn three_strike_auth_pause_emits_health_changed() {
         harness.channel_health(chan_a),
         ChannelHealth::PausedAuthentication
     );
-    let events = harness.events_sink.lock().unwrap();
+    let events = harness.drain_core_events();
     let health_changes: Vec<Uuid> = events
         .iter()
         .filter_map(|e| match e {
-            cc_reminder_lib::worker::CoreEvent::HealthChanged { channel_id } => Some(*channel_id),
+            cc_reminder_lib::worker::CoreEvent::HealthChanged {
+                channel_id: Some(channel_id),
+            } => Some(*channel_id),
             _ => None,
         })
         .collect();

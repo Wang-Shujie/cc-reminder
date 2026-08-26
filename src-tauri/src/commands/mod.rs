@@ -66,6 +66,13 @@ pub struct CoreState {
     /// LaunchAgent / login item). Injected by the app shell from the Tauri
     /// autostart plugin; defaults to a no-op so pure command tests can run.
     pub autostart_control: AutostartControl,
+    /// Shared bounded-channel sender feeding the `core://` event forwarder
+    /// task spawned by the app shell (lib.rs). Commands push revision-only
+    /// notifications here (e.g. rule saves bumping health); the single
+    /// consumer maps each event to its topic and emits `{revision}` to the
+    /// WebView. Defaults to a DISCONNECTED sender so pure command tests need
+    /// no wiring — sends fail harmlessly.
+    pub core_events: crate::worker::CoreEventSink,
 }
 
 /// Applies an autostart on/off request. Returns an error message on failure.
@@ -81,6 +88,11 @@ impl CoreState {
         cipher: std::sync::Arc<FieldCipher>,
         diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
     ) -> Self {
+        // Default event sink: a sender whose receiver is dropped immediately,
+        // so every try_send reports Disconnected and is ignored (see
+        // `worker::emit`). The app shell replaces this with the live channel.
+        let (core_events, dead_receiver) = tokio::sync::mpsc::channel(1);
+        drop(dead_receiver);
         Self {
             config,
             events,
@@ -92,6 +104,7 @@ impl CoreState {
             cancel_token: std::sync::Arc::new(Mutex::new(None)),
             worker_task: std::sync::Arc::new(Mutex::new(None)),
             autostart_control: std::sync::Arc::new(|_| Ok(())),
+            core_events,
         }
     }
 }

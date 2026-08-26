@@ -14,8 +14,8 @@
 //! injecting a mock [`ChannelSenderFactory`].
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use chrono::Utc;
@@ -166,11 +166,38 @@ pub enum MockSendOutcome {
 
 /// Health/history/queue UI refresh events emitted by the worker (Task 15 GUI
 /// consumes these). Carries no plaintext.
+///
+/// Delivery contract: events travel over a bounded [`tokio::sync::mpsc`]
+/// channel ([`CoreEventSink`]); the app shell (`lib.rs`) spawns the single
+/// consumer that maps each event to its `core://` topic and emits a
+/// revision-only payload to the WebView.
 #[derive(Clone, Debug)]
 pub enum CoreEvent {
     QueueChanged,
-    HealthChanged { channel_id: Uuid },
+    /// A channel's health changed (auth pause / recovery). `None` when the
+    /// trigger is board-wide rather than one channel (e.g. a rule save that
+    /// mutated the required hook selection).
+    HealthChanged {
+        channel_id: Option<Uuid>,
+    },
 }
+
+impl CoreEvent {
+    /// The `core://` topic this notification is delivered on. Names MUST match
+    /// `CORE_EVENTS` in `src/lib/contracts.ts`, whose subscribers refetch on
+    /// any revision bump.
+    pub fn core_topic(&self) -> &'static str {
+        match self {
+            Self::QueueChanged => "core://queue-changed",
+            Self::HealthChanged { .. } => "core://health-changed",
+        }
+    }
+}
+
+/// Bounded sender half of the core-event channel. Cloned into the delivery
+/// worker and the command surface; `lib.rs` holds the receiving end in the
+/// forwarder task.
+pub type CoreEventSink = tokio::sync::mpsc::Sender<CoreEvent>;
 
 /// Tiny cancellation token: `Notify` + `AtomicBool` so we don't add
 /// `tokio_util` as a dependency. Cloneable; any clone can cancel the loop.
@@ -225,11 +252,11 @@ impl Default for CancellationToken {
 
 pub struct DeliveryWorker<F: ChannelSenderFactory> {
     config: WorkerConfig<F>,
-    events: Arc<Mutex<Vec<CoreEvent>>>,
+    events: CoreEventSink,
 }
 
 impl<F: ChannelSenderFactory + 'static> DeliveryWorker<F> {
-    pub fn new(config: WorkerConfig<F>, events: Arc<Mutex<Vec<CoreEvent>>>) -> Self {
+    pub fn new(config: WorkerConfig<F>, events: CoreEventSink) -> Self {
         Self { config, events }
     }
 
@@ -291,7 +318,7 @@ impl<F: ChannelSenderFactory + 'static> DeliveryWorker<F> {
                     Ok(p) => p,
                     Err(_) => return Ok(()),
                 };
-                process_claim(&config, &claim_for_task, events).await
+                process_claim(&config, &claim_for_task, &events).await
             });
             handles.push((claim, handle));
         }
@@ -317,7 +344,7 @@ impl<F: ChannelSenderFactory + 'static> Clone for DeliveryWorker<F> {
 async fn process_claim<F: ChannelSenderFactory>(
     config: &WorkerConfig<F>,
     claim: &ClaimedDelivery,
-    events: Arc<Mutex<Vec<CoreEvent>>>,
+    events: &CoreEventSink,
 ) -> Result<(), AppError> {
     // Build the aggregate document if needed, else use the single job's doc.
     let (jobs, document) = compose_document(claim);
@@ -358,10 +385,10 @@ async fn process_claim<F: ChannelSenderFactory>(
             reset_auth_failures(&config.database, first.channel_id, now)?;
         }
         Err(error) => {
-            record_failure(config, claim, &queue, &jobs, now, &error, &events)?;
+            record_failure(config, claim, &queue, &jobs, now, &error, events)?;
         }
     }
-    emit(&events, CoreEvent::QueueChanged);
+    emit(events, CoreEvent::QueueChanged);
     Ok(())
 }
 
@@ -385,7 +412,7 @@ fn record_failure<F: ChannelSenderFactory>(
     jobs: &[DeliveryJob],
     now: chrono::DateTime<Utc>,
     error: &DeliveryError,
-    events: &Arc<Mutex<Vec<CoreEvent>>>,
+    events: &CoreEventSink,
 ) -> Result<(), AppError> {
     let is_auth = matches!(
         error.kind,
@@ -430,11 +457,7 @@ fn reset_auth_failures(
     QueueRepository::new(database.clone()).reset_auth_failures(channel_id, now)
 }
 
-fn emit_health_pause(
-    events: &Arc<Mutex<Vec<CoreEvent>>>,
-    queue: &QueueRepository,
-    channel_id: Uuid,
-) {
+fn emit_health_pause(events: &CoreEventSink, queue: &QueueRepository, channel_id: Uuid) {
     // Re-query the channel's health and push HealthChanged if it transitioned
     // to paused_authentication. The auth-failure bump that precedes this call
     // is what flips the column, so this must run AFTER bump_auth_failure /
@@ -445,7 +468,12 @@ fn emit_health_pause(
         .map(|status| status == "paused_authentication")
         .unwrap_or(false)
     {
-        emit(events, CoreEvent::HealthChanged { channel_id });
+        emit(
+            events,
+            CoreEvent::HealthChanged {
+                channel_id: Some(channel_id),
+            },
+        );
     }
 }
 
@@ -496,11 +524,42 @@ fn claim_channel(claim: &ClaimedDelivery) -> Uuid {
     }
 }
 
-fn emit(sink: &Arc<Mutex<Vec<CoreEvent>>>, event: CoreEvent) {
-    if let Ok(mut events) = sink.lock() {
-        events.push(event);
-    }
+/// Push a core event to the WebView forwarder. Backpressure policy: the
+/// channel is bounded and `try_send` never awaits, so when the forwarder falls
+/// behind the NEWEST event is dropped — every payload is a bare revision bump,
+/// and the next worker tick re-emits QueueChanged, so a dropped notification
+/// self-heals on the following refetch. A disconnected channel (UI teardown or
+/// the command-test default) also drops silently.
+pub(crate) fn emit(sink: &CoreEventSink, event: CoreEvent) {
+    let _ = sink.try_send(event);
 }
 
 // Re-export commonly used types from the queue module for convenience.
 pub use crate::storage::queue::RetryDecision;
+
+#[cfg(test)]
+mod tests {
+    use super::{CoreEvent, CoreEventSink};
+
+    /// Topic names are a cross-language contract with `CORE_EVENTS` in
+    /// `src/lib/contracts.ts`; the forwarder in `lib.rs` emits exactly these.
+    #[test]
+    fn core_events_map_to_the_frontend_core_topics() {
+        let queue = CoreEvent::QueueChanged;
+        let health = CoreEvent::HealthChanged {
+            channel_id: Some(uuid::Uuid::now_v7()),
+        };
+        assert_eq!(queue.core_topic(), "core://queue-changed");
+        assert_eq!(health.core_topic(), "core://health-changed");
+    }
+
+    /// The command-test default sink is a DISCONNECTED sender: emit must be a
+    /// silent no-op, never panic and never block.
+    #[tokio::test]
+    async fn emit_into_a_disconnected_sink_is_a_silent_no_op() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<CoreEvent>(1);
+        drop(rx);
+        let sink: CoreEventSink = tx;
+        super::emit(&sink, CoreEvent::QueueChanged);
+    }
+}

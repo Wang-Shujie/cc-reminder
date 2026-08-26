@@ -499,8 +499,10 @@ fn resolve_catalog(state: &CoreState, agent: AgentKind) -> CapabilityResolution 
 }
 
 /// Recompute the required hook selection and compare with installed rows.
-/// Emits a `core://health-changed` revision in the real runtime; in tests the
-/// side-effect is the return value.
+/// Every rule save that reaches here mutated selection state, so a
+/// `core://health-changed` revision is pushed through the shared sink (the
+/// forwarder task in lib.rs turns it into a revision-only WebView emit; in
+/// pure command tests the default sink is disconnected and drops it).
 fn recompute_selection_health(state: &CoreState) -> Result<SelectionOutOfDateView, AppError> {
     let globals = state.config.list_global_rules()?;
     let mut overrides = Vec::new();
@@ -524,6 +526,12 @@ fn recompute_selection_health(state: &CoreState) -> Result<SelectionOutOfDateVie
             break;
         }
     }
+    // Board-wide health revision bump (no single channel triggered it). The
+    // payload carries only the revision — subscribers refetch details.
+    crate::worker::emit(
+        &state.core_events,
+        crate::worker::CoreEvent::HealthChanged { channel_id: None },
+    );
     let _ = CatalogVerification::Exact; // suppress unused import on some cfgs
     Ok(SelectionOutOfDateView {
         selection_out_of_date: out_of_date,

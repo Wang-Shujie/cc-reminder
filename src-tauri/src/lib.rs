@@ -18,7 +18,7 @@ pub mod security;
 pub mod storage;
 pub mod worker;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use chrono::FixedOffset;
 use tauri::Manager;
@@ -360,8 +360,35 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         lease_duration: chrono::Duration::seconds(30),
         tick_interval: std::time::Duration::from_secs(2),
     };
-    let worker_events: Arc<Mutex<Vec<worker::CoreEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    // Shared bounded channel for revision-only core:// events. Producers: the
+    // delivery worker (below) and command bodies via CoreState.core_events;
+    // the single consumer is the forwarder task spawned right after.
+    let (core_event_sink, mut core_event_receiver) =
+        tokio::sync::mpsc::channel::<worker::CoreEvent>(64);
+    let worker_events = core_event_sink.clone();
     let worker = DeliveryWorker::new(worker_config, worker_events);
+
+    // 7b. `core://` forwarder: the single consumer of the bounded event
+    //     channel shared by the delivery worker and the command surface.
+    //     Each CoreEvent becomes a revision-only payload on its topic
+    //     (`worker::CoreEvent::core_topic`), matching what
+    //     `src/lib/backend.tsx` subscribe listeners expect — they refetch on
+    //     any revision bump and never trust payload details. The channel is
+    //     bounded (64): when the WebView is slow the producer drops the
+    //     NEWEST notification (see `worker::emit`) because revisions
+    //     self-heal on the next tick/refetch. The task ends when every sender
+    //     drops (worker cancelled + app state gone).
+    let forwarder_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        use tauri::Emitter;
+        let mut revisions: std::collections::HashMap<&'static str, u64> =
+            std::collections::HashMap::new();
+        while let Some(event) = core_event_receiver.recv().await {
+            let topic = event.core_topic();
+            let revision = revisions.entry(topic).and_modify(|r| *r += 1).or_insert(1);
+            let _ = forwarder_app.emit(topic, serde_json::json!({ "revision": revision }));
+        }
+    });
     let worker_cancel = cancel.clone();
     // Keep the join handle: RunEvent::Exit waits (≤10s) on it so an in-flight
     // send pass finishes instead of being killed mid-write.
@@ -404,6 +431,11 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     {
         let mut guard = state.worker_task.lock().unwrap();
         *guard = Some(worker_task);
+    }
+    {
+        // Commands push revision notifications onto the same channel the
+        // worker uses; the forwarder task above is their only consumer.
+        state.core_events = core_event_sink;
     }
     {
         // Autostart is applied only from save_settings (plan Task 15); the
