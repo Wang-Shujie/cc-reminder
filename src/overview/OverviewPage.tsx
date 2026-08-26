@@ -163,14 +163,6 @@ export function OverviewPage({
         <li className="metric-plate">
           <span className="metric-number">{snapshot.failed_jobs}</span>
           <span className="metric-label">{t.metricLabelFailed}</span>
-          <button
-            type="button"
-            className="cc-focusable link-arrow"
-            onClick={() => onOpenHistory?.("failed")}
-          >
-            {t.viewFailedJobs}
-            <ArrowRight size={14} aria-hidden="true" />
-          </button>
         </li>
         <li className="metric-plate">
           <span className="metric-number">{snapshot.expired_jobs}</span>

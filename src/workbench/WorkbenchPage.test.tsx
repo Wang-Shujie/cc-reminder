@@ -48,7 +48,7 @@ test("overview and the bottom log pane render as one page", async () => {
   expect(screen.getByRole("heading", { name: "通知历史" })).toBeVisible();
 });
 
-test("查看失败任务 refilters the log pane and keeps both sections present", async () => {
+test("失败 preset refilters the log pane and keeps both sections present", async () => {
   const user = userEvent.setup();
   renderWorkbench(
     configuredBackend({
@@ -63,8 +63,8 @@ test("查看失败任务 refilters the log pane and keeps both sections present"
       ],
     }),
   );
-  await user.click(await screen.findByRole("button", { name: "查看失败任务" }));
-  // 底部记录区按 failed 过滤:只剩失败行。
+  // 预设筛选(用户裁决):失败预设承担原"查看失败任务"的职能。
+  await user.click(await screen.findByRole("button", { name: "失败" }));
   const failedRows = await screen.findAllByText("PostToolUseFailure");
   expect(failedRows.length).toBeGreaterThan(0);
   expect(screen.queryByText("StopSuccess")).not.toBeInTheDocument();

@@ -59,7 +59,6 @@ test("overview presents the same health issues and queue counts as shared health
   expect(await screen.findByText("失败任务")).toBeVisible();
   expect(within(plate("失败任务")).getByText("2")).toBeVisible();
   expect(within(plate("待发送")).getByText("4")).toBeVisible();
-  expect(screen.getByRole("button", { name: "查看失败任务" })).toBeEnabled();
 });
 
 test("missing agent, drift and trust-pending issues navigate to Integrations", async () => {
@@ -210,16 +209,6 @@ test("a failed failures-query shows an error line, not 没有失败任务", asyn
   render(<OverviewPage backend={backend} />);
   expect(await screen.findByText("失败任务列表加载失败。")).toBeVisible();
   expect(screen.queryByText("最近没有失败任务。")).not.toBeInTheDocument();
-});
-
-test("查看失败任务 opens the notification log pre-filtered to failed jobs", async () => {
-  const onOpenHistory = vi.fn();
-  const user = userEvent.setup();
-  render(
-    <OverviewPage backend={configuredBackend()} onOpenHistory={onOpenHistory} />,
-  );
-  await user.click(await screen.findByRole("button", { name: "查看失败任务" }));
-  expect(onOpenHistory).toHaveBeenCalledWith("failed");
 });
 
 test("a failing health snapshot surfaces an alert instead of an empty board", async () => {

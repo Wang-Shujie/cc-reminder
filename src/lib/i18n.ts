@@ -241,7 +241,6 @@ export interface Dictionary {
   metricLabelFailed: string;
   metricLabelExpired: string;
   lastSuccessLabel: string;
-  viewFailedJobs: string;
   overviewIssues: string;
   recentFailuresTitle: string;
   recentFailuresLoadFailed: string;
@@ -566,7 +565,6 @@ const zhCn: Dictionary = {
   metricLabelFailed: "失败任务",
   metricLabelExpired: "已过期",
   lastSuccessLabel: "上次成功：{time}",
-  viewFailedJobs: "查看失败任务",
   overviewIssues: "待处理问题",
   recentFailuresTitle: "最近失败",
   recentFailuresLoadFailed: "失败任务列表加载失败。",
@@ -900,7 +898,6 @@ const en: Dictionary = {
   metricLabelFailed: "Failed",
   metricLabelExpired: "Expired",
   lastSuccessLabel: "Last success: {time}",
-  viewFailedJobs: "View failed jobs",
   overviewIssues: "Open issues",
   recentFailuresTitle: "Recent failures",
   recentFailuresLoadFailed: "Failed to load recent failures.",
