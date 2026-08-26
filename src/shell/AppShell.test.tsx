@@ -18,10 +18,12 @@ test("navigation is keyboard accessible and remembers the selected page", async 
   const user = userEvent.setup();
   const backend = configuredBackend();
   await renderShell(backend);
-  await user.click(screen.getByRole("button", { name: "渠道" }));
-  expect(screen.getByRole("heading", { name: "渠道" })).toBeVisible();
-  expect(localStorage.getItem("cc-reminder:last-page")).toBe("channels");
-  expect(screen.getByRole("button", { name: "渠道" })).toHaveAttribute(
+  await user.click(screen.getByRole("button", { name: "通知规则" }));
+  expect(
+    screen.getByRole("heading", { name: "通知规则", level: 1 }),
+  ).toBeVisible();
+  expect(localStorage.getItem("cc-reminder:last-page")).toBe("rules");
+  expect(screen.getByRole("button", { name: "通知规则" })).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -30,47 +32,80 @@ test("navigation is keyboard accessible and remembers the selected page", async 
 test("selected page survives a remount via localStorage", async () => {
   const user = userEvent.setup();
   const { unmount } = render(<TestApp backend={configuredBackend()} />);
-  await screen.findByRole("heading", { name: "Hook 规则" });
-  await user.click(screen.getByRole("button", { name: "通知历史" }));
-  expect(screen.getByRole("heading", { name: "通知历史" })).toBeVisible();
+  await screen.findByRole("heading", { name: "工作台" });
+  await user.click(screen.getByRole("button", { name: "设置" }));
+  expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeVisible();
   unmount();
   render(<TestApp backend={configuredBackend()} />);
-  expect(await screen.findByRole("heading", { name: "通知历史" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "设置" })).toBeVisible();
 });
 
+test("legacy v1 page ids migrate to the new destinations", async () => {
+  for (const [legacy, heading] of [
+    ["overview", "工作台"],
+    ["history", "工作台"],
+    ["hooks", "通知规则"],
+    ["projects", "通知规则"],
+    ["agents", "集成"],
+    ["channels", "集成"],
+    ["settings", "设置"],
+  ] as const) {
+    localStorage.setItem("cc-reminder:last-page", legacy);
+    const { unmount } = render(<TestApp backend={configuredBackend()} />);
+    expect(
+      await screen.findByRole("heading", { name: heading, level: 1 }),
+    ).toBeVisible();
+    unmount();
+  }
+});
+
+test("unknown legacy value falls back to the workbench", async () => {
+  localStorage.setItem("cc-reminder:last-page", "nonsense");
+  render(<TestApp backend={configuredBackend()} />);
+  expect(
+    await screen.findByRole("heading", { name: "工作台", level: 1 }),
+  ).toBeVisible();
+});
+
+// The workbench's overview panel also fetches health on mount and on these
+// events, so exact call counts are owned by the page — assert relative growth.
 test("core revision events refresh health instead of trusting payload data", async () => {
   const backend = configuredBackend();
+  const calls = () => vi.mocked(backend.getHealthSnapshot).mock.calls.length;
   render(<TestApp backend={backend} />);
-  await screen.findByRole("heading", { name: "Hook 规则" });
-  expect(backend.getHealthSnapshot).toHaveBeenCalledTimes(1);
+  await screen.findByRole("heading", { name: "工作台" });
+  await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(2));
+  const before = calls();
   act(() => {
     backend.emit("core://health-changed", { revision: 4, overall: "forged" });
   });
-  await waitFor(() => expect(backend.getHealthSnapshot).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(calls()).toBeGreaterThan(before));
   expect(screen.queryByText("forged")).not.toBeInTheDocument();
 });
 
 test("queue revision events also trigger a refetch", async () => {
   const backend = configuredBackend();
+  const calls = () => vi.mocked(backend.getHealthSnapshot).mock.calls.length;
   render(<TestApp backend={backend} />);
-  await screen.findByRole("heading", { name: "Hook 规则" });
+  await screen.findByRole("heading", { name: "工作台" });
+  await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(2));
+  const before = calls();
   act(() => {
     backend.emit("core://queue-changed", { revision: 7 });
   });
-  await waitFor(() => expect(backend.getHealthSnapshot).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(calls()).toBeGreaterThan(before));
 });
 
 test("labels default to Chinese", async () => {
   await renderShell(configuredBackend());
-  expect(screen.getByRole("button", { name: "概览" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "工作台" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Workbench" })).not.toBeInTheDocument();
 });
 
 test("locale can follow the saved setting (English)", async () => {
   await renderShell(configuredBackend({ locale: "en" }));
-  expect(screen.getByRole("button", { name: "Overview" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Hook Rules" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "渠道" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Workbench" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "工作台" })).not.toBeInTheDocument();
 });
 
 test("theme follows the saved setting; system resolves to the system attribute", async () => {
@@ -87,31 +122,23 @@ test("focus is visible on navigation controls", async () => {
   const user = userEvent.setup();
   await renderShell(configuredBackend());
   await user.tab();
-  expect(screen.getByRole("button", { name: "概览" })).toHaveFocus();
-  expect(screen.getByRole("button", { name: "概览" })).toHaveClass("cc-focusable");
+  expect(screen.getByRole("button", { name: "工作台" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "工作台" })).toHaveClass("cc-focusable");
   // The stylesheet must define the visible focus treatment.
   expect(appCss).toContain(":focus-visible");
   expect(appCss).toContain("outline");
 });
 
-test("all seven navigation targets are present", async () => {
+test("all four navigation targets are present", async () => {
   await renderShell(configuredBackend());
-  for (const label of [
-    "概览",
-    "Agent 集成",
-    "Hook 规则",
-    "渠道",
-    "项目",
-    "通知历史",
-    "设置",
-  ]) {
+  for (const label of ["工作台", "通知规则", "集成", "设置"]) {
     expect(screen.getByRole("button", { name: label })).toBeVisible();
   }
 });
 
-test("configured startup defaults to the Hook Rules page", async () => {
+test("configured startup defaults to the workbench", async () => {
   await renderShell(configuredBackend());
-  expect(screen.getByRole("button", { name: "Hook 规则" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "工作台" })).toHaveAttribute(
     "aria-current",
     "page",
   );

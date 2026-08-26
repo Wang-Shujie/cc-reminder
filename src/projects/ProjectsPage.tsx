@@ -173,7 +173,7 @@ export function ProjectsPage({
 
   return (
     <section aria-label={t.navProjects}>
-      <h1>{t.navProjects}</h1>
+      <h2>{t.navProjects}</h2>
 
       <div className="rules-toolbar">
         <div className="rules-toolbar-controls">

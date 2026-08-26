@@ -215,7 +215,7 @@ export function HookRulesPage({
 
   return (
     <section aria-label={t.navHooks}>
-      <h1>{t.navHooks}</h1>
+      <h2>{t.navHooks}</h2>
 
       {actionError !== null && <p role="alert">{actionError}</p>}
 

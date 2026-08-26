@@ -9,9 +9,10 @@ test("renders the onboarding first screen when bootstrap is incomplete", async (
 });
 
 test("renders the app shell at the saved page when bootstrap is complete", async () => {
+  // v1 的 "channels" 读时迁移到 v2 的 "integrations"。
   localStorage.setItem("cc-reminder:last-page", "channels");
   render(<TestApp backend={configuredBackend()} />);
-  expect(await screen.findByRole("heading", { name: "渠道" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "集成" })).toBeVisible();
   localStorage.removeItem("cc-reminder:last-page");
 });
 

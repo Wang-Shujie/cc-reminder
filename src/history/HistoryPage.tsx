@@ -267,7 +267,7 @@ export function HistoryPage({
 
   return (
     <section aria-label={t.navHistory}>
-      <h1>{t.navHistory}</h1>
+      <h2>{t.navHistory}</h2>
 
       <p role="status" className="sr-only">
         {bgNotice}

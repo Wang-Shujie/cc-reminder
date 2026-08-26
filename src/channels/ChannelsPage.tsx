@@ -171,7 +171,7 @@ export function ChannelsPage({
 
   return (
     <section aria-label={t.navChannels}>
-      <h1>{t.navChannels}</h1>
+      <h2>{t.navChannels}</h2>
 
       <div className="rules-toolbar">
         <div className="rules-toolbar-controls">

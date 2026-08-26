@@ -12,29 +12,29 @@ import type {
   LocaleCode,
 } from "../lib/contracts";
 import { deliveryStatusText, dictionary, type Dictionary } from "../lib/i18n";
-import type { PageId } from "../shell/AppShell";
-
-/** Optional preset applied to the History page after an overview jump. */
-export interface HistorySeed {
-  delivery_status?: DeliveryStatusCode;
-}
 
 const RECENT_FAILURES_LIMIT = 5;
 
-/** Owning management page for an issue code. Codes are prefixed by subsystem;
- *  unknown codes default to Agent integrations where most repairs live. */
-function issuePage(issueCode: string): PageId {
-  if (issueCode.startsWith("channel.") || issueCode.startsWith("credentials.")) {
-    return "channels";
-  }
+/** Where an issue's repair lives after the 4-destination reorg: a owning page
+ *  (rules / integrations) or the workbench's notification log tab. Codes are
+ *  prefixed by subsystem; unknown codes default to integrations where most
+ *  repairs live. */
+type IssueAction =
+  | { kind: "page"; page: "rules" | "integrations" }
+  | { kind: "history" };
+
+function issueAction(issueCode: string): IssueAction {
   if (
     issueCode.startsWith("queue.") ||
     issueCode.startsWith("delivery.") ||
     issueCode.startsWith("spool")
   ) {
-    return "history";
+    return { kind: "history" };
   }
-  return "agents";
+  if (issueCode.startsWith("hooks.") || issueCode.startsWith("projects.")) {
+    return { kind: "page", page: "rules" };
+  }
+  return { kind: "page", page: "integrations" };
 }
 
 function metricText(template: string, n: number): string {
@@ -45,10 +45,12 @@ export function OverviewPage({
   locale = "zh_cn",
   backend: injected,
   onNavigate,
+  onOpenHistory,
 }: {
   locale?: LocaleCode;
   backend?: Backend;
-  onNavigate?: (page: PageId, seed?: HistorySeed) => void;
+  onNavigate?: (page: "rules" | "integrations") => void;
+  onOpenHistory?: (deliveryStatus?: DeliveryStatusCode) => void;
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
@@ -124,14 +126,18 @@ export function OverviewPage({
   if (snapshot === null) {
     return (
       <section aria-label={t.navOverview}>
-        <h1>{t.navOverview}</h1>
+        <h2>{t.navOverview}</h2>
         {loadFailed ? <p role="alert">{t.overviewLoadFailed}</p> : <p className="muted">{t.loading}</p>}
       </section>
     );
   }
 
-  const navLabelFor = (page: PageId): string =>
-    page === "agents" ? t.gotoAgents : page === "channels" ? t.gotoChannels : t.gotoHistory;
+  const actionLabel = (action: IssueAction): string =>
+    action.kind === "history"
+      ? t.gotoHistoryTab
+      : action.page === "rules"
+        ? t.gotoRules
+        : t.gotoIntegrations;
 
   const lastSuccess =
     snapshot.last_success_at === null
@@ -140,7 +146,7 @@ export function OverviewPage({
 
   return (
     <section aria-label={t.navOverview}>
-      <h1>{t.navOverview}</h1>
+      <h2>{t.navOverview}</h2>
 
       {loadFailed && <p role="alert">{t.overviewLoadFailed}</p>}
       <p role="status" className="sr-only">
@@ -160,7 +166,7 @@ export function OverviewPage({
           <button
             type="button"
             className="cc-focusable"
-            onClick={() => onNavigate?.("history", { delivery_status: "failed" })}
+            onClick={() => onOpenHistory?.("failed")}
           >
             {t.viewFailedJobs}
           </button>
@@ -180,7 +186,7 @@ export function OverviewPage({
         ) : (
           <ul className="issue-list">
             {snapshot.issues.map((issue) => {
-              const target = issuePage(issue.issue_code);
+              const action = issueAction(issue.issue_code);
               return (
                 <li key={`${issue.issue_code}:${issue.message}`}>
                   {issue.level !== "ok" && (
@@ -199,9 +205,13 @@ export function OverviewPage({
                   <button
                     type="button"
                     className="cc-focusable"
-                    onClick={() => onNavigate?.(target)}
+                    onClick={() =>
+                      action.kind === "history"
+                        ? onOpenHistory?.()
+                        : onNavigate?.(action.page)
+                    }
                   >
-                    {navLabelFor(target)}
+                    {actionLabel(action)}
                   </button>
                 </li>
               );

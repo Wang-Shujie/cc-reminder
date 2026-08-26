@@ -9,12 +9,24 @@ export interface Dictionary {
   navProjects: string;
   navHistory: string;
   navSettings: string;
+  navWorkbench: string;
+  navRules: string;
+  navIntegrations: string;
   statusTitle: string;
   pendingJobs: string;
   failedJobs: string;
   loading: string;
   pagePlaceholder: string;
   navLabel: string;
+  tabStatusOverview: string;
+  tabNotificationLog: string;
+  tabRuleTable: string;
+  tabProjectManagement: string;
+  tabSources: string;
+  tabDestinations: string;
+  gotoIntegrations: string;
+  gotoRules: string;
+  gotoHistoryTab: string;
   onboardingDetect: string;
   onboardingInstall: string;
   onboardingChannel: string;
@@ -227,9 +239,6 @@ export interface Dictionary {
   recentFailuresTitle: string;
   noRecentFailures: string;
   recentFailuresLoadFailed: string;
-  gotoAgents: string;
-  gotoChannels: string;
-  gotoHistory: string;
   overviewLoadFailed: string;
   refreshedNotice: string;
   // History page (Task 19)
@@ -316,12 +325,24 @@ const zhCn: Dictionary = {
   navProjects: "项目",
   navHistory: "通知历史",
   navSettings: "设置",
+  navWorkbench: "工作台",
+  navRules: "通知规则",
+  navIntegrations: "集成",
   statusTitle: "CC Reminder",
   pendingJobs: "待发送",
   failedJobs: "失败任务",
   loading: "加载中…",
   pagePlaceholder: "此页面将在后续版本中提供。",
   navLabel: "主导航",
+  tabStatusOverview: "状态概览",
+  tabNotificationLog: "通知记录",
+  tabRuleTable: "规则表",
+  tabProjectManagement: "项目管理",
+  tabSources: "通知来源",
+  tabDestinations: "通知去向",
+  gotoIntegrations: "前往集成",
+  gotoRules: "前往规则",
+  gotoHistoryTab: "查看通知记录",
   onboardingDetect: "检测 Agent",
   onboardingInstall: "安装 Hooks",
   onboardingChannel: "添加渠道",
@@ -533,9 +554,6 @@ const zhCn: Dictionary = {
   recentFailuresTitle: "最近失败",
   noRecentFailures: "最近没有失败任务。",
   recentFailuresLoadFailed: "失败任务列表加载失败。",
-  gotoAgents: "前往 Agent 集成",
-  gotoChannels: "前往渠道",
-  gotoHistory: "查看通知历史",
   overviewLoadFailed: "健康状态加载失败，请稍后重试。",
   refreshedNotice: "数据已刷新。",
   // History page (Task 19)
@@ -621,12 +639,24 @@ const en: Dictionary = {
   navProjects: "Projects",
   navHistory: "Notification History",
   navSettings: "Settings",
+  navWorkbench: "Workbench",
+  navRules: "Rules",
+  navIntegrations: "Integrations",
   statusTitle: "CC Reminder",
   pendingJobs: "Pending",
   failedJobs: "Failed jobs",
   loading: "Loading…",
   pagePlaceholder: "This page arrives in a later release.",
   navLabel: "Navigation",
+  tabStatusOverview: "Status",
+  tabNotificationLog: "Notification Log",
+  tabRuleTable: "Rules",
+  tabProjectManagement: "Projects",
+  tabSources: "Sources",
+  tabDestinations: "Destinations",
+  gotoIntegrations: "Go to Integrations",
+  gotoRules: "Go to Rules",
+  gotoHistoryTab: "View notification log",
   onboardingDetect: "Detect Agents",
   onboardingInstall: "Install Hooks",
   onboardingChannel: "Add Channel",
@@ -848,9 +878,6 @@ const en: Dictionary = {
   recentFailuresTitle: "Recent failures",
   noRecentFailures: "No recent failures.",
   recentFailuresLoadFailed: "Failed to load recent failures.",
-  gotoAgents: "Go to Agent integrations",
-  gotoChannels: "Go to channels",
-  gotoHistory: "View notification history",
   overviewLoadFailed: "Failed to load health status. Please retry later.",
   refreshedNotice: "Data refreshed.",
   // History page (Task 19)
