@@ -545,8 +545,8 @@ export function SettingsPage({
         </div>
       )}
 
-      {/* 渠道管理整体自集成页移入(用户裁决)。 */}
-      <ChannelsPage locale={locale} backend={backend} />
+      {/* 渠道添加表单(用户裁决:仅"添加"部分在设置;管理表在集成页)。 */}
+      <ChannelsPage locale={locale} backend={backend} variant="add" />
 
       {installConfirmOpen && (
         <div className="dialog-overlay">

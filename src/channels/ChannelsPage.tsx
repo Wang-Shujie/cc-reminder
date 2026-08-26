@@ -39,9 +39,13 @@ function kindLabel(t: ReturnType<typeof dictionary>, kind: ChannelKindCode): str
 export function ChannelsPage({
   locale = "zh_cn",
   backend: injected,
+  variant = "full",
 }: {
   locale?: LocaleCode;
   backend?: Backend;
+  /** full = 表格+表单(默认);manage = 仅表格与凭据替换(集成页);
+   *  add = 仅添加表单(设置页,用户裁决的拆分)。 */
+  variant?: "full" | "manage" | "add";
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
@@ -169,17 +173,23 @@ export function ChannelsPage({
     }
   }
 
+  const showTable = variant !== "add";
+  const showAddEntry = variant === "full";
+  const showForm = variant === "add" || variant === "full" || editingId !== null;
+
   return (
     <section aria-label={t.navChannels}>
-      <h2>{t.navChannels}</h2>
+      {showTable && <h2>{t.navChannels}</h2>}
 
-      <div className="rules-toolbar">
-        <div className="rules-toolbar-controls">
-          <button type="button" className="cc-focusable" onClick={startAdd}>
-            {t.addChannelAction}
-          </button>
+      {showAddEntry && (
+        <div className="rules-toolbar">
+          <div className="rules-toolbar-controls">
+            <button type="button" className="cc-focusable" onClick={startAdd}>
+              {t.addChannelAction}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {loadFailed && <p role="alert">{t.listLoadFailed}</p>}
 
@@ -190,6 +200,7 @@ export function ChannelsPage({
         </p>
       )}
 
+      {showTable && (
       <table className="rules-table">
         <thead>
           <tr>
@@ -253,11 +264,12 @@ export function ChannelsPage({
           ))}
         </tbody>
       </table>
-      {channels !== null && channels.length === 0 && (
+      )}
+      {showTable && channels !== null && channels.length === 0 && (
         <p className="muted">{t.emptyChannels}</p>
       )}
 
-      {(Object.keys(receipts).length > 0) && (
+      {showTable && (Object.keys(receipts).length > 0) && (
         <section aria-label={t.testResultsTitle}>
           <h2>{t.testResultsTitle}</h2>
           <ul>
@@ -283,6 +295,7 @@ export function ChannelsPage({
       )}
 
       {/* The single channel form: add mode or credential-replace mode. */}
+      {showForm && (
       <form
         className="channel-form"
         aria-label={editing !== null ? t.replaceCredentialAction : t.addChannelAction}
@@ -375,6 +388,7 @@ export function ChannelsPage({
           </button>
         </div>
       </form>
+      )}
 
       {testConfirm !== null && (
         <div className="dialog-overlay">

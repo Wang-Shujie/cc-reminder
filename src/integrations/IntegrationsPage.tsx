@@ -1,12 +1,13 @@
-// 集成:单页(用户裁决合并页签)——通知来源在上,通知去向摘要 + 跳设置
-// 按钮在下。渠道的添加/凭据/删除整体移入设置页,这里只读概览。
-import { useEffect, useState, type ReactNode } from "react";
+// 集成:单页——通知来源在上,通知去向 = 完整渠道管理表(统计与操作,
+// 用户裁决保留图1形态)在下;添加渠道表单在设置页,箭头链接跳转。
+import { type ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 
-import { usePageBackend, type Backend } from "../lib/backend";
-import type { ChannelKindCode, ChannelSummary, LocaleCode } from "../lib/contracts";
+import type { Backend } from "../lib/backend";
+import type { LocaleCode } from "../lib/contracts";
 import { dictionary } from "../lib/i18n";
 import { AgentsPage } from "../agents/AgentsPage";
+import { ChannelsPage } from "../channels/ChannelsPage";
 import type { PageId } from "../shell/AppShell";
 
 export function IntegrationsPage({
@@ -18,31 +19,7 @@ export function IntegrationsPage({
   backend?: Backend;
   onNavigate?: (page: PageId) => void;
 }): ReactNode {
-  const backend = usePageBackend(injected);
   const t = dictionary(locale);
-  const [channels, setChannels] = useState<ChannelSummary[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    backend
-      .listChannels()
-      .then((list) => {
-        if (!cancelled) {
-          setChannels(list);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setChannels([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [backend]);
-
-  const kindLabel = (kind: ChannelKindCode): string =>
-    kind === "ding_talk" ? t.kindDingTalk : t.kindWeCom;
 
   return (
     <section aria-label={t.navIntegrations}>
@@ -50,24 +27,13 @@ export function IntegrationsPage({
       <AgentsPage locale={locale} backend={injected} />
 
       <h2 className="integrations-gap">{t.tabDestinations}</h2>
-      {channels === null ? null : channels.length === 0 ? (
-        <p className="muted">{t.noChannelsHint}</p>
-      ) : (
-        <ul className="channel-summary">
-          {channels.map((channel) => (
-            <li key={channel.id}>
-              <span className="channel-name">{channel.name}</span>
-              <span className="muted">{kindLabel(channel.kind)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ChannelsPage locale={locale} backend={injected} variant="manage" />
       <button
         type="button"
         className="cc-focusable link-arrow"
         onClick={() => onNavigate?.("settings")}
       >
-        {t.manageChannels}
+        {t.addChannelAction}
         <ArrowRight size={14} aria-hidden="true" />
       </button>
     </section>

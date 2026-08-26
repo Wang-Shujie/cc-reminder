@@ -156,8 +156,8 @@ test.describe("workflow coverage", () => {
     await expect(drawer.getByText("预览：Stop")).toBeVisible();
 
     // Raw credential material must never reach ANY rendered output.
-    // Channels live in Settings since the v2.1 revision.
-    await openPage(page, "设置");
+    // The channel table lives in Integrations (settings keeps the add form).
+    await openPage(page, "集成");
     await page.getByRole("cell", { name: "值班群", exact: true }).waitFor();
     await expect(page.locator("body")).not.toContainText("secret-raw-value");
   });
