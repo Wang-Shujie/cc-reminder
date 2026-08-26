@@ -159,6 +159,38 @@ export function Onboarding({
     }
   }
 
+  /** v2-issues: 默认步骤把已保存渠道写入所有"启用且无目标"的默认规则,
+   *  否则引导完成后事件被捕获但无处投递(收不到通知)。 */
+  async function applyDefaults(): Promise<void> {
+    if (channels.length > 0) {
+      setError(null);
+      try {
+        for (const agent of ["claude-code", "codex"] as const) {
+          const rows = await backend.listHookRules({ agent, project_id: null });
+          for (const row of rows) {
+            if (row.enabled && row.config.targets.length === 0) {
+              await backend.saveGlobalRule({
+                agent,
+                source_event: row.source_event,
+                config: {
+                  ...row.config,
+                  targets: channels.map((channel) => ({
+                    channel_id: channel.id,
+                    template: null,
+                  })),
+                },
+              });
+            }
+          }
+        }
+      } catch (e: unknown) {
+        setError(errorOf(e));
+        return;
+      }
+    }
+    setStep("test");
+  }
+
   async function sendTest(): Promise<void> {
     if (selectedChannel === "") {
       return;
@@ -370,7 +402,7 @@ export function Onboarding({
             >
               {t.onboardingBack}
             </button>
-            <button type="button" className="primary cc-focusable" onClick={() => setStep("test")}>
+            <button type="button" className="primary cc-focusable" onClick={() => { void applyDefaults(); }}>
               {t.useDefaults}
             </button>
           </div>
