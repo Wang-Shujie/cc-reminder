@@ -9,12 +9,24 @@ export interface Dictionary {
   navProjects: string;
   navHistory: string;
   navSettings: string;
+  navWorkbench: string;
+  navRules: string;
+  navIntegrations: string;
   statusTitle: string;
   pendingJobs: string;
   failedJobs: string;
   loading: string;
   pagePlaceholder: string;
   navLabel: string;
+  tabStatusOverview: string;
+  tabNotificationLog: string;
+  tabRuleTable: string;
+  tabProjectManagement: string;
+  tabSources: string;
+  tabDestinations: string;
+  gotoIntegrations: string;
+  gotoRules: string;
+  gotoHistoryTab: string;
   onboardingDetect: string;
   onboardingInstall: string;
   onboardingChannel: string;
@@ -316,12 +328,24 @@ const zhCn: Dictionary = {
   navProjects: "项目",
   navHistory: "通知历史",
   navSettings: "设置",
+  navWorkbench: "工作台",
+  navRules: "通知规则",
+  navIntegrations: "集成",
   statusTitle: "CC Reminder",
   pendingJobs: "待发送",
   failedJobs: "失败任务",
   loading: "加载中…",
   pagePlaceholder: "此页面将在后续版本中提供。",
   navLabel: "主导航",
+  tabStatusOverview: "状态概览",
+  tabNotificationLog: "通知记录",
+  tabRuleTable: "规则表",
+  tabProjectManagement: "项目管理",
+  tabSources: "通知来源",
+  tabDestinations: "通知去向",
+  gotoIntegrations: "前往集成",
+  gotoRules: "前往规则",
+  gotoHistoryTab: "查看通知记录",
   onboardingDetect: "检测 Agent",
   onboardingInstall: "安装 Hooks",
   onboardingChannel: "添加渠道",
@@ -621,12 +645,24 @@ const en: Dictionary = {
   navProjects: "Projects",
   navHistory: "Notification History",
   navSettings: "Settings",
+  navWorkbench: "Workbench",
+  navRules: "Rules",
+  navIntegrations: "Integrations",
   statusTitle: "CC Reminder",
   pendingJobs: "Pending",
   failedJobs: "Failed jobs",
   loading: "Loading…",
   pagePlaceholder: "This page arrives in a later release.",
   navLabel: "Navigation",
+  tabStatusOverview: "Status",
+  tabNotificationLog: "Notification Log",
+  tabRuleTable: "Rules",
+  tabProjectManagement: "Projects",
+  tabSources: "Sources",
+  tabDestinations: "Destinations",
+  gotoIntegrations: "Go to Integrations",
+  gotoRules: "Go to Rules",
+  gotoHistoryTab: "View notification log",
   onboardingDetect: "Detect Agents",
   onboardingInstall: "Install Hooks",
   onboardingChannel: "Add Channel",
