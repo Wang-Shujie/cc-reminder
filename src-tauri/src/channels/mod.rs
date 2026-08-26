@@ -228,7 +228,10 @@ pub fn render_markdown(document: &crate::model::NotificationDocument) -> String 
     if needs_blank {
         out.push('\n');
     }
-    out.push_str(&escape_markdown(&document.body));
+    // DingTalk/WeCom markdown collapse a single "\n" into a space; body lines
+    // must become paragraph breaks or a multi-line template renders as one
+    // flowing line (field feedback: "raw text" look).
+    out.push_str(&escape_markdown(&document.body).replace('\n', "\n\n"));
 
     if let Some(footer) = &document.footer
         && !footer.is_empty()

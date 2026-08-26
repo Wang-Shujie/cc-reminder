@@ -246,7 +246,10 @@ impl DingTalkSender {
     fn prefixed_markdown(&self, document: &NotificationDocument) -> Value {
         let mut md = render_markdown(document);
         if let Some(prefix) = &self.keyword_prefix {
-            md = format!("{prefix} {md}");
+            // The keyword must appear in the text, but gluing it onto the
+            // first line breaks a leading "# heading"; keep it as its own
+            // paragraph so both the keyword check and the heading survive.
+            md = format!("{prefix}\n\n{md}");
         }
         let text = truncate_chars(&md, DINGTALK_CONTENT_CHAR_LIMIT);
         json!({

@@ -466,6 +466,35 @@ async fn dingtalk_sends_markdown_with_keyword_prefix_and_no_at_all() {
 }
 
 #[tokio::test]
+async fn markdown_body_lines_survive_and_prefix_keeps_heading_intact() {
+    // Field feedback 2026-08-26: single "\n" inside the body collapsed into
+    // one flowing line in DingTalk (the "raw text" look), and gluing the
+    // keyword onto the first line broke a leading "# heading".
+    let server = MockPlatform::new(vec![NextResponse::Static(CannedResponse::json(
+        200,
+        &json!({"errcode":0,"errmsg":"ok"}),
+    ))]);
+    let sender =
+        DingTalkSender::for_contract_test(server.endpoint(), Some("CCReminder".to_owned()), None);
+    let mut doc = document("[claude-code] 代理停止\n项目：cc-reminder\n状态：stop");
+    doc.title = "代理停止".to_owned();
+    sender.send(&doc).await.unwrap();
+
+    let content = server.first_body()["markdown"]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        content.starts_with("CCReminder\n\n# 代理停止"),
+        "prefix must be its own paragraph and keep the heading: {content}"
+    );
+    assert!(
+        content.contains("\\[claude-code\\] 代理停止\n\n项目：cc-reminder\n\n状态：stop"),
+        "body lines must render as paragraph breaks (brackets escaped), got: {content}"
+    );
+}
+
+#[tokio::test]
 async fn dingtalk_signs_when_signing_secret_present() {
     let server = MockPlatform::new(vec![NextResponse::Static(CannedResponse::json(
         200,
