@@ -159,9 +159,12 @@ export class TauriBackend implements Backend {
     return invoke("remove_project_alias", { input });
   }
   listHistory(input?: ListHistoryInput): Promise<HistoryPage> {
+    // Pagination travels in the separate `page` argument; HistoryFilterInput
+    // is deny_unknown_fields and must not receive offset/limit.
+    const { offset, limit, ...filter } = input ?? {};
     return invoke("list_history", {
-      filter: input ?? {},
-      page: { offset: input?.offset ?? 0, limit: input?.limit ?? 50 },
+      filter,
+      page: { offset: offset ?? 0, limit: limit ?? 50 },
     });
   }
   getHistoryDetail(input: GetHistoryDetailInput): Promise<HistoryPage> {
