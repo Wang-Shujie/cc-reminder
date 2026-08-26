@@ -63,7 +63,7 @@ test("查看失败任务 switches to the log tab pre-filtered to failed", async 
         item({
           event_id: "evt-2",
           source_event: "StopSuccess",
-          delivery_status: "delivered",
+          delivery_status: "succeeded",
           delivery_job_id: "job-2",
         }),
       ],

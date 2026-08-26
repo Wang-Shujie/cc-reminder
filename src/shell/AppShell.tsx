@@ -1,10 +1,8 @@
 // Quiet desktop shell: 184px rail + 48px header + unframed content, one grid.
-// Health colors are the only accents; everything else is neutral.
+// Four destinations (spec §1); in-page sub-navigation lives in each page's
+// TabBar. Health colors are the only accents; everything else is neutral.
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Bot,
-  FolderGit2,
-  History,
   LayoutDashboard,
   ListChecks,
   Settings as SettingsIcon,
@@ -12,13 +10,10 @@ import {
 } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
-import { AgentsPage } from "../agents/AgentsPage";
-import { ChannelsPage } from "../channels/ChannelsPage";
-import { HistoryPage } from "../history/HistoryPage";
-import { HookRulesPage } from "../hooks/HookRulesPage";
-import { OverviewPage } from "../overview/OverviewPage";
-import { ProjectsPage } from "../projects/ProjectsPage";
+import { IntegrationsPage } from "../integrations/IntegrationsPage";
+import { RulesPage } from "../rules/RulesPage";
 import { SettingsPage } from "../settings/SettingsPage";
+import { WorkbenchPage } from "../workbench/WorkbenchPage";
 import {
   CORE_EVENTS,
   type HealthSnapshot,
@@ -27,34 +22,38 @@ import {
 } from "../lib/contracts";
 import { dictionary, type Dictionary } from "../lib/i18n";
 
-export type PageId =
-  | "overview"
-  | "agents"
-  | "hooks"
-  | "channels"
-  | "projects"
-  | "history"
-  | "settings";
+export type PageId = "workbench" | "rules" | "integrations" | "settings";
 
 const PAGES: readonly {
   id: PageId;
-  icon: typeof Bot;
+  icon: typeof Webhook;
   label: (d: Dictionary) => string;
 }[] = [
-  { id: "overview", icon: LayoutDashboard, label: (d) => d.navOverview },
-  { id: "agents", icon: Bot, label: (d) => d.navAgents },
-  { id: "hooks", icon: ListChecks, label: (d) => d.navHooks },
-  { id: "channels", icon: Webhook, label: (d) => d.navChannels },
-  { id: "projects", icon: FolderGit2, label: (d) => d.navProjects },
-  { id: "history", icon: History, label: (d) => d.navHistory },
+  { id: "workbench", icon: LayoutDashboard, label: (d) => d.navWorkbench },
+  { id: "rules", icon: ListChecks, label: (d) => d.navRules },
+  { id: "integrations", icon: Webhook, label: (d) => d.navIntegrations },
   { id: "settings", icon: SettingsIcon, label: (d) => d.navSettings },
 ];
+
+/** v1 页 ID → v2 目的地(读时映射,写时永远写新 ID)。 */
+const LEGACY_PAGE_MAP: Record<string, PageId> = {
+  overview: "workbench",
+  history: "workbench",
+  hooks: "rules",
+  projects: "rules",
+  agents: "integrations",
+  channels: "integrations",
+  settings: "settings",
+};
 
 const LAST_PAGE_KEY = "cc-reminder:last-page";
 
 function savedPage(): PageId {
   const value = localStorage.getItem(LAST_PAGE_KEY);
-  return PAGES.some((page) => page.id === value) ? (value as PageId) : "hooks";
+  if (value !== null && value in LEGACY_PAGE_MAP) {
+    return LEGACY_PAGE_MAP[value]!;
+  }
+  return PAGES.some((page) => page.id === value) ? (value as PageId) : "workbench";
 }
 
 export function AppShell({
@@ -135,24 +134,12 @@ export function AppShell({
         ))}
       </nav>
       <main className="shell-content">
-        {page === "overview" ? (
-          <OverviewPage
-            locale={locale}
-            // Interim shim until the 4-destination rewrite (Task 6): map the
-            // new jump targets onto the v1 pages they will become.
-            onNavigate={(page) => openPage(page === "rules" ? "hooks" : "agents")}
-            onOpenHistory={() => openPage("history")}
-          />
-        ) : page === "agents" ? (
-          <AgentsPage locale={locale} />
-        ) : page === "hooks" ? (
-          <HookRulesPage locale={locale} />
-        ) : page === "channels" ? (
-          <ChannelsPage locale={locale} />
-        ) : page === "projects" ? (
-          <ProjectsPage locale={locale} />
-        ) : page === "history" ? (
-          <HistoryPage locale={locale} />
+        {page === "workbench" ? (
+          <WorkbenchPage locale={locale} onNavigate={openPage} />
+        ) : page === "rules" ? (
+          <RulesPage locale={locale} />
+        ) : page === "integrations" ? (
+          <IntegrationsPage locale={locale} />
         ) : (
           <SettingsPage locale={locale} />
         )}

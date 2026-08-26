@@ -65,8 +65,8 @@ test("completion is persisted only after a successful test send", async () => {
       expect.objectContaining({ onboarding_completed: true }),
     ),
   );
-  // Completion swaps the onboarding for the shell at Hook Rules.
-  expect(await screen.findByRole("heading", { name: "Hook 规则" })).toBeVisible();
+  // Completion swaps the onboarding for the shell at its default workbench.
+  expect(await screen.findByRole("heading", { name: "工作台" })).toBeVisible();
 });
 
 test("onboarding resumes at the first incomplete step", async () => {
