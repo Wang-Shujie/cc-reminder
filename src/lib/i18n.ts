@@ -19,7 +19,6 @@ export interface Dictionary {
   pendingJobs: string;
   failedJobs: string;
   loading: string;
-  pagePlaceholder: string;
   navLabel: string;
   tabSources: string;
   tabDestinations: string;
@@ -340,7 +339,6 @@ const zhCn: Dictionary = {
   pendingJobs: "待发送",
   failedJobs: "失败任务",
   loading: "加载中…",
-  pagePlaceholder: "此页面将在后续版本中提供。",
   navLabel: "主导航",
   tabSources: "通知来源",
   tabDestinations: "通知去向",
@@ -659,7 +657,6 @@ const en: Dictionary = {
   pendingJobs: "Pending",
   failedJobs: "Failed jobs",
   loading: "Loading…",
-  pagePlaceholder: "This page arrives in a later release.",
   navLabel: "Navigation",
   tabSources: "Sources",
   tabDestinations: "Destinations",
