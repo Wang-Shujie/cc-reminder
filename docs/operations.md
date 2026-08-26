@@ -75,7 +75,7 @@ Secret Service 时，应用会拒绝保存凭据，并在 **设置 → 凭据存
 - 配置文件：`$CODEX_HOME/hooks.json`，未设置 `CODEX_HOME` 时为 `~/.codex/hooks.json`。
 - 应用**绝不**使用 `--dangerously-bypass-hook-trust` 或任何绕过参数；信任只能由你在 Codex 官方界面完成：
   1. 在 **Agent 集成** 页点击 **安装 Codex Hook**，状态列变为 **待确认**；
-  2. 打开 Codex 官方界面运行 `/hooks`（页面提供 **复制命令** 按钮）；
+  2. 在终端以**交互模式**启动 Codex（直接运行 `codex`；`codex exec` 非交互模式没有斜杠命令，且存在信任后仍不派发钩子的[已知上游问题](https://github.com/openai/codex/issues/26452)），输入 `/hooks`（注意带 s），审查并信任 CC Reminder 的条目（页面提供 **复制命令** 按钮）；未信任的钩子 Codex 一律不执行；
   3. 回到 CC Reminder 点击 **重新检测**。当应用观察到一次携带预期命令指纹的真实 Hook 调用后，状态转为健康（`observed_working`）。
 - 重新信任（retrust）：任何序列化 Hook 定义字段（command、matcher、timeout、commandWindows）发生变化——包括 Helper 升级导致命令变化——都会使受影响条目回到 **待确认**，需重复上面的官方 `/hooks` 确认流程。仅替换 Helper 二进制而规范命令路径不变时，两个指纹保持不变，信任得以保留。
 - 未被应用认可的 Helper（指纹不匹配）调用会被 IPC 直接拒绝（返回 `unrecognized`，Hook 进程仍以中性退出码结束，不影响 Agent 流程）。

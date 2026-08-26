@@ -331,7 +331,7 @@ const zhCn: Dictionary = {
   installHook: "安装 Hook",
   detectedAgents: "检测结果",
   detectFailed: "检测结果获取失败，请重试。",
-  trustPending: "Codex 需要确认 Hook：请运行官方命令后重新检测。",
+  trustPending: "Codex 需要信任 Hook：在终端启动 codex（交互模式，直接运行 codex 而非 codex exec），输入 /hooks（带 s），审查并信任 CC Reminder 的两条钩子后回到这里重新检测。注意：codex exec 非交互模式存在不派发钩子的已知上游问题，请用交互会话验证。",
   trustCommand: "/hooks",
   recheck: "重新检测",
   copyCommand: "复制命令",
@@ -635,7 +635,7 @@ const en: Dictionary = {
   detectedAgents: "Detection results",
   detectFailed: "Detection failed. Please retry.",
   trustPending:
-    "Codex needs hook confirmation: run the official command, then re-check.",
+    "Codex needs hook trust: launch codex in interactive mode (run `codex`, not `codex exec`), type /hooks (with s), review and trust the two CC Reminder hooks, then re-check here. Note: `codex exec` has a known upstream issue where trusted hooks may still not dispatch — verify with an interactive session.",
   trustCommand: "/hooks",
   recheck: "Recheck",
   copyCommand: "Copy command",
