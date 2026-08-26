@@ -4,6 +4,7 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。以下条目在最�
 
 ## 功能补全（v1.1 首批）
 
+- **无 cwd 事件的项目匹配（2026-08-26 实机确认）**：上游 Claude Code 的 `Notification` / `StopFailure` 钩子载荷实测不含 `cwd` 字段（目录虽声明），此类事件 project 匹配必然为空，消息中「项目：」行为空。改进方向：process_live 在 project 为 None 且 session_ref 存在时，用 session_ref（HMAC 引用，天然可关联）回查同会话最近一条已匹配事件并继承其 project_id/display_name——会话在 Claude Code 中绑定于单一工作目录，继承语义正确。
 - **引导流程不绑定规则目标**（2026-08-26 实机反馈）：onboarding 的「选择默认规则」步骤只落库默认启用事件（targets 为空数组），从不在 UI 上把已配置的渠道绑定为这些规则的目标——用户完成引导后真实事件被捕获但无处投递，表现为「收不到通知」。应在默认步骤将已保存渠道写入已启用规则的 targets（或显式引导到 Hook 规则页完成绑定）。
 - **原生托盘菜单与图标**（设计 §18.3）：打开 / 健康状态 / 暂停×3 / 恢复 / 退出。人类裁决：接受为已记录的 v1 偏差，托盘是 v1.1 第一优先级。
 - **`core://history-changed` 生产者**：订阅端（HistoryPage 后台刷新提示）存在但 Rust 侧从不发射该事件。forwarder 机制已就绪，增加第三个变体只需数行（建议在 ingress 提交或 clear_history 处发射），并补充 e2e 覆盖（当前推送事件在两层均零覆盖）。
