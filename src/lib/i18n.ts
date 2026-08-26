@@ -244,9 +244,7 @@ export interface Dictionary {
   lastSuccessLabel: string;
   viewFailedJobs: string;
   overviewIssues: string;
-  noIssues: string;
   recentFailuresTitle: string;
-  noRecentFailures: string;
   recentFailuresLoadFailed: string;
   overviewLoadFailed: string;
   refreshedNotice: string;
@@ -568,9 +566,7 @@ const zhCn: Dictionary = {
   lastSuccessLabel: "上次成功：{time}",
   viewFailedJobs: "查看失败任务",
   overviewIssues: "待处理问题",
-  noIssues: "当前没有待处理的问题。",
   recentFailuresTitle: "最近失败",
-  noRecentFailures: "最近没有失败任务。",
   recentFailuresLoadFailed: "失败任务列表加载失败。",
   overviewLoadFailed: "健康状态加载失败，请稍后重试。",
   refreshedNotice: "数据已刷新。",
@@ -901,9 +897,7 @@ const en: Dictionary = {
   lastSuccessLabel: "Last success: {time}",
   viewFailedJobs: "View failed jobs",
   overviewIssues: "Open issues",
-  noIssues: "No open issues.",
   recentFailuresTitle: "Recent failures",
-  noRecentFailures: "No recent failures.",
   recentFailuresLoadFailed: "Failed to load recent failures.",
   overviewLoadFailed: "Failed to load health status. Please retry later.",
   refreshedNotice: "Data refreshed.",

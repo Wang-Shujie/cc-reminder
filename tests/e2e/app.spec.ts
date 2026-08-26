@@ -26,7 +26,7 @@ const NAV_PAGES = [
 ] as const;
 
 const SETTLE_TARGETS: Record<(typeof NAV_PAGES)[number][1], () => Promise<unknown>> = {
-  workbench: (page) => page.getByRole("heading", { name: "待处理问题" }).waitFor(),
+  workbench: (page) => page.getByRole("heading", { name: "概览" }).waitFor(),
   rules: (page) => page.getByRole("row", { name: /Stop/ }).waitFor(),
   integrations: (page) =>
     page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
@@ -201,7 +201,7 @@ test.describe("workflow coverage", () => {
     await page.keyboard.press("Enter");
 
     // Completion lands in the main shell at its default workbench.
-    await page.getByRole("heading", { name: "待处理问题" }).waitFor();
+    await page.getByRole("heading", { name: "概览" }).waitFor();
     await expect(page.getByRole("button", { name: "通知规则" })).toBeVisible();
   });
 

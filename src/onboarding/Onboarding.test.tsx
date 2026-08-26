@@ -66,7 +66,7 @@ test("completion is persisted only after a successful test send", async () => {
     ),
   );
   // Completion swaps the onboarding for the shell at its default workbench.
-  expect(await screen.findByRole("heading", { name: "待处理问题" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "概览" })).toBeVisible();
 });
 
 test("onboarding resumes at the first incomplete step", async () => {

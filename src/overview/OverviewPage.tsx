@@ -181,11 +181,10 @@ export function OverviewPage({
         </li>
       </ul>
 
-      <section aria-label={t.overviewIssues}>
-        <h2>{t.overviewIssues}</h2>
-        {snapshot.issues.length === 0 ? (
-          <p className="muted">{t.noIssues}</p>
-        ) : (
+      {/* 导视纪律(用户裁决):无待处理问题即无牌面——空态不占位。 */}
+      {snapshot.issues.length > 0 && (
+        <section aria-label={t.overviewIssues}>
+          <h2>{t.overviewIssues}</h2>
           <ul className="issue-list">
             {snapshot.issues.map((issue) => {
               const action = issueAction(issue.issue_code);
@@ -220,38 +219,37 @@ export function OverviewPage({
               );
             })}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
 
-      <section aria-label={t.recentFailuresTitle} className="page-subsection">
-        <h2>{t.recentFailuresTitle}</h2>
-        {recentFailures === null ? (
-          failuresErrored ? (
+      {/* 同上:无失败即无牌面;仅加载失败时保留提示行。 */}
+      {(failuresErrored || (recentFailures?.length ?? 0) > 0) && (
+        <section aria-label={t.recentFailuresTitle} className="page-subsection">
+          <h2>{t.recentFailuresTitle}</h2>
+          {failuresErrored ? (
             <p className="muted">{t.recentFailuresLoadFailed}</p>
-          ) : null
-        ) : recentFailures.length === 0 ? (
-          <p className="muted">{t.noRecentFailures}</p>
-        ) : (
-          <table className="rules-table">
-            <thead>
-              <tr>
-                <th>{t.colTime}</th>
-                <th>{t.colHook}</th>
-                <th>{t.filterResult}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentFailures.map((item) => (
-                <tr key={item.event_id} className="hazard-row">
-                  <td>{new Date(item.occurred_at).toLocaleString()}</td>
-                  <td>{item.source_event}</td>
-                  <td>{deliveryStatusText(t, item.delivery_status)}</td>
+          ) : (
+            <table className="rules-table">
+              <thead>
+                <tr>
+                  <th>{t.colTime}</th>
+                  <th>{t.colHook}</th>
+                  <th>{t.filterResult}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {recentFailures!.map((item) => (
+                  <tr key={item.event_id} className="hazard-row">
+                    <td>{new Date(item.occurred_at).toLocaleString()}</td>
+                    <td>{item.source_event}</td>
+                    <td>{deliveryStatusText(t, item.delivery_status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
     </section>
   );
 }
