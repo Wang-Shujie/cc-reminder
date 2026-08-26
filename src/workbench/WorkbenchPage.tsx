@@ -27,7 +27,8 @@ export function WorkbenchPage({
 
   function openHistory(deliveryStatus?: DeliveryStatusCode): void {
     setHistoryFilter(deliveryStatus ?? null);
-    logPane.current?.scrollIntoView({ block: "end" });
+    // jsdom(单测环境)未实现 scrollIntoView,可选调用守卫。
+    logPane.current?.scrollIntoView?.({ block: "end" });
   }
 
   return (
