@@ -219,6 +219,26 @@ impl HelperInstaller {
         }
     }
 
+    /// Uninstall-only stand-in (v2-issues): satisfies HookEnvironment's type
+    /// when the bundled helper cannot even be loaded (dev placeholder manifest,
+    /// broken bundle). Uninstall never deploys, verifies, or fingerprints
+    /// through the helper — lifecycle removal works from owned-entry
+    /// fingerprints — so an inert placeholder is sound. `stable_path` still
+    /// resolves to the real stable location for the selection type.
+    pub fn undeployed_placeholder(bin_dir: PathBuf) -> Self {
+        Self {
+            bin_dir,
+            entry: HelperManifestEntry {
+                target_triple: String::new(),
+                helper_version: Version::new(0, 0, 0),
+                filename: String::new(),
+                length: 0,
+                sha256: String::new(),
+            },
+            bytes: Vec::new(),
+        }
+    }
+
     pub fn stable_path(&self) -> PathBuf {
         self.bin_dir.join(stable_filename())
     }

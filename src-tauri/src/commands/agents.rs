@@ -209,7 +209,7 @@ pub(crate) fn apply_hook_action_impl(
     // derive the selection from the WIRED installer: the lifecycle requires
     // the selection's helper path/version to equal the stable binary's, so a
     // hand-built path here would drift (e.g. the Windows `.exe` suffix).
-    let env = build_hook_environment(state)?;
+    let env = build_hook_environment(state, action != HookAction::Uninstall)?;
     let selection = crate::agents::HookSelection {
         events: required
             .into_iter()
@@ -259,14 +259,18 @@ fn collect_project_patches(
 
 /// Wire the hook environment for a real mutation. The signed helper is loaded
 /// from the bundled resources (fixed paths under the shell-resolved resource
-/// directory — never caller input) and DEPLOYED to its stable per-user path
-/// first, idempotently (`ensure_installed` skips the copy when identical bytes
-/// are already in place). Without this bridge every Install/Repair would fail
-/// with `update.helper_not_installed` because nothing else ever populates the
-/// stable path. Development builds carry the placeholder manifest and surface
-/// the typed `configuration.helper_unavailable` error here.
+/// directory — never caller input) and, when `deploy_helper`, DEPLOYED to its
+/// stable per-user path first, idempotently (`ensure_installed` skips the copy
+/// when identical bytes are already in place). Without this bridge every
+/// Install/Repair would fail with `update.helper_not_installed` because nothing
+/// else ever populates the stable path. Development builds carry the placeholder
+/// manifest and surface the typed `configuration.helper_unavailable` error here.
+/// Uninstall skips deployment (v2-issues): lifecycle exempts Uninstall from
+/// helper presence, so deploying would only false-error in dev builds and
+/// needlessly write the signed helper in release ones.
 fn build_hook_environment(
     state: &CoreState,
+    deploy_helper: bool,
 ) -> Result<crate::installer::lifecycle::HookEnvironment, AppError> {
     let bin_dir = state
         .integrations
@@ -274,13 +278,20 @@ fn build_hook_environment(
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("bin");
-    let resources_dir = state.resources_dir.as_deref().ok_or_else(|| {
-        crate::installer::helper::helper_unavailable_error(
-            "the application resource directory is unavailable",
-        )
-    })?;
-    let helper = crate::installer::helper::load_bundled_installer(resources_dir, &bin_dir)?;
-    helper.ensure_installed()?;
+    // 卸载完全不依赖 bundled helper(连资源目录都不要求):remove 按 owned
+    // 条目指纹进行,inspect 在无 owned 条目时也不触 live helper。
+    let helper = if deploy_helper {
+        let resources_dir = state.resources_dir.as_deref().ok_or_else(|| {
+            crate::installer::helper::helper_unavailable_error(
+                "the application resource directory is unavailable",
+            )
+        })?;
+        let loaded = crate::installer::helper::load_bundled_installer(resources_dir, &bin_dir)?;
+        loaded.ensure_installed()?;
+        loaded
+    } else {
+        crate::installer::helper::HelperInstaller::undeployed_placeholder(bin_dir.clone())
+    };
     let home = directories::BaseDirs::new()
         .map(|d| d.home_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
