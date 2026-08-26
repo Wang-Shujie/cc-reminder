@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "CC Reminder",
-        "width": 960,
-        "height": 640,
-        "minWidth": 960,
-        "minHeight": 640
+        "width": 976,
+        "height": 672,
+        "minWidth": 976,
+        "minHeight": 672
       }
     ],
     "security": {
@@ -50,7 +50,9 @@
   "plugins": {
     "updater": {
       "pubkey": "",
-      "endpoints": ["https://github.com/UPDATE_OWNER_PLACEHOLDER/cc-reminder/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://github.com/UPDATE_OWNER_PLACEHOLDER/cc-reminder/releases/latest/download/latest.json"
+      ],
       "windows": {
         "installMode": "passive"
       }

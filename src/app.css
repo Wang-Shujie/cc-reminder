@@ -974,3 +974,11 @@ textarea {
   min-height: 0;
   min-width: 0;
 }
+
+/* 最小窗体适配(用户反馈第三轮):macOS 标题栏计入窗高会吃掉内高,
+   窗口最小值留出余量;桌面壳体禁滚——布局由网格自管,绝不满页滚动。 */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
