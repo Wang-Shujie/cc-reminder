@@ -90,6 +90,12 @@ export function AgentsPage({
   const [rows, setRows] = useState<HookRuleRow[]>([]);
   /** Per-event health of the LAST successful apply per agent. */
   const [entries, setEntries] = useState<Partial<Record<AgentKindCode, HookApplyEntry[]>>>({});
+  /** True once any Codex entry is observed working: the official /hooks
+   *  confirmation is demonstrably complete, so remaining pending entries are
+   *  "await their first real occurrence", not "user has work to do". */
+  const codexConfirmed = (entries["codex"] ?? []).some(
+    (entry) => entry.trust_status === "observed_working",
+  );
   const [busy, setBusy] = useState<Busy | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<PageError | null>(null);
@@ -342,6 +348,12 @@ export function AgentsPage({
                   {(entries[agent] ?? []).map((entry) => (
                     <li key={entry.source_event}>
                       {entry.source_event} · {entryHealthLabel(t, entry.health)}
+                      {entry.trust_status === "needs_user_confirmation" &&
+                        ` · ${
+                          codexConfirmed
+                            ? t.ehAwaitingFirstRun
+                            : t.ehNeedsTrust
+                        }`}
                     </li>
                   ))}
                 </ul>
@@ -354,27 +366,37 @@ export function AgentsPage({
               entry.health === "needs_trust",
           ) && (
             <p className="trust-command">
-              <span>
-                {t.trustNotice} <code>{t.trustCommand}</code>
-              </span>
-              <button
-                type="button"
-                className="cc-focusable"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(t.trustCommand);
-                }}
-              >
-                <ClipboardCopy size={14} aria-hidden="true" /> {t.copyCommand}
-              </button>
-              <button
-                type="button"
-                className="cc-focusable"
-                onClick={() => {
-                  void detect();
-                }}
-              >
-                {t.recheck}
-              </button>
+              {/* Once any Codex entry is observed working, the official /hooks
+                  confirmation is demonstrably done: remaining pending entries
+                  just await their first real occurrence — inform, don't
+                  re-instruct. */}
+              {codexConfirmed ? (
+                <span>{t.trustDoneAwaiting}</span>
+              ) : (
+                <>
+                  <span>
+                    {t.trustNotice} <code>{t.trustCommand}</code>
+                  </span>
+                  <button
+                    type="button"
+                    className="cc-focusable"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(t.trustCommand);
+                    }}
+                  >
+                    <ClipboardCopy size={14} aria-hidden="true" /> {t.copyCommand}
+                  </button>
+                  <button
+                    type="button"
+                    className="cc-focusable"
+                    onClick={() => {
+                      void detect();
+                    }}
+                  >
+                    {t.recheck}
+                  </button>
+                </>
+              )}
             </p>
           )}
         </section>

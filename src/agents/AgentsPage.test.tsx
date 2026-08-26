@@ -162,6 +162,37 @@ test("applied result shows per-event health and Codex /hooks copy/recheck on tru
   );
 });
 
+test("once one Codex entry is observed, pending entries read as awaiting-first-run", async () => {
+  const user = userEvent.setup();
+  const backend = agentsBackend({
+    detectResults: () => [
+      CLAUDE_DETECTED,
+      { ...CODEX_DETECTED, installed: false },
+    ],
+    rules: [],
+    applyEntries: () => [
+      { source_event: "Stop", trust_status: "observed_working", health: "healthy" },
+      {
+        source_event: "PermissionRequest",
+        trust_status: "needs_user_confirmation",
+        health: "healthy",
+      },
+    ],
+  });
+  render(<AgentsPage backend={backend} />);
+  await screen.findByText("0.145.0");
+  await user.click(screen.getByRole("button", { name: "安装 Codex Hook" }));
+  // The pending entry is labelled "waiting for its first real occurrence"…
+  expect(
+    await screen.findByText(/PermissionRequest · 健康 · 等待首次触发/),
+  ).toBeVisible();
+  // …and the actionable /hooks instruction is replaced by the informational
+  // notice — no command, no copy/recheck buttons.
+  expect(screen.queryByText("/hooks")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "复制命令" })).not.toBeInTheDocument();
+  expect(screen.getByText(/官方确认已完成/)).toBeVisible();
+});
+
 test("actions disable while running and recover after completion", async () => {
   const user = userEvent.setup();
   const backend = installedAgentsBackend();
