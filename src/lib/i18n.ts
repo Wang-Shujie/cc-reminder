@@ -13,6 +13,9 @@ export interface Dictionary {
   navRules: string;
   navIntegrations: string;
   statusTitle: string;
+  statusWordOk: string;
+  statusWordWarning: string;
+  statusWordError: string;
   pendingJobs: string;
   failedJobs: string;
   loading: string;
@@ -329,6 +332,9 @@ const zhCn: Dictionary = {
   navRules: "通知规则",
   navIntegrations: "集成",
   statusTitle: "CC Reminder",
+  statusWordOk: "运行正常",
+  statusWordWarning: "需要注意",
+  statusWordError: "存在异常",
   pendingJobs: "待发送",
   failedJobs: "失败任务",
   loading: "加载中…",
@@ -643,6 +649,9 @@ const en: Dictionary = {
   navRules: "Rules",
   navIntegrations: "Integrations",
   statusTitle: "CC Reminder",
+  statusWordOk: "All running normally",
+  statusWordWarning: "Needs attention",
+  statusWordError: "Fault present",
   pendingJobs: "Pending",
   failedJobs: "Failed jobs",
   loading: "Loading…",

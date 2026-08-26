@@ -114,6 +114,13 @@ export function AppShell({
       <header className="shell-header">
         <span className="shell-title">{t.statusTitle}</span>
         <span className={`health-dot health-${overall}`} aria-hidden="true" />
+        <span className="shell-status">
+          {overall === "ok"
+            ? t.statusWordOk
+            : overall === "warning"
+              ? t.statusWordWarning
+              : t.statusWordError}
+        </span>
         <span className="shell-counts">
           {t.pendingJobs}: {health?.pending_jobs ?? 0} · {t.failedJobs}:{" "}
           {health?.failed_jobs ?? 0}
