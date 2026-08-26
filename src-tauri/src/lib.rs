@@ -16,6 +16,7 @@ pub mod projects;
 pub mod rules;
 pub mod security;
 pub mod storage;
+pub mod tray;
 pub mod worker;
 
 use std::sync::Arc;
@@ -398,6 +399,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             let topic = event.core_topic();
             let revision = revisions.entry(topic).and_modify(|r| *r += 1).or_insert(1);
             let _ = forwarder_app.emit(topic, serde_json::json!({ "revision": revision }));
+            // 健康变化同步托盘菜单的健康条目(重建,轻量)。
+            if matches!(event, crate::worker::CoreEvent::HealthChanged { .. }) {
+                crate::tray::refresh_health(&forwarder_app);
+            }
         }
     });
     let worker_cancel = cancel.clone();
@@ -485,6 +490,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         });
     }
     app.manage(state);
+
+    // v2-issues(设计 §18.3):原生托盘菜单——打开/健康/暂停/恢复/退出。
+    // 在 state manage 之后安装,动作经 try_state 走同一命令 impl。
+    tray::install(app);
 
     Ok(())
 }
