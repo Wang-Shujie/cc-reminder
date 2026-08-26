@@ -234,7 +234,7 @@ test.describe("workflow coverage", () => {
 test.describe("desktop layout coverage", () => {
   test("all primary pages fit at the minimum window without overlap", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("heading", { name: "待处理问题" }).waitFor(); // default workbench ready
+    await page.getByRole("heading", { name: "概览" }).waitFor(); // default workbench ready
     for (const entry of NAV_PAGES) {
       await openAndSettle(page, entry);
       await assertDesktopLayout(page);
@@ -260,7 +260,7 @@ test.describe("desktop layout coverage", () => {
     // 1920×1080 at zoom 2 ≈ the 960×640 minimum CSS viewport (WCAG 1.4.4).
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto("/");
-    await page.getByRole("heading", { name: "待处理问题" }).waitFor();
+    await page.getByRole("heading", { name: "概览" }).waitFor();
     await page.evaluate(() => {
       (document.documentElement.style as CSSStyleDeclaration & { zoom: string }).zoom = "200%";
     });
