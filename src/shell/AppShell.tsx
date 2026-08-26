@@ -16,7 +16,7 @@ import { AgentsPage } from "../agents/AgentsPage";
 import { ChannelsPage } from "../channels/ChannelsPage";
 import { HistoryPage } from "../history/HistoryPage";
 import { HookRulesPage } from "../hooks/HookRulesPage";
-import { OverviewPage, type HistorySeed } from "../overview/OverviewPage";
+import { OverviewPage } from "../overview/OverviewPage";
 import { ProjectsPage } from "../projects/ProjectsPage";
 import { SettingsPage } from "../settings/SettingsPage";
 import {
@@ -67,7 +67,6 @@ export function AppShell({
   const backend = useBackend();
   const t = dictionary(locale);
   const [page, setPage] = useState<PageId>(savedPage);
-  const [historySeed, setHistorySeed] = useState<HistorySeed | undefined>(undefined);
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
 
   // One snapshot on mount; revision events trigger a refetch. Event payloads
@@ -104,11 +103,8 @@ export function AppShell({
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  function openPage(id: PageId, seed?: HistorySeed): void {
+  function openPage(id: PageId): void {
     setPage(id);
-    if (id === "history") {
-      setHistorySeed(seed);
-    }
     localStorage.setItem(LAST_PAGE_KEY, id);
   }
 
@@ -140,7 +136,13 @@ export function AppShell({
       </nav>
       <main className="shell-content">
         {page === "overview" ? (
-          <OverviewPage locale={locale} onNavigate={openPage} />
+          <OverviewPage
+            locale={locale}
+            // Interim shim until the 4-destination rewrite (Task 6): map the
+            // new jump targets onto the v1 pages they will become.
+            onNavigate={(page) => openPage(page === "rules" ? "hooks" : "agents")}
+            onOpenHistory={() => openPage("history")}
+          />
         ) : page === "agents" ? (
           <AgentsPage locale={locale} />
         ) : page === "hooks" ? (
@@ -150,10 +152,7 @@ export function AppShell({
         ) : page === "projects" ? (
           <ProjectsPage locale={locale} />
         ) : page === "history" ? (
-          <HistoryPage
-            locale={locale}
-            initialDeliveryStatus={historySeed?.delivery_status ?? null}
-          />
+          <HistoryPage locale={locale} />
         ) : (
           <SettingsPage locale={locale} />
         )}

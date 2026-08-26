@@ -52,8 +52,9 @@ test("overview presents the same health issues and queue counts as shared health
   expect(screen.getByRole("button", { name: "查看失败任务" })).toBeEnabled();
 });
 
-test("missing agent, drift and trust-pending issues navigate to Agent integrations", async () => {
+test("missing agent, drift and trust-pending issues navigate to Integrations", async () => {
   const onNavigate = vi.fn();
+  const onOpenHistory = vi.fn();
   const user = userEvent.setup();
   render(
     <OverviewPage
@@ -83,18 +84,23 @@ test("missing agent, drift and trust-pending issues navigate to Agent integratio
         ],
       })}
       onNavigate={onNavigate}
+      onOpenHistory={onOpenHistory}
     />,
   );
   expect(await screen.findByText("未检测到 Codex")).toBeVisible();
   // The trust command is surfaced verbatim for the operator to copy.
   expect(screen.getByText("/hooks")).toBeVisible();
-  const buttons = screen.getAllByRole("button", { name: "前往 Agent 集成" });
-  expect(buttons).toHaveLength(3);
-  await user.click(buttons[0]!);
-  expect(onNavigate).toHaveBeenCalledWith("agents");
+  const integrationButtons = screen.getAllByRole("button", { name: "前往集成" });
+  expect(integrationButtons).toHaveLength(2);
+  // hooks.* 前缀的 issue 归通知规则页。
+  const rulesButton = screen.getByRole("button", { name: "前往规则" });
+  await user.click(integrationButtons[0]!);
+  expect(onNavigate).toHaveBeenCalledWith("integrations");
+  await user.click(rulesButton);
+  expect(onNavigate).toHaveBeenCalledWith("rules");
 });
 
-test("unavailable credential store and paused channel issues navigate to Channels", async () => {
+test("unavailable credential store and paused channel issues navigate to Integrations", async () => {
   const onNavigate = vi.fn();
   const user = userEvent.setup();
   render(
@@ -122,10 +128,37 @@ test("unavailable credential store and paused channel issues navigate to Channel
   );
   expect(await screen.findByText("凭据存储不可用")).toBeVisible();
   expect(screen.getByText(/检查系统钥匙串设置/)).toBeVisible();
-  const buttons = screen.getAllByRole("button", { name: "前往渠道" });
+  const buttons = screen.getAllByRole("button", { name: "前往集成" });
   expect(buttons).toHaveLength(2);
   await user.click(buttons[0]!);
-  expect(onNavigate).toHaveBeenCalledWith("channels");
+  expect(onNavigate).toHaveBeenCalledWith("integrations");
+});
+
+test("queue and delivery issues open the notification log tab", async () => {
+  const onNavigate = vi.fn();
+  const onOpenHistory = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <OverviewPage
+      backend={healthBackend({
+        issues: [
+          {
+            issue_code: "delivery.repeated_failure",
+            level: "error",
+            message: "渠道连续失败",
+            suggested_command: null,
+            suggested_action: null,
+          },
+        ],
+      })}
+      onNavigate={onNavigate}
+      onOpenHistory={onOpenHistory}
+    />,
+  );
+  const button = await screen.findByRole("button", { name: "查看通知记录" });
+  await user.click(button);
+  expect(onOpenHistory).toHaveBeenCalled();
+  expect(onNavigate).not.toHaveBeenCalled();
 });
 
 test("retry and expired counts mirror the shared snapshot", async () => {
@@ -168,12 +201,14 @@ test("a failed failures-query shows an error line, not 没有失败任务", asyn
   expect(screen.queryByText("最近没有失败任务。")).not.toBeInTheDocument();
 });
 
-test("查看失败任务 navigates to history pre-filtered to failed jobs", async () => {
-  const onNavigate = vi.fn();
+test("查看失败任务 opens the notification log pre-filtered to failed jobs", async () => {
+  const onOpenHistory = vi.fn();
   const user = userEvent.setup();
-  render(<OverviewPage backend={configuredBackend()} onNavigate={onNavigate} />);
+  render(
+    <OverviewPage backend={configuredBackend()} onOpenHistory={onOpenHistory} />,
+  );
   await user.click(await screen.findByRole("button", { name: "查看失败任务" }));
-  expect(onNavigate).toHaveBeenCalledWith("history", { delivery_status: "failed" });
+  expect(onOpenHistory).toHaveBeenCalledWith("failed");
 });
 
 test("a failing health snapshot surfaces an alert instead of an empty board", async () => {

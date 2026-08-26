@@ -239,9 +239,6 @@ export interface Dictionary {
   recentFailuresTitle: string;
   noRecentFailures: string;
   recentFailuresLoadFailed: string;
-  gotoAgents: string;
-  gotoChannels: string;
-  gotoHistory: string;
   overviewLoadFailed: string;
   refreshedNotice: string;
   // History page (Task 19)
@@ -557,9 +554,6 @@ const zhCn: Dictionary = {
   recentFailuresTitle: "最近失败",
   noRecentFailures: "最近没有失败任务。",
   recentFailuresLoadFailed: "失败任务列表加载失败。",
-  gotoAgents: "前往 Agent 集成",
-  gotoChannels: "前往渠道",
-  gotoHistory: "查看通知历史",
   overviewLoadFailed: "健康状态加载失败，请稍后重试。",
   refreshedNotice: "数据已刷新。",
   // History page (Task 19)
@@ -884,9 +878,6 @@ const en: Dictionary = {
   recentFailuresTitle: "Recent failures",
   noRecentFailures: "No recent failures.",
   recentFailuresLoadFailed: "Failed to load recent failures.",
-  gotoAgents: "Go to Agent integrations",
-  gotoChannels: "Go to channels",
-  gotoHistory: "View notification history",
   overviewLoadFailed: "Failed to load health status. Please retry later.",
   refreshedNotice: "Data refreshed.",
   // History page (Task 19)
