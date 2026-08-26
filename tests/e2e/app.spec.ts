@@ -21,6 +21,7 @@ import { expect, test, type Page } from "@playwright/test";
 const NAV_PAGES = [
   ["工作台", "workbench"],
   ["通知规则", "rules"],
+  ["项目", "projects"],
   ["集成", "integrations"],
   ["设置", "settings"],
 ] as const;
@@ -28,6 +29,7 @@ const NAV_PAGES = [
 const SETTLE_TARGETS: Record<(typeof NAV_PAGES)[number][1], () => Promise<unknown>> = {
   workbench: (page) => page.getByRole("heading", { name: "概览" }).waitFor(),
   rules: (page) => page.getByRole("row", { name: /Stop/ }).waitFor(),
+  projects: (page) => page.getByRole("cell", { name: "演示项目" }).waitFor(),
   integrations: (page) =>
     page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
   // Hydration enables the retention inputs; value proves get_settings landed.

@@ -21,10 +21,6 @@ export interface Dictionary {
   loading: string;
   pagePlaceholder: string;
   navLabel: string;
-  tabStatusOverview: string;
-  tabNotificationLog: string;
-  tabRuleTable: string;
-  tabProjectManagement: string;
   tabSources: string;
   tabDestinations: string;
   gotoIntegrations: string;
@@ -346,10 +342,6 @@ const zhCn: Dictionary = {
   loading: "加载中…",
   pagePlaceholder: "此页面将在后续版本中提供。",
   navLabel: "主导航",
-  tabStatusOverview: "状态概览",
-  tabNotificationLog: "通知记录",
-  tabRuleTable: "规则表",
-  tabProjectManagement: "项目管理",
   tabSources: "通知来源",
   tabDestinations: "通知去向",
   gotoIntegrations: "前往集成",
@@ -669,10 +661,6 @@ const en: Dictionary = {
   loading: "Loading…",
   pagePlaceholder: "This page arrives in a later release.",
   navLabel: "Navigation",
-  tabStatusOverview: "Status",
-  tabNotificationLog: "Notification Log",
-  tabRuleTable: "Rules",
-  tabProjectManagement: "Projects",
   tabSources: "Sources",
   tabDestinations: "Destinations",
   gotoIntegrations: "Go to Integrations",

@@ -54,7 +54,7 @@ test("legacy v1 page ids migrate to the new destinations", async () => {
     ["overview", "工作台"],
     ["history", "工作台"],
     ["hooks", "通知规则"],
-    ["projects", "通知规则"],
+    ["projects", "项目"],
     ["agents", "集成"],
     ["channels", "集成"],
     ["settings", "设置"],
@@ -144,9 +144,9 @@ test("focus is visible on navigation controls", async () => {
   expect(appCss).toContain("outline");
 });
 
-test("all four navigation targets are present", async () => {
+test("all five navigation targets are present", async () => {
   await renderShell(configuredBackend());
-  for (const label of ["工作台", "通知规则", "集成", "设置"]) {
+  for (const label of ["工作台", "通知规则", "项目", "集成", "设置"]) {
     expect(screen.getByRole("button", { name: label })).toBeVisible();
   }
 });
