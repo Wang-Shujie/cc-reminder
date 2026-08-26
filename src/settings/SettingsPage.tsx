@@ -299,6 +299,8 @@ export function SettingsPage({
         </p>
       )}
 
+      {/* 设置重排版(用户裁决第四轮):自适应两栏分组,渠道添加占整行。 */}
+      <div className="settings-grid">
       {/* Startup + window */}
       <div className="settings-section">
         <h2>{t.sectionStartup}</h2>
@@ -546,7 +548,10 @@ export function SettingsPage({
       )}
 
       {/* 渠道添加表单(用户裁决:仅"添加"部分在设置;管理表在集成页)。 */}
-      <ChannelsPage locale={locale} backend={backend} variant="add" />
+      <div className="settings-channel-add">
+        <ChannelsPage locale={locale} backend={backend} variant="add" />
+      </div>
+      </div>
 
       {installConfirmOpen && (
         <div className="dialog-overlay">

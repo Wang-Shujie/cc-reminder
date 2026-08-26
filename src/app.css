@@ -1031,3 +1031,21 @@ body {
   height: 100%;
   overflow: hidden;
 }
+
+/* 设置页重排版(用户裁决第四轮):自适应两栏,窄窗自动回落单栏;
+   渠道添加表单占整行。 */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 8px 48px;
+  align-items: start;
+}
+
+.settings-grid > .settings-section {
+  max-width: 480px;
+  margin-bottom: 20px;
+}
+
+.settings-channel-add {
+  grid-column: 1 / -1;
+}
