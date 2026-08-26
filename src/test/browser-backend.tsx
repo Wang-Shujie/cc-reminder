@@ -420,8 +420,6 @@ export class BrowserTestBackend implements Backend {
       retry_jobs: 0,
       failed_jobs: 1,
       expired_jobs: 0,
-      spool_count: 0,
-      rejected_count: 0,
       last_success_at: "2026-08-20T02:30:02Z",
       issues: [],
     };

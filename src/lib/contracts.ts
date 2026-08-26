@@ -85,8 +85,6 @@ export interface HealthSnapshot {
   retry_jobs: number;
   failed_jobs: number;
   expired_jobs: number;
-  spool_count: number;
-  rejected_count: number;
   last_success_at: string | null;
   issues: HealthIssue[];
 }

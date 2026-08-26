@@ -168,12 +168,6 @@ export function OverviewPage({
         <li>
           <span>{metricText(t.metricExpired, snapshot.expired_jobs)}</span>
         </li>
-        <li>
-          <span>{metricText(t.metricSpool, snapshot.spool_count)}</span>
-        </li>
-        <li>
-          <span>{metricText(t.metricRejected, snapshot.rejected_count)}</span>
-        </li>
         <li className="muted">
           <span>{t.lastSuccessLabel.replace("{time}", lastSuccess)}</span>
         </li>

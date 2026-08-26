@@ -217,8 +217,6 @@ export interface Dictionary {
   metricRetry: string;
   metricFailed: string;
   metricExpired: string;
-  metricSpool: string;
-  metricRejected: string;
   lastSuccessLabel: string;
   viewFailedJobs: string;
   overviewIssues: string;
@@ -522,8 +520,6 @@ const zhCn: Dictionary = {
   metricRetry: "{n} 个等待重试任务",
   metricFailed: "{n} 个失败任务",
   metricExpired: "{n} 个过期任务",
-  metricSpool: "{n} 个暂存事件",
-  metricRejected: "{n} 个被拒绝事件",
   lastSuccessLabel: "上次成功：{time}",
   viewFailedJobs: "查看失败任务",
   overviewIssues: "待处理问题",
@@ -835,8 +831,6 @@ const en: Dictionary = {
   metricRetry: "{n} jobs waiting to retry",
   metricFailed: "{n} failed jobs",
   metricExpired: "{n} expired jobs",
-  metricSpool: "{n} spooled events",
-  metricRejected: "{n} rejected events",
   lastSuccessLabel: "Last success: {time}",
   viewFailedJobs: "View failed jobs",
   overviewIssues: "Open issues",

@@ -128,21 +128,17 @@ test("unavailable credential store and paused channel issues navigate to Channel
   expect(onNavigate).toHaveBeenCalledWith("channels");
 });
 
-test("retry, expired, spool and rejected counts mirror the shared snapshot", async () => {
+test("retry and expired counts mirror the shared snapshot", async () => {
   render(
     <OverviewPage
       backend={healthBackend({
         retry_jobs: 1,
         expired_jobs: 5,
-        spool_count: 3,
-        rejected_count: 2,
       })}
     />,
   );
   expect(await screen.findByText("1 个等待重试任务")).toBeVisible();
   expect(screen.getByText("5 个过期任务")).toBeVisible();
-  expect(screen.getByText("3 个暂存事件")).toBeVisible();
-  expect(screen.getByText("2 个被拒绝事件")).toBeVisible();
 });
 
 test("last success time is shown; a never-succeeded queue says so", async () => {
