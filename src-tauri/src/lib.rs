@@ -51,9 +51,25 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            // Second launch focuses the existing main window.
+            // Second launch restores the existing main window. Focus alone is
+            // not enough: with the default close-to-tray behavior the window
+            // may be HIDDEN, so it must be shown (and unminimized) first.
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
+                // Query failures fall back to "hidden + minimized" so the
+                // restore path stays maximally aggressive instead of leaving
+                // the user with an invisible window.
+                let visible = window.is_visible().unwrap_or(false);
+                let minimized = window.is_minimized().unwrap_or(true);
+                let ops = restore_window_ops(visible, minimized);
+                if ops.show {
+                    let _ = window.show();
+                }
+                if ops.unminimize {
+                    let _ = window.unminimize();
+                }
+                if ops.focus {
+                    let _ = window.set_focus();
+                }
             }
         }))
         .plugin(tauri_plugin_autostart::init(
@@ -152,6 +168,29 @@ pub(crate) fn close_action(close_to_tray: bool) -> CloseAction {
         CloseAction::HideToTray
     } else {
         CloseAction::Exit
+    }
+}
+
+/// Which window operations a second launch must apply to bring the main
+/// window back in front of the user. Decided purely from the window's current
+/// visibility/minimized state so the single-instance handler above stays thin
+/// glue (same pattern as [`close_action`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RestoreWindowOps {
+    /// `WebviewWindow::show` — needed when the window is hidden (the default
+    /// close-to-tray outcome).
+    pub show: bool,
+    /// `WebviewWindow::unminimize` — a minimized window is not raised by focus.
+    pub unminimize: bool,
+    /// `WebviewWindow::set_focus` — always applied on relaunch.
+    pub focus: bool,
+}
+
+pub(crate) fn restore_window_ops(visible: bool, minimized: bool) -> RestoreWindowOps {
+    RestoreWindowOps {
+        show: !visible,
+        unminimize: minimized,
+        focus: true,
     }
 }
 
@@ -443,7 +482,7 @@ pub struct TrayState {
 
 #[cfg(test)]
 mod tests {
-    use super::{CloseAction, close_action};
+    use super::{CloseAction, RestoreWindowOps, close_action, restore_window_ops};
 
     #[test]
     fn close_to_tray_enabled_hides_the_window() {
@@ -457,5 +496,57 @@ mod tests {
         // Opt-out: no prevent_close — the window closes and the process exits
         // through RunEvent::Exit (graceful shutdown).
         assert_eq!(close_action(false), CloseAction::Exit);
+    }
+
+    #[test]
+    fn hidden_window_is_shown_and_focused_on_relaunch() {
+        // The default close-to-tray outcome: a HIDDEN window must be shown,
+        // not just focused (focus alone is invisible to the user).
+        assert_eq!(
+            restore_window_ops(false, false),
+            RestoreWindowOps {
+                show: true,
+                unminimize: false,
+                focus: true
+            }
+        );
+    }
+
+    #[test]
+    fn minimized_window_is_unminimized_and_focused_on_relaunch() {
+        assert_eq!(
+            restore_window_ops(true, true),
+            RestoreWindowOps {
+                show: false,
+                unminimize: true,
+                focus: true
+            }
+        );
+    }
+
+    #[test]
+    fn visible_window_only_needs_focus_on_relaunch() {
+        assert_eq!(
+            restore_window_ops(true, false),
+            RestoreWindowOps {
+                show: false,
+                unminimize: false,
+                focus: true
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_and_minimized_window_gets_every_restore_step() {
+        // Also covers the query-failure fallback in the handler (treated as
+        // hidden + minimized): all three steps apply.
+        assert_eq!(
+            restore_window_ops(false, true),
+            RestoreWindowOps {
+                show: true,
+                unminimize: true,
+                focus: true
+            }
+        );
     }
 }
