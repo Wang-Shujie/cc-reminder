@@ -34,3 +34,7 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 - **CI `[ -d dist ]` 守卫**：dist 缺失时 `! grep` 会因 exit 2 反转误通过（今日被 build 先行失败掩盖）。
 - **杂项文档/注释**：operations.md 附录 C 自动化数字停留在文档提交时刻、IPC 关停注释过度声明、"updater relaunch" 为前瞻性描述、§9 托盘措辞、browser-backend.tsx 尾部 main.tsx 残留指针。
 - **跨平台空 helper 占位文件**：tauri.conf.json 对所有平台列出两个文件名，导致每个包携带一个 0 字节异平台文件（惰性，可修剪）。
+
+## v2 新增（2026-08-26 终审记录）
+
+- **`pagePlaceholder` 孤儿字典键**：v1 遗留（分支点 1e1613e 即无组件使用），下次动 i18n 时顺手删除（接口 + zh + en 三处）。
