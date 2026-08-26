@@ -3,6 +3,7 @@
 // Not decorative: every issue carries a button navigating to the management
 // page that fixes it.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowRight } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
 import type {
@@ -35,10 +36,6 @@ function issueAction(issueCode: string): IssueAction {
     return { kind: "page", page: "rules" };
   }
   return { kind: "page", page: "integrations" };
-}
-
-function metricText(template: string, n: number): string {
-  return template.replace("{n}", String(n));
 }
 
 export function OverviewPage({
@@ -155,26 +152,31 @@ export function OverviewPage({
 
       {/* Compact metric strip — counts mirror the shared snapshot verbatim. */}
       <ul className="metric-strip">
-        <li>
-          <span>{metricText(t.metricPending, snapshot.pending_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.pending_jobs}</span>
+          <span className="metric-label">{t.metricLabelPending}</span>
         </li>
-        <li>
-          <span>{metricText(t.metricRetry, snapshot.retry_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.retry_jobs}</span>
+          <span className="metric-label">{t.metricLabelRetry}</span>
         </li>
-        <li>
-          <span>{metricText(t.metricFailed, snapshot.failed_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.failed_jobs}</span>
+          <span className="metric-label">{t.metricLabelFailed}</span>
           <button
             type="button"
-            className="cc-focusable"
+            className="cc-focusable link-arrow"
             onClick={() => onOpenHistory?.("failed")}
           >
             {t.viewFailedJobs}
+            <ArrowRight size={14} aria-hidden="true" />
           </button>
         </li>
-        <li>
-          <span>{metricText(t.metricExpired, snapshot.expired_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.expired_jobs}</span>
+          <span className="metric-label">{t.metricLabelExpired}</span>
         </li>
-        <li className="muted">
+        <li className="metric-last muted">
           <span>{t.lastSuccessLabel.replace("{time}", lastSuccess)}</span>
         </li>
       </ul>
@@ -204,7 +206,7 @@ export function OverviewPage({
                   )}
                   <button
                     type="button"
-                    className="cc-focusable"
+                    className="cc-focusable link-arrow"
                     onClick={() =>
                       action.kind === "history"
                         ? onOpenHistory?.()
@@ -212,6 +214,7 @@ export function OverviewPage({
                     }
                   >
                     {actionLabel(action)}
+                    <ArrowRight size={14} aria-hidden="true" />
                   </button>
                 </li>
               );
@@ -239,7 +242,7 @@ export function OverviewPage({
             </thead>
             <tbody>
               {recentFailures.map((item) => (
-                <tr key={item.event_id}>
+                <tr key={item.event_id} className="hazard-row">
                   <td>{new Date(item.occurred_at).toLocaleString()}</td>
                   <td>{item.source_event}</td>
                   <td>{deliveryStatusText(t, item.delivery_status)}</td>

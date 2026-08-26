@@ -1,7 +1,7 @@
 // Task 19 contract tests for the Overview page. The plan's Step 1 block is
 // authoritative: the overview mirrors shared health (queue counts + issues),
 // and issue action buttons navigate to the owning management page.
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { configuredBackend, type FakeBackend } from "../test/TestApp";
@@ -13,6 +13,15 @@ import type {
   HealthSnapshot,
   HistoryItem,
 } from "../lib/contracts";
+
+/** The metric plate carrying this label (wayfinding moment-board markup). */
+function plate(label: string): HTMLElement {
+  const el = screen.getByText(label).closest("li");
+  if (el === null) {
+    throw new Error(`metric plate labeled ${label} not found`);
+  }
+  return el;
+}
 
 function healthBackend(overrides: Partial<HealthSnapshot>): FakeBackend {
   return configuredBackend({ health: overrides });
@@ -47,8 +56,9 @@ function failedItem(): HistoryItem {
 
 test("overview presents the same health issues and queue counts as shared health", async () => {
   render(<OverviewPage backend={healthBackend({ failed_jobs: 2, pending_jobs: 4 })} />);
-  expect(await screen.findByText("2 个失败任务")).toBeVisible();
-  expect(screen.getByText("4 个待发送任务")).toBeVisible();
+  expect(await screen.findByText("失败任务")).toBeVisible();
+  expect(within(plate("失败任务")).getByText("2")).toBeVisible();
+  expect(within(plate("待发送")).getByText("4")).toBeVisible();
   expect(screen.getByRole("button", { name: "查看失败任务" })).toBeEnabled();
 });
 
@@ -170,8 +180,9 @@ test("retry and expired counts mirror the shared snapshot", async () => {
       })}
     />,
   );
-  expect(await screen.findByText("1 个等待重试任务")).toBeVisible();
-  expect(screen.getByText("5 个过期任务")).toBeVisible();
+  expect(await screen.findByText("等待重试")).toBeVisible();
+  expect(within(plate("等待重试")).getByText("1")).toBeVisible();
+  expect(within(plate("已过期")).getByText("5")).toBeVisible();
 });
 
 test("last success time is shown; a never-succeeded queue says so", async () => {
@@ -220,7 +231,7 @@ test("a failing health snapshot surfaces an alert instead of an empty board", as
 test("core revision events refresh in the background through a polite live region", async () => {
   const backend = configuredBackend();
   render(<OverviewPage backend={backend} />);
-  await screen.findByText("0 个失败任务");
+  await screen.findByText("失败任务");
   act(() => {
     backend.emit("core://queue-changed", { revision: 2 });
   });

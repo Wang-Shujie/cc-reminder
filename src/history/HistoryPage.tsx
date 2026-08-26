@@ -379,6 +379,7 @@ export function HistoryPage({
           {(items ?? []).map((item) => (
             <tr
               key={item.event_id}
+              className={item.delivery_status === "failed" ? "hazard-row" : undefined}
               tabIndex={0}
               onClick={(event) => {
                 triggerRef.current = event.currentTarget;

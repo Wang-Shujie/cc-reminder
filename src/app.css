@@ -674,22 +674,79 @@ input[type="radio"] {
  * Task 19: Overview / History / Settings pages.
  * ------------------------------------------------------------------------- */
 
+/* 工作台指标:四块等宽去向牌 + 尾随的上次成功时刻。牌面无边框,
+   层级靠字号阶(数字 15/600,标签 13 次级墨)。 */
 .metric-strip {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 24px;
-  margin: 0 0 16px;
-  padding: 8px 0;
+  align-items: flex-end;
+  gap: 8px 32px;
+  margin: 0 0 24px;
+  padding: 12px 0 16px;
   border-bottom: 1px solid var(--line);
   list-style: none;
   font-size: 13px;
 }
 
-.metric-strip li {
+.metric-plate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+}
+
+.metric-number {
+  font-size: var(--font-step-2);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.metric-label {
+  color: var(--ink-2);
+}
+
+.metric-last {
+  margin-left: auto;
+}
+
+/* 导向箭头:唯一的行动色(导引蓝),无底无框,箭头随行。 */
+.link-arrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  justify-self: start;
+  margin-top: 2px;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--guide);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.link-arrow:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* ISO 黄黑斜纹警戒带:仅失败/异常行,行左缘 4px。 */
+.hazard-row td:first-child {
+  position: relative;
+  padding-left: 12px;
+}
+
+.hazard-row td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--hazard-y) 0 6px,
+    #111111 6px 12px
+  );
 }
 
 .page-subsection {
