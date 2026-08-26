@@ -457,6 +457,41 @@ mod tests {
         assert!(!event.project_display_name.unwrap().contains("Work"));
     }
 
+    #[test]
+    fn claude_stop_failure_and_notification_capture_cwd_for_project_matching() {
+        // Field feedback 2026-08-26: StopFailure/Notification delivered with an
+        // empty project because the catalog declared no input fields, so the
+        // helper dropped the common base (cwd/session_id) Claude Code sends.
+        for event in ["StopFailure", "Notification"] {
+            let captured = capture_hook_json(
+                AgentKind::ClaudeCode,
+                event,
+                Version::new(2, 1, 218),
+                serde_json::json!({
+                    "cwd": "/Users/alice/work/client",
+                    "session_id": "session-9",
+                    "permission_mode": "default",
+                    "hook_event_name": event,
+                }),
+            )
+            .unwrap();
+
+            assert_eq!(
+                captured.cwd.as_deref(),
+                Some(std::path::Path::new("/Users/alice/work/client")),
+                "{event}"
+            );
+            assert_eq!(captured.session_id.as_deref(), Some("session-9"), "{event}");
+
+            let envelope = normalize_event(captured, &context_with_key([1_u8; 32])).unwrap();
+            assert_eq!(
+                envelope.project_display_name.as_deref(),
+                Some("client"),
+                "{event}"
+            );
+        }
+    }
+
     fn context_with_key(key: [u8; 32]) -> NormalizeContext {
         NormalizeContext {
             correlation_key: key,

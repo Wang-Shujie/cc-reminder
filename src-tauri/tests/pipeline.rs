@@ -355,6 +355,40 @@ fn two_target_rule() -> RuleConfig {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn metadata_only_rule_delivers_facts_with_empty_body() {
+    // Field feedback 2026-08-26: default metadata-only rules (max_body_chars=0)
+    // rendered the template body then truncated it to one char ("["), and the
+    // non-empty 1-char body cleared the fact list -> delivered "[", no project
+    // or time. max_body_chars=0 must mean: empty body, facts carry the metadata.
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    harness.override_global_rule(AgentKind::Codex, "PermissionRequest", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+    });
+    harness.install_hook(AgentKind::Codex, "PermissionRequest", "fp");
+    let pipeline = harness.pipeline();
+
+    pipeline
+        .process_live(harness.ingress_request("PermissionRequest", "fp"))
+        .await
+        .unwrap();
+
+    let conn = rusqlite::Connection::open(harness.database.path()).unwrap();
+    let document_json: String = conn
+        .query_row("SELECT document_json FROM delivery_jobs", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let document: NotificationDocument = serde_json::from_str(&document_json).unwrap();
+    assert!(document.body.is_empty());
+    assert!(!document.facts.is_empty() && document.facts.iter().any(|(key, _)| key == "Project"));
+}
+
+#[tokio::test]
 async fn enabled_live_permission_event_creates_one_redacted_job_per_target() {
     let harness = PipelineHarness::new();
     let chan_a = harness.add_channel(ChannelKind::WeCom, "a");

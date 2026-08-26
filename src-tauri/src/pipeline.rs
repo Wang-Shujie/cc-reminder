@@ -512,7 +512,10 @@ fn enqueue_jobs(
     decision: &PolicyDecision,
 ) -> Result<(), AppError> {
     let redactor = Redactor::compile(&resolved.config.privacy.extra_redaction_patterns)?;
-    let max_chars = resolved.config.privacy.max_body_chars.max(1) as usize;
+    // 0 is the metadata-only default: an empty body whose metadata ships as
+    // the fact list below. Never clamp it up, or a rendered template gets
+    // truncated to a 1-char body ("[") that also suppresses the facts.
+    let max_chars = resolved.config.privacy.max_body_chars as usize;
     // Build a stub envelope for template context from the rule + event id.
     let envelope = load_envelope_for_template(tx, event_id)?;
     let mut document = {
