@@ -155,8 +155,9 @@ pub fn run() {
         .expect("error while building CC Reminder")
         .run(|app, event| {
             // Every exit route lands here (close-to-exit window, Cmd-Q / menu
-            // quit, updater relaunch): run the graceful Task-14 shutdown once,
-            // right before the process goes away.
+            // quit; an updater-triggered relaunch would land here too once the
+            // updater ships): run the graceful Task-14 shutdown once, right
+            // before the process goes away.
             if let tauri::RunEvent::Exit = event {
                 shutdown_core(app);
             }
@@ -317,8 +318,8 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     // 6. Start IPC: drives process_live, replies Accepted only after durable
     //    commit, rejects unrecognized helpers without establishing trust.
     //    The accept loop selects on the same cancel token so an exiting app
-    //    stops admitting hook traffic; requests already received still get
-    //    their durable reply before the loop breaks.
+    //    stops admitting new hook traffic; a request already taken off the
+    //    channel finishes its commit-and-reply before the loop breaks.
     let pipeline_for_ipc = pipeline.clone();
     let ipc_diagnostics = diagnostics.clone();
     let ipc_events = core_event_sink.clone();

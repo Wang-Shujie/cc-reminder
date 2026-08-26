@@ -57,7 +57,7 @@ Secret Service 时，应用会拒绝保存凭据，并在 **设置 → 凭据存
 操作要点：
 
 - 主导航为：**概览 / Agent 集成 / Hook 规则 / 渠道 / 项目 / 通知历史 / 设置**。
-- 关闭主窗口的行为由 **设置 → 启动与窗口 → 关闭时最小化到托盘** 决定（默认开启）：开启时关闭窗口只是隐藏，应用继续在后台运行（接收 Hook、排队并发送）；关闭开关后，关闭窗口即退出应用。退出时应用会优雅收尾：停止接收 Hook IPC、取消投递 worker 并等待进行中的发送完成（≤10 秒）。再次启动应用会把已有窗口置前（单实例）。当前版本没有独立的托盘菜单；暂停 / 恢复在 **设置 → 通知暂停** 中操作，详见第 7 节。
+- 关闭主窗口的行为由 **设置 → 启动与窗口 → 关闭时最小化到托盘** 决定（默认开启）：开启时关闭窗口只是隐藏，应用继续在后台运行（接收 Hook、排队并发送）；关闭开关后，关闭窗口即退出应用。退出时应用会优雅收尾：停止接收 Hook IPC、取消投递 worker 并等待进行中的发送完成（≤10 秒）。再次启动应用会把已有窗口置前（单实例）。系统托盘菜单（v2 起提供）：**打开 / 健康状态 / 暂停 15 分钟 / 1 小时 / 到今天结束 / 恢复通知 / 退出**；托盘暂停与 **设置 → 通知暂停** 同源，左键单击托盘图标即打开主窗口。详见第 7 节。
 - 开机自启：**设置 → 启动与窗口 → 开机启动**（委托给官方 autostart 插件）。
 - 安全存储可用性：设置页底部的 **凭据存储** 区块只在检测到问题时显示（例如 Linux 缺少 Secret Service）。
 
@@ -110,7 +110,7 @@ CC Reminder 仅接受以下两个官方 HTTPS 端点（其他主机、子路径�
 - 暂停期间显示 **暂停至：<时间>**；点 **恢复通知** 立即取消；
 - 暂停作用于通知发送判定，不会修改任何规则；静默时段（suppress / defer）属于每条规则的独立配置，见 **Hook 规则** 详情抽屉 **静默时段**。
 
-当前版本没有托盘菜单形式的暂停 / 恢复入口（设计中的托盘菜单尚未实现，见附录 C 备注）。
+托盘菜单的暂停 / 恢复入口自 v2 起可用（与设置页同源,同一命令实现）；此处保留设置页路径作为等价入口。
 
 ## 8. Hook 漂移检测与修复
 
@@ -269,12 +269,12 @@ Windows：`scripts/verify-package.ps1 -DesktopBinary … -HelperBinary … -Mani
 
 对照设计文档 §24 的 12 条验收标准。✅ = 本仓库已有可复核证据；🧪 = 本机（macOS 26.5.2, Apple Silicon, cargo 1.97.1, node v26.5.0, pnpm 10.34.5）于 2026-08-25 实测；⏳ = 待发布实测（规程见附录 B）；证据基线 commit：本文档提交所在 commit（feature/cc-reminder-v1）。
 
-自动化基线（2026-08-25 全部通过）：
+自动化基线（数字随仓库演进,以 `pnpm verify` + `cargo test --features test-support` 的当次输出为准;下表结构不变）：
 
 | 命令 | 结果 |
 |---|---|
-| `pnpm install --frozen-lockfile` | OK（200ms，lockfile 最新） |
-| `pnpm verify`（vitest + playwright + build） | vitest 105/105 通过（10 个文件）；playwright 8 通过 / 1 跳过（`export-doc-image.spec.ts` 为文档截图导出工具，按需手动运行）；tsc + vite build 成功 |
+| `pnpm install --frozen-lockfile` | OK（lockfile 最新） |
+| `pnpm verify`（vitest + playwright + build） | vitest 全部通过；playwright 全部通过 / opt-in 用例跳过（`export-doc-image.spec.ts` / `review-shots.spec.ts` 按需手动运行）；tsc + vite build 成功 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml --check` | 无差异 |
 | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | 0 警告 |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | 285 通过 / 0 失败（lib 单测 253 + installer_roundtrip 31 + doc-test 1） |
