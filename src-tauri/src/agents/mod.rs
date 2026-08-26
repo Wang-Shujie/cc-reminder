@@ -132,3 +132,40 @@ pub enum HealthAggregate {
     NeedsRepair,
     Error,
 }
+
+/// v2-issues(计划行 2482):后台周期性重检 Agent(默认 6 小时)。升级/
+/// 卸载等外部变化由此反映进健康状态:结果落库并广播 board-wide
+/// health-changed。形态复用 retention ticker——固定间隔 + 取消令牌,
+/// 失败仅记日志不打断循环;首个立即 tick 被跳过(启动检测由前端触发)。
+pub async fn redetect_loop(
+    integrations: crate::storage::integrations::IntegrationRepository,
+    diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
+    events: crate::worker::CoreEventSink,
+    period: std::time::Duration,
+    cancel: crate::worker::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                for agent in [crate::model::AgentKind::ClaudeCode, crate::model::AgentKind::Codex] {
+                    let detection = crate::agents::detect::detect_agent(agent, None);
+                    if let Err(err) = persist_detection(&integrations, &detection) {
+                        diagnostics.info(
+                            "agents",
+                            &format!("periodic re-detection persist failed: {err}"),
+                        );
+                    }
+                }
+                crate::worker::emit(
+                    &events,
+                    crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                );
+                diagnostics.info("agents", "periodic re-detection pass completed");
+            }
+            _ = cancel.cancelled() => return,
+        }
+    }
+}

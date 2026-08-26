@@ -423,6 +423,20 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         retention_cancel,
     ));
 
+    // v2-issues(计划行 2482):每 6 小时后台重检 Agent,健康状态跟上
+    // 升级/卸载等外部变化,并广播 health-changed 让界面刷新。
+    let redetect_integrations = integrations.clone();
+    let redetect_diagnostics = diagnostics.clone();
+    let redetect_events = core_event_sink.clone();
+    let redetect_cancel = cancel.clone();
+    tauri::async_runtime::spawn(agents::redetect_loop(
+        redetect_integrations,
+        redetect_diagnostics,
+        redetect_events,
+        std::time::Duration::from_secs(6 * 60 * 60),
+        redetect_cancel,
+    ));
+
     // Manage the shared state for commands, and stash the worker cancel token
     // + join handle so RunEvent::Exit can perform the Task-14 graceful
     // shutdown (≤10s wait for active sends).
