@@ -8,3 +8,4 @@ src-tauri/gen/
 # Playwright artifacts (baselines under tests/e2e/**/snapshots ARE committed)
 test-results/
 playwright-report/
+.pnpm-store/

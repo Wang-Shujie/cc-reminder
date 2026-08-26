@@ -167,3 +167,43 @@ test("a failed channel save surfaces an error instead of advancing", async () =>
     screen.queryByRole("heading", { name: "选择默认规则" }),
   ).not.toBeInTheDocument();
 });
+
+test("ding_talk channels expose signing secret and keyword prefix and save them", async () => {
+  const user = userEvent.setup();
+  const backend = onboardingBackend();
+  const saveSpy = vi.spyOn(backend, "saveChannel");
+  render(<TestApp backend={backend} />);
+  await completeDetectAndInstall(user);
+  await screen.findByRole("heading", { name: "添加渠道" });
+  // WeCom (default): the DingTalk-only fields stay hidden.
+  expect(screen.queryByLabelText("签名密钥（可选）")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("关键词前缀")).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("渠道类型"), "ding_talk");
+  const secret = screen.getByLabelText("签名密钥（可选）");
+  const prefix = screen.getByLabelText("关键词前缀");
+  expect(secret).toBeVisible();
+  expect(prefix).toBeVisible();
+  await user.type(secret, "SECabcdef123");
+  await user.type(prefix, "CC Reminder");
+  await user.type(
+    screen.getByLabelText("Webhook 地址"),
+    "https://oapi.dingtalk.com/robot/send?access_token=tok123",
+  );
+  await user.click(screen.getByRole("button", { name: "保存渠道" }));
+  expect(await screen.findByRole("heading", { name: "选择默认规则" })).toBeVisible();
+  expect(saveSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      keyword_prefix: "CC Reminder",
+      credential: {
+        kind: "ding_talk",
+        webhook: "https://oapi.dingtalk.com/robot/send?access_token=tok123",
+        signing_secret: "SECabcdef123",
+      },
+    }),
+  );
+  // Back navigation returns to the channel step without undoing anything.
+  await user.click(screen.getByRole("button", { name: "上一步" }));
+  expect(
+    await screen.findByRole("heading", { name: "添加渠道" }),
+  ).toBeVisible();
+});

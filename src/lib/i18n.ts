@@ -20,6 +20,7 @@ export interface Dictionary {
   onboardingChannel: string;
   onboardingDefaults: string;
   onboardingTest: string;
+  onboardingBack: string;
   onboardingSteps: string;
   next: string;
   installHook: string;
@@ -324,6 +325,7 @@ const zhCn: Dictionary = {
   onboardingChannel: "添加渠道",
   onboardingDefaults: "选择默认规则",
   onboardingTest: "发送测试",
+  onboardingBack: "上一步",
   onboardingSteps: "设置步骤",
   next: "下一步",
   installHook: "安装 Hook",
@@ -626,6 +628,7 @@ const en: Dictionary = {
   onboardingChannel: "Add Channel",
   onboardingDefaults: "Choose Default Rules",
   onboardingTest: "Send Test",
+  onboardingBack: "Back",
   onboardingSteps: "Setup steps",
   next: "Next",
   installHook: "Install Hook",

@@ -14,6 +14,7 @@ import type {
   ThemeCode,
 } from "../lib/contracts";
 import { dictionary } from "../lib/i18n";
+import { errorOf, type PageError } from "../lib/errors";
 import { AppShell } from "../shell/AppShell";
 
 type Step = "detect" | "install" | "channel" | "defaults" | "test";
@@ -40,10 +41,12 @@ export function Onboarding({
     null,
   );
   const [detectError, setDetectError] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PageError | null>(null);
   const [channels, setChannels] = useState<ChannelSummary[]>([]);
   const [channelName, setChannelName] = useState("");
   const [webhook, setWebhook] = useState("");
+  const [signingSecret, setSigningSecret] = useState("");
+  const [keywordPrefix, setKeywordPrefix] = useState("");
   const [kind, setKind] = useState<ChannelKindCode>("we_com");
   const [selectedChannel, setSelectedChannel] = useState<ChannelId | "">("");
 
@@ -125,8 +128,8 @@ export function Onboarding({
         });
       }
       setStep("channel");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (e: unknown) {
+      setError(errorOf(e));
     }
   }
 
@@ -136,17 +139,23 @@ export function Onboarding({
       const saved = await backend.saveChannel({
         channel_id: null,
         name: channelName,
+        keyword_prefix:
+          kind === "ding_talk" && keywordPrefix !== "" ? keywordPrefix : null,
         credential:
           kind === "ding_talk"
-            ? { kind: "ding_talk", webhook }
+            ? {
+                kind: "ding_talk",
+                webhook,
+                signing_secret: signingSecret === "" ? null : signingSecret,
+              }
             : { kind: "we_com", webhook },
       });
       const refreshed = await backend.listChannels();
       setChannels(refreshed.length > 0 ? refreshed : [saved]);
       setSelectedChannel(saved.id);
       setStep("defaults");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (e: unknown) {
+      setError(errorOf(e));
     }
   }
 
@@ -173,12 +182,18 @@ export function Onboarding({
         onboarding_completed: true,
       } satisfies SaveSettingsInput);
       setCompleted(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (e: unknown) {
+      setError(errorOf(e));
     }
   }
 
-  const errorLine = error === null ? null : <p role="alert">{error}</p>;
+  const errorLine =
+    error === null ? null : (
+      <p role="alert">
+        {error.message}
+        {error.suggested_action !== null && <>（{error.suggested_action}）</>}
+      </p>
+    );
 
   if (completed) {
     return <AppShell locale={locale} theme={theme} />;
@@ -264,6 +279,13 @@ export function Onboarding({
           <h1>{t.onboardingInstall}</h1>
           {errorLine}
           <div className="row-end">
+            <button
+              type="button"
+              className="cc-focusable"
+              onClick={() => setStep("detect")}
+            >
+              {t.onboardingBack}
+            </button>
             <button type="button" className="primary cc-focusable" onClick={installHooks}>
               {t.installHook}
             </button>
@@ -301,8 +323,33 @@ export function Onboarding({
               value={webhook}
               onChange={(event) => setWebhook(event.target.value)}
             />
+            {kind === "ding_talk" && (
+              <>
+                <label htmlFor="ob-channel-secret">{t.signingSecret}</label>
+                <input
+                  id="ob-channel-secret"
+                  type="password"
+                  autoComplete="new-password"
+                  value={signingSecret}
+                  onChange={(event) => setSigningSecret(event.target.value)}
+                />
+                <label htmlFor="ob-channel-prefix">{t.keywordPrefixField}</label>
+                <input
+                  id="ob-channel-prefix"
+                  value={keywordPrefix}
+                  onChange={(event) => setKeywordPrefix(event.target.value)}
+                />
+              </>
+            )}
             {errorLine}
             <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => setStep("install")}
+              >
+                {t.onboardingBack}
+              </button>
               <button type="submit" className="primary cc-focusable">
                 {t.saveChannel}
               </button>
@@ -316,6 +363,13 @@ export function Onboarding({
           <h1>{t.onboardingDefaults}</h1>
           <p className="muted">{t.useDefaults}</p>
           <div className="row-end">
+            <button
+              type="button"
+              className="cc-focusable"
+              onClick={() => setStep("channel")}
+            >
+              {t.onboardingBack}
+            </button>
             <button type="button" className="primary cc-focusable" onClick={() => setStep("test")}>
               {t.useDefaults}
             </button>
@@ -340,6 +394,13 @@ export function Onboarding({
           </select>
           {errorLine}
           <div className="row-end">
+            <button
+              type="button"
+              className="cc-focusable"
+              onClick={() => setStep("defaults")}
+            >
+              {t.onboardingBack}
+            </button>
             <button
               type="button"
               className="primary cc-focusable"
