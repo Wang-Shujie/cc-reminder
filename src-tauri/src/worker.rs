@@ -180,6 +180,10 @@ pub enum CoreEvent {
     HealthChanged {
         channel_id: Option<Uuid>,
     },
+    /// A new event landed in history (ingress commit) or history was cleared.
+    /// v2-issues: the subscription side existed from day one; this is the
+    /// producer that was never wired.
+    HistoryChanged,
 }
 
 impl CoreEvent {
@@ -190,6 +194,7 @@ impl CoreEvent {
         match self {
             Self::QueueChanged => "core://queue-changed",
             Self::HealthChanged { .. } => "core://health-changed",
+            Self::HistoryChanged => "core://history-changed",
         }
     }
 }
@@ -549,8 +554,10 @@ mod tests {
         let health = CoreEvent::HealthChanged {
             channel_id: Some(uuid::Uuid::now_v7()),
         };
+        let history = CoreEvent::HistoryChanged;
         assert_eq!(queue.core_topic(), "core://queue-changed");
         assert_eq!(health.core_topic(), "core://health-changed");
+        assert_eq!(history.core_topic(), "core://history-changed");
     }
 
     /// The command-test default sink is a DISCONNECTED sender: emit must be a

@@ -306,6 +306,13 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     // RunEvent::Exit) cancels all three together.
     let cancel = CancellationToken::new();
 
+    // Shared bounded channel for revision-only core:// events. Producers: the
+    // delivery worker (below), the IPC ingress loop (history-changed), and
+    // command bodies via CoreState.core_events; the single consumer is the
+    // forwarder task spawned further down.
+    let (core_event_sink, mut core_event_receiver) =
+        tokio::sync::mpsc::channel::<worker::CoreEvent>(64);
+
     // 6. Start IPC: drives process_live, replies Accepted only after durable
     //    commit, rejects unrecognized helpers without establishing trust.
     //    The accept loop selects on the same cancel token so an exiting app
@@ -313,6 +320,7 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     //    their durable reply before the loop breaks.
     let pipeline_for_ipc = pipeline.clone();
     let ipc_diagnostics = diagnostics.clone();
+    let ipc_events = core_event_sink.clone();
     let mut server =
         ipc::server::IpcServer::bind(paths.endpoint()).map_err(std::io::Error::other)?;
     let ipc_cancel = cancel.clone();
@@ -328,7 +336,15 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             let reply = match pipeline_for_ipc.process_live(request).await {
                 Ok(outcome) => {
                     let event_id = match outcome {
-                        pipeline::LiveOutcome::Processed { event_id } => event_id,
+                        pipeline::LiveOutcome::Processed { event_id } => {
+                            // v2-issues: 事件落库即推送 history-changed,
+                            // 通知记录订阅端即时刷新(重复事件无历史变化)。
+                            crate::worker::emit(
+                                &ipc_events,
+                                crate::worker::CoreEvent::HistoryChanged,
+                            );
+                            event_id
+                        }
                         pipeline::LiveOutcome::Duplicate { event_id } => event_id,
                     };
                     IngressResponse::Accepted { event_id }
@@ -360,11 +376,6 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         lease_duration: chrono::Duration::seconds(30),
         tick_interval: std::time::Duration::from_secs(2),
     };
-    // Shared bounded channel for revision-only core:// events. Producers: the
-    // delivery worker (below) and command bodies via CoreState.core_events;
-    // the single consumer is the forwarder task spawned right after.
-    let (core_event_sink, mut core_event_receiver) =
-        tokio::sync::mpsc::channel::<worker::CoreEvent>(64);
     let worker_events = core_event_sink.clone();
     let worker = DeliveryWorker::new(worker_config, worker_events);
 
