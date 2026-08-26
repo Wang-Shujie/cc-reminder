@@ -172,13 +172,13 @@ test("960 x 640 fixture: rail, header, content stay structurally separate", asyn
     expect(appCss).toMatch(/min-width:\s*960px/);
     expect(appCss).toMatch(/min-height:\s*640px/);
     // Quiet aesthetic: no viewport-scaled fonts, letter spacing pinned to 0,
-    // radii capped at 8px, health-only color accents.
+    // radii capped at 4px (wayfinding: right angles), guide-blue-only accents.
     expect(appCss).not.toMatch(/\d+vmin|\d+vw/);
     expect(appCss).toContain("letter-spacing: 0");
     for (const radius of appCss.matchAll(/border-radius:\s*([^;]+);/g)) {
       const values = radius[1]?.match(/\d+/g) ?? [];
       for (const v of values) {
-        expect(Number(v)).toBeLessThanOrEqual(8);
+        expect(Number(v)).toBeLessThanOrEqual(4);
       }
     }
   } finally {
