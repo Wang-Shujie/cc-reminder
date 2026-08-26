@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
+import { ChannelsPage } from "../channels/ChannelsPage";
 import { errorOf, type PageError } from "../lib/errors";
 import type {
   HealthIssue,
@@ -284,8 +285,6 @@ export function SettingsPage({
 
   return (
     <section aria-label={t.navSettings}>
-      <h1>{t.navSettings}</h1>
-
       {loadError !== null && <p role="alert">{t.settingsLoadFailed}</p>}
       {actionError !== null && (
         <p role="alert">
@@ -300,6 +299,8 @@ export function SettingsPage({
         </p>
       )}
 
+      {/* 设置重排版(用户裁决第四轮):自适应两栏分组,渠道添加占整行。 */}
+      <div className="settings-grid">
       {/* Startup + window */}
       <div className="settings-section">
         <h2>{t.sectionStartup}</h2>
@@ -545,6 +546,12 @@ export function SettingsPage({
           </ul>
         </div>
       )}
+
+      {/* 渠道添加表单(用户裁决:仅"添加"部分在设置;管理表在集成页)。 */}
+      <div className="settings-channel-add">
+        <ChannelsPage locale={locale} backend={backend} variant="add" />
+      </div>
+      </div>
 
       {installConfirmOpen && (
         <div className="dialog-overlay">

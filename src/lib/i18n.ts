@@ -13,15 +13,14 @@ export interface Dictionary {
   navRules: string;
   navIntegrations: string;
   statusTitle: string;
+  statusWordOk: string;
+  statusWordWarning: string;
+  statusWordError: string;
   pendingJobs: string;
   failedJobs: string;
   loading: string;
   pagePlaceholder: string;
   navLabel: string;
-  tabStatusOverview: string;
-  tabNotificationLog: string;
-  tabRuleTable: string;
-  tabProjectManagement: string;
   tabSources: string;
   tabDestinations: string;
   gotoIntegrations: string;
@@ -39,6 +38,8 @@ export interface Dictionary {
   detectedAgents: string;
   detectFailed: string;
   trustPending: string;
+  trustViewGuide: string;
+  trustGuideTitle: string;
   trustCommand: string;
   recheck: string;
   copyCommand: string;
@@ -74,7 +75,6 @@ export interface Dictionary {
   colFrequency: string;
   colChannels: string;
   colSource: string;
-  colStatus: string;
   highFrequency: string;
   normalFrequency: string;
   experimentalBadge: string;
@@ -232,12 +232,13 @@ export interface Dictionary {
   metricRetry: string;
   metricFailed: string;
   metricExpired: string;
+  metricLabelPending: string;
+  metricLabelRetry: string;
+  metricLabelFailed: string;
+  metricLabelExpired: string;
   lastSuccessLabel: string;
-  viewFailedJobs: string;
   overviewIssues: string;
-  noIssues: string;
   recentFailuresTitle: string;
-  noRecentFailures: string;
   recentFailuresLoadFailed: string;
   overviewLoadFailed: string;
   refreshedNotice: string;
@@ -262,6 +263,10 @@ export interface Dictionary {
   retryQueued: string;
   loadMore: string;
   emptyHistory: string;
+  presetLabel: string;
+  presetFailed: string;
+  presetQueued: string;
+  presetRetry: string;
   detailTitle: string;
   detailOccurred: string;
   detailReceived: string;
@@ -329,15 +334,14 @@ const zhCn: Dictionary = {
   navRules: "通知规则",
   navIntegrations: "集成",
   statusTitle: "CC Reminder",
+  statusWordOk: "运行正常",
+  statusWordWarning: "需要注意",
+  statusWordError: "存在异常",
   pendingJobs: "待发送",
   failedJobs: "失败任务",
   loading: "加载中…",
   pagePlaceholder: "此页面将在后续版本中提供。",
   navLabel: "主导航",
-  tabStatusOverview: "状态概览",
-  tabNotificationLog: "通知记录",
-  tabRuleTable: "规则表",
-  tabProjectManagement: "项目管理",
   tabSources: "通知来源",
   tabDestinations: "通知去向",
   gotoIntegrations: "前往集成",
@@ -355,6 +359,8 @@ const zhCn: Dictionary = {
   detectedAgents: "检测结果",
   detectFailed: "检测结果获取失败，请重试。",
   trustPending: "Codex 需要信任 Hook：在终端启动 codex（交互模式，直接运行 codex 而非 codex exec），输入 /hooks（带 s），审查并信任 CC Reminder 的两条钩子后回到这里重新检测。注意：codex exec 非交互模式存在不派发钩子的已知上游问题，请用交互会话验证。",
+  trustViewGuide: "查看指引",
+  trustGuideTitle: "Codex 信任指引",
   trustCommand: "/hooks",
   recheck: "重新检测",
   copyCommand: "复制命令",
@@ -389,7 +395,6 @@ const zhCn: Dictionary = {
   colFrequency: "频率",
   colChannels: "渠道",
   colSource: "配置来源",
-  colStatus: "状态",
   highFrequency: "高频",
   normalFrequency: "常规",
   experimentalBadge: "实验",
@@ -547,12 +552,13 @@ const zhCn: Dictionary = {
   metricRetry: "{n} 个等待重试任务",
   metricFailed: "{n} 个失败任务",
   metricExpired: "{n} 个过期任务",
+  metricLabelPending: "待发送",
+  metricLabelRetry: "等待重试",
+  metricLabelFailed: "失败任务",
+  metricLabelExpired: "已过期",
   lastSuccessLabel: "上次成功：{time}",
-  viewFailedJobs: "查看失败任务",
   overviewIssues: "待处理问题",
-  noIssues: "当前没有待处理的问题。",
   recentFailuresTitle: "最近失败",
-  noRecentFailures: "最近没有失败任务。",
   recentFailuresLoadFailed: "失败任务列表加载失败。",
   overviewLoadFailed: "健康状态加载失败，请稍后重试。",
   refreshedNotice: "数据已刷新。",
@@ -577,6 +583,10 @@ const zhCn: Dictionary = {
   retryQueued: "重试已加入队列。",
   loadMore: "加载更多",
   emptyHistory: "暂无通知历史",
+  presetLabel: "快捷筛选",
+  presetFailed: "失败",
+  presetQueued: "排队中",
+  presetRetry: "重试中",
   detailTitle: "通知详情（脱敏）",
   detailOccurred: "发生时间",
   detailReceived: "接收时间",
@@ -643,15 +653,14 @@ const en: Dictionary = {
   navRules: "Rules",
   navIntegrations: "Integrations",
   statusTitle: "CC Reminder",
+  statusWordOk: "All running normally",
+  statusWordWarning: "Needs attention",
+  statusWordError: "Fault present",
   pendingJobs: "Pending",
   failedJobs: "Failed jobs",
   loading: "Loading…",
   pagePlaceholder: "This page arrives in a later release.",
   navLabel: "Navigation",
-  tabStatusOverview: "Status",
-  tabNotificationLog: "Notification Log",
-  tabRuleTable: "Rules",
-  tabProjectManagement: "Projects",
   tabSources: "Sources",
   tabDestinations: "Destinations",
   gotoIntegrations: "Go to Integrations",
@@ -670,6 +679,8 @@ const en: Dictionary = {
   detectFailed: "Detection failed. Please retry.",
   trustPending:
     "Codex needs hook trust: launch codex in interactive mode (run `codex`, not `codex exec`), type /hooks (with s), review and trust the two CC Reminder hooks, then re-check here. Note: `codex exec` has a known upstream issue where trusted hooks may still not dispatch — verify with an interactive session.",
+  trustViewGuide: "View guide",
+  trustGuideTitle: "Codex trust guide",
   trustCommand: "/hooks",
   recheck: "Recheck",
   copyCommand: "Copy command",
@@ -704,7 +715,6 @@ const en: Dictionary = {
   colFrequency: "Rate",
   colChannels: "Channels",
   colSource: "Source",
-  colStatus: "Status",
   highFrequency: "High-freq",
   normalFrequency: "Normal",
   experimentalBadge: "Experimental",
@@ -871,12 +881,13 @@ const en: Dictionary = {
   metricRetry: "{n} jobs waiting to retry",
   metricFailed: "{n} failed jobs",
   metricExpired: "{n} expired jobs",
+  metricLabelPending: "Pending",
+  metricLabelRetry: "Retrying",
+  metricLabelFailed: "Failed",
+  metricLabelExpired: "Expired",
   lastSuccessLabel: "Last success: {time}",
-  viewFailedJobs: "View failed jobs",
   overviewIssues: "Open issues",
-  noIssues: "No open issues.",
   recentFailuresTitle: "Recent failures",
-  noRecentFailures: "No recent failures.",
   recentFailuresLoadFailed: "Failed to load recent failures.",
   overviewLoadFailed: "Failed to load health status. Please retry later.",
   refreshedNotice: "Data refreshed.",
@@ -901,6 +912,10 @@ const en: Dictionary = {
   retryQueued: "Re-delivery queued.",
   loadMore: "Load more",
   emptyHistory: "No notification history",
+  presetLabel: "Quick filters",
+  presetFailed: "Failed",
+  presetQueued: "Queued",
+  presetRetry: "Retrying",
   detailTitle: "Notification details (redacted)",
   detailOccurred: "Occurred at",
   detailReceived: "Received at",

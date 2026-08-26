@@ -3,6 +3,7 @@
 // Not decorative: every issue carries a button navigating to the management
 // page that fixes it.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowRight } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
 import type {
@@ -35,10 +36,6 @@ function issueAction(issueCode: string): IssueAction {
     return { kind: "page", page: "rules" };
   }
   return { kind: "page", page: "integrations" };
-}
-
-function metricText(template: string, n: number): string {
-  return template.replace("{n}", String(n));
 }
 
 export function OverviewPage({
@@ -155,35 +152,31 @@ export function OverviewPage({
 
       {/* Compact metric strip — counts mirror the shared snapshot verbatim. */}
       <ul className="metric-strip">
-        <li>
-          <span>{metricText(t.metricPending, snapshot.pending_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.pending_jobs}</span>
+          <span className="metric-label">{t.metricLabelPending}</span>
         </li>
-        <li>
-          <span>{metricText(t.metricRetry, snapshot.retry_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.retry_jobs}</span>
+          <span className="metric-label">{t.metricLabelRetry}</span>
         </li>
-        <li>
-          <span>{metricText(t.metricFailed, snapshot.failed_jobs)}</span>
-          <button
-            type="button"
-            className="cc-focusable"
-            onClick={() => onOpenHistory?.("failed")}
-          >
-            {t.viewFailedJobs}
-          </button>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.failed_jobs}</span>
+          <span className="metric-label">{t.metricLabelFailed}</span>
         </li>
-        <li>
-          <span>{metricText(t.metricExpired, snapshot.expired_jobs)}</span>
+        <li className="metric-plate">
+          <span className="metric-number">{snapshot.expired_jobs}</span>
+          <span className="metric-label">{t.metricLabelExpired}</span>
         </li>
-        <li className="muted">
+        <li className="metric-last muted">
           <span>{t.lastSuccessLabel.replace("{time}", lastSuccess)}</span>
         </li>
       </ul>
 
-      <section aria-label={t.overviewIssues}>
-        <h2>{t.overviewIssues}</h2>
-        {snapshot.issues.length === 0 ? (
-          <p className="muted">{t.noIssues}</p>
-        ) : (
+      {/* 导视纪律(用户裁决):无待处理问题即无牌面——空态不占位。 */}
+      {snapshot.issues.length > 0 && (
+        <section aria-label={t.overviewIssues}>
+          <h2>{t.overviewIssues}</h2>
           <ul className="issue-list">
             {snapshot.issues.map((issue) => {
               const action = issueAction(issue.issue_code);
@@ -204,7 +197,7 @@ export function OverviewPage({
                   )}
                   <button
                     type="button"
-                    className="cc-focusable"
+                    className="cc-focusable link-arrow"
                     onClick={() =>
                       action.kind === "history"
                         ? onOpenHistory?.()
@@ -212,43 +205,43 @@ export function OverviewPage({
                     }
                   >
                     {actionLabel(action)}
+                    <ArrowRight size={14} aria-hidden="true" />
                   </button>
                 </li>
               );
             })}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
 
-      <section aria-label={t.recentFailuresTitle} className="page-subsection">
-        <h2>{t.recentFailuresTitle}</h2>
-        {recentFailures === null ? (
-          failuresErrored ? (
+      {/* 同上:无失败即无牌面;仅加载失败时保留提示行。 */}
+      {(failuresErrored || (recentFailures?.length ?? 0) > 0) && (
+        <section aria-label={t.recentFailuresTitle} className="page-subsection">
+          <h2>{t.recentFailuresTitle}</h2>
+          {failuresErrored ? (
             <p className="muted">{t.recentFailuresLoadFailed}</p>
-          ) : null
-        ) : recentFailures.length === 0 ? (
-          <p className="muted">{t.noRecentFailures}</p>
-        ) : (
-          <table className="rules-table">
-            <thead>
-              <tr>
-                <th>{t.colTime}</th>
-                <th>{t.colHook}</th>
-                <th>{t.filterResult}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentFailures.map((item) => (
-                <tr key={item.event_id}>
-                  <td>{new Date(item.occurred_at).toLocaleString()}</td>
-                  <td>{item.source_event}</td>
-                  <td>{deliveryStatusText(t, item.delivery_status)}</td>
+          ) : (
+            <table className="rules-table">
+              <thead>
+                <tr>
+                  <th>{t.colTime}</th>
+                  <th>{t.colHook}</th>
+                  <th>{t.filterResult}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {recentFailures!.map((item) => (
+                  <tr key={item.event_id} className="hazard-row">
+                    <td>{new Date(item.occurred_at).toLocaleString()}</td>
+                    <td>{item.source_event}</td>
+                    <td>{deliveryStatusText(t, item.delivery_status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
     </section>
   );
 }

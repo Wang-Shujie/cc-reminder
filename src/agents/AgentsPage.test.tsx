@@ -150,7 +150,10 @@ test("applied result shows per-event health and Codex /hooks copy/recheck on tru
   await user.click(screen.getByRole("button", { name: "安装 Codex Hook" }));
   // Per-event health display of the applied result.
   expect(await screen.findByText(/Stop · 健康/)).toBeVisible();
-  // NeedsUserConfirmation → the official command with copy + recheck.
+  // NeedsUserConfirmation → the guidance moved into a dialog (user decision):
+  // the inline row only carries the entry link.
+  await user.click(screen.getByRole("button", { name: "查看指引" }));
+  expect(await screen.findByRole("dialog", { name: "Codex 信任指引" })).toBeVisible();
   expect(screen.getByText("/hooks")).toBeVisible();
   const detectionsBefore = vi.mocked(backend.detectAgents).mock.calls.length;
   await user.click(screen.getByRole("button", { name: "复制命令" }));

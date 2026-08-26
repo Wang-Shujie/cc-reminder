@@ -21,13 +21,15 @@ import { expect, test, type Page } from "@playwright/test";
 const NAV_PAGES = [
   ["工作台", "workbench"],
   ["通知规则", "rules"],
+  ["项目", "projects"],
   ["集成", "integrations"],
   ["设置", "settings"],
 ] as const;
 
 const SETTLE_TARGETS: Record<(typeof NAV_PAGES)[number][1], () => Promise<unknown>> = {
-  workbench: (page) => page.getByRole("heading", { name: "待处理问题" }).waitFor(),
+  workbench: (page) => page.getByRole("heading", { name: "概览" }).waitFor(),
   rules: (page) => page.getByRole("row", { name: /Stop/ }).waitFor(),
+  projects: (page) => page.getByRole("cell", { name: "演示项目" }).waitFor(),
   integrations: (page) =>
     page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
   // Hydration enables the retention inputs; value proves get_settings landed.
@@ -36,11 +38,6 @@ const SETTLE_TARGETS: Record<(typeof NAV_PAGES)[number][1], () => Promise<unknow
 
 async function openPage(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: label }).click();
-}
-
-/** In-page TabBar tab (role=tab), e.g. 通知去向 inside 集成. */
-async function openTab(page: Page, label: string): Promise<void> {
-  await page.getByRole("tab", { name: label }).click();
 }
 
 async function openAndSettle(page: Page, entry: (typeof NAV_PAGES)[number]): Promise<void> {
@@ -161,8 +158,8 @@ test.describe("workflow coverage", () => {
     await expect(drawer.getByText("预览：Stop")).toBeVisible();
 
     // Raw credential material must never reach ANY rendered output.
+    // The channel table lives in Integrations (settings keeps the add form).
     await openPage(page, "集成");
-    await openTab(page, "通知去向");
     await page.getByRole("cell", { name: "值班群", exact: true }).waitFor();
     await expect(page.locator("body")).not.toContainText("secret-raw-value");
   });
@@ -206,7 +203,7 @@ test.describe("workflow coverage", () => {
     await page.keyboard.press("Enter");
 
     // Completion lands in the main shell at its default workbench.
-    await page.getByRole("heading", { name: "工作台" }).waitFor();
+    await page.getByRole("heading", { name: "概览" }).waitFor();
     await expect(page.getByRole("button", { name: "通知规则" })).toBeVisible();
   });
 
@@ -239,7 +236,7 @@ test.describe("workflow coverage", () => {
 test.describe("desktop layout coverage", () => {
   test("all primary pages fit at the minimum window without overlap", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("heading", { name: "待处理问题" }).waitFor(); // default workbench ready
+    await page.getByRole("heading", { name: "概览" }).waitFor(); // default workbench ready
     for (const entry of NAV_PAGES) {
       await openAndSettle(page, entry);
       await assertDesktopLayout(page);
@@ -265,7 +262,7 @@ test.describe("desktop layout coverage", () => {
     // 1920×1080 at zoom 2 ≈ the 960×640 minimum CSS viewport (WCAG 1.4.4).
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto("/");
-    await page.getByRole("heading", { name: "待处理问题" }).waitFor();
+    await page.getByRole("heading", { name: "概览" }).waitFor();
     await page.evaluate(() => {
       (document.documentElement.style as CSSStyleDeclaration & { zoom: string }).zoom = "200%";
     });

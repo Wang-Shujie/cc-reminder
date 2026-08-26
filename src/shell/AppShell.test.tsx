@@ -10,8 +10,9 @@ const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
 async function renderShell(backend: FakeBackend) {
   render(<TestApp backend={backend} />);
-  // Locale-independent: the zh and en shells use different headings.
-  await screen.findByRole("heading", { level: 1 });
+  // Pages carry no h1 (the rail's blue slab marks location); the nav itself
+  // is the locale-independent readiness signal.
+  await screen.findByRole("navigation");
 }
 
 test("navigation is keyboard accessible and remembers the selected page", async () => {
@@ -19,9 +20,7 @@ test("navigation is keyboard accessible and remembers the selected page", async 
   const backend = configuredBackend();
   await renderShell(backend);
   await user.click(screen.getByRole("button", { name: "通知规则" }));
-  expect(
-    screen.getByRole("heading", { name: "通知规则", level: 1 }),
-  ).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Hook 规则" })).toBeVisible();
   expect(localStorage.getItem("cc-reminder:last-page")).toBe("rules");
   expect(screen.getByRole("button", { name: "通知规则" })).toHaveAttribute(
     "aria-current",
@@ -32,29 +31,42 @@ test("navigation is keyboard accessible and remembers the selected page", async 
 test("selected page survives a remount via localStorage", async () => {
   const user = userEvent.setup();
   const { unmount } = render(<TestApp backend={configuredBackend()} />);
-  await screen.findByRole("heading", { name: "工作台" });
+  await screen.findByRole("navigation");
   await user.click(screen.getByRole("button", { name: "设置" }));
-  expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    ),
+  );
   unmount();
   render(<TestApp backend={configuredBackend()} />);
-  expect(await screen.findByRole("heading", { name: "设置" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    ),
+  );
 });
 
 test("legacy v1 page ids migrate to the new destinations", async () => {
-  for (const [legacy, heading] of [
+  for (const [legacy, active] of [
     ["overview", "工作台"],
     ["history", "工作台"],
     ["hooks", "通知规则"],
-    ["projects", "通知规则"],
+    ["projects", "项目"],
     ["agents", "集成"],
     ["channels", "集成"],
     ["settings", "设置"],
   ] as const) {
     localStorage.setItem("cc-reminder:last-page", legacy);
     const { unmount } = render(<TestApp backend={configuredBackend()} />);
-    expect(
-      await screen.findByRole("heading", { name: heading, level: 1 }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: active })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
     unmount();
   }
 });
@@ -62,9 +74,12 @@ test("legacy v1 page ids migrate to the new destinations", async () => {
 test("unknown legacy value falls back to the workbench", async () => {
   localStorage.setItem("cc-reminder:last-page", "nonsense");
   render(<TestApp backend={configuredBackend()} />);
-  expect(
-    await screen.findByRole("heading", { name: "工作台", level: 1 }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "工作台" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    ),
+  );
 });
 
 // The workbench's overview panel also fetches health on mount and on these
@@ -73,7 +88,7 @@ test("core revision events refresh health instead of trusting payload data", asy
   const backend = configuredBackend();
   const calls = () => vi.mocked(backend.getHealthSnapshot).mock.calls.length;
   render(<TestApp backend={backend} />);
-  await screen.findByRole("heading", { name: "工作台" });
+  await screen.findByRole("navigation");
   await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(2));
   const before = calls();
   act(() => {
@@ -87,7 +102,7 @@ test("queue revision events also trigger a refetch", async () => {
   const backend = configuredBackend();
   const calls = () => vi.mocked(backend.getHealthSnapshot).mock.calls.length;
   render(<TestApp backend={backend} />);
-  await screen.findByRole("heading", { name: "工作台" });
+  await screen.findByRole("navigation");
   await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(2));
   const before = calls();
   act(() => {
@@ -129,9 +144,9 @@ test("focus is visible on navigation controls", async () => {
   expect(appCss).toContain("outline");
 });
 
-test("all four navigation targets are present", async () => {
+test("all five navigation targets are present", async () => {
   await renderShell(configuredBackend());
-  for (const label of ["工作台", "通知规则", "集成", "设置"]) {
+  for (const label of ["工作台", "通知规则", "项目", "集成", "设置"]) {
     expect(screen.getByRole("button", { name: label })).toBeVisible();
   }
 });
@@ -172,13 +187,13 @@ test("960 x 640 fixture: rail, header, content stay structurally separate", asyn
     expect(appCss).toMatch(/min-width:\s*960px/);
     expect(appCss).toMatch(/min-height:\s*640px/);
     // Quiet aesthetic: no viewport-scaled fonts, letter spacing pinned to 0,
-    // radii capped at 8px, health-only color accents.
+    // radii capped at 4px (wayfinding: right angles), guide-blue-only accents.
     expect(appCss).not.toMatch(/\d+vmin|\d+vw/);
     expect(appCss).toContain("letter-spacing: 0");
     for (const radius of appCss.matchAll(/border-radius:\s*([^;]+);/g)) {
       const values = radius[1]?.match(/\d+/g) ?? [];
       for (const v of values) {
-        expect(Number(v)).toBeLessThanOrEqual(8);
+        expect(Number(v)).toBeLessThanOrEqual(4);
       }
     }
   } finally {

@@ -3,7 +3,7 @@
 // enum, per-agent drift from the shared derivation, per-event health of the
 // last applied result, and the Codex /hooks trust handoff.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ClipboardCopy } from "lucide-react";
+import { ArrowRight, ClipboardCopy } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
 import {
@@ -102,6 +102,10 @@ export function AgentsPage({
   /** Initial load of the PRIMARY list (list_agent_integrations) failed. */
   const [loadFailed, setLoadFailed] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<AgentKindCode | null>(null);
+  const [trustGuideOpen, setTrustGuideOpen] = useState(false);
+  /** 最近应用结果弹窗(用户裁决第四轮):动作完成后自动弹出一次,
+   *  页面不再常驻结果区块;工具栏箭头可随时回看。 */
+  const [resultOpen, setResultOpen] = useState(false);
   /** Set after the backend rejects with agent_confirmation_required; the open
    *  dialog discloses the compatibility caveat before retrying with true. */
   const [needsConsent, setNeedsConsent] = useState<{
@@ -166,6 +170,9 @@ export function AgentsPage({
       });
       setNeedsConsent(null);
       setUninstallTarget(null);
+      if (action !== "uninstall") {
+        setResultOpen(true);
+      }
       await refresh();
     } catch (e: unknown) {
       if (!confirmCompatibleVersion && errorCodeOf(e) === AGENT_CONFIRMATION_REQUIRED) {
@@ -214,16 +221,44 @@ export function AgentsPage({
           >
             {detecting ? t.agentDetecting : t.agentDetect}
           </button>
+          {(entries["claude-code"] !== undefined ||
+            entries["codex"] !== undefined) && (
+            <button
+              type="button"
+              className="cc-focusable link-arrow"
+              onClick={() => setResultOpen(true)}
+            >
+              {t.lastApplied}
+              <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
 
       {loadFailed && <p role="alert">{t.listLoadFailed}</p>}
 
+      {/* 动作结果以弹窗呈现(用户裁决):内层保留 role=alert 语义。 */}
       {error !== null && (
-        <p role="alert">
-          {error.message}
-          {error.suggested_action !== null && <>（{error.suggested_action}）</>}
-        </p>
+        <div className="dialog-overlay">
+          <div role="dialog" aria-label={t.navAgents} className="dialog">
+            <h2>{t.navAgents}</h2>
+            <p role="alert">
+              {error.message}
+              {error.suggested_action !== null && <>（{error.suggested_action}）</>}
+            </p>
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setError(null);
+                }}
+              >
+                {t.drawerClose}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <table className="rules-table">
@@ -337,69 +372,110 @@ export function AgentsPage({
       </table>
       {summaries === null && <p className="muted">{t.loading}</p>}
 
-      {(entries["claude-code"] !== undefined || entries["codex"] !== undefined) && (
-        <section aria-label={t.lastApplied}>
-          <h2>{t.lastApplied}</h2>
-          {AGENTS.map((agent) =>
-            (entries[agent] ?? []).length > 0 ? (
-              <div key={agent}>
-                <h3>{agentName(t, agent)}</h3>
-                <ul>
-                  {(entries[agent] ?? []).map((entry) => (
-                    <li key={entry.source_event}>
-                      {entry.source_event} · {entryHealthLabel(t, entry.health)}
-                      {entry.trust_status === "needs_user_confirmation" &&
-                        ` · ${
-                          codexConfirmed
-                            ? t.ehAwaitingFirstRun
-                            : t.ehNeedsTrust
-                        }`}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null,
-          )}
-          {(entries["codex"] ?? []).some(
-            (entry) =>
-              entry.trust_status === "needs_user_confirmation" ||
-              entry.health === "needs_trust",
-          ) && (
+      {resultOpen &&
+        (entries["claude-code"] !== undefined ||
+          entries["codex"] !== undefined) && (
+        <div className="dialog-overlay">
+          <div role="dialog" aria-label={t.lastApplied} className="dialog">
+            <h2>{t.lastApplied}</h2>
+            {AGENTS.map((agent) =>
+              (entries[agent] ?? []).length > 0 ? (
+                <div key={agent}>
+                  <h3>{agentName(t, agent)}</h3>
+                  <ul>
+                    {(entries[agent] ?? []).map((entry) => (
+                      <li key={entry.source_event}>
+                        {entry.source_event} · {entryHealthLabel(t, entry.health)}
+                        {entry.trust_status === "needs_user_confirmation" &&
+                          ` · ${
+                            codexConfirmed
+                              ? t.ehAwaitingFirstRun
+                              : t.ehNeedsTrust
+                          }`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null,
+            )}
+            {(entries["codex"] ?? []).some(
+              (entry) =>
+                entry.trust_status === "needs_user_confirmation" ||
+                entry.health === "needs_trust",
+            ) && (
+              <p className="trust-command">
+                {/* Once any Codex entry is observed working, the official /hooks
+                    confirmation is demonstrably done: remaining pending entries
+                    just await their first real occurrence — inform, don't
+                    re-instruct. */}
+                {codexConfirmed ? (
+                  <span>{t.trustDoneAwaiting}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="cc-focusable link-arrow"
+                    onClick={() => {
+                      setResultOpen(false);
+                      setTrustGuideOpen(true);
+                    }}
+                  >
+                    {t.trustViewGuide}
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+                )}
+              </p>
+            )}
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => setResultOpen(false)}
+              >
+                {t.drawerClose}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trustGuideOpen && (
+        <div className="dialog-overlay">
+          <div role="dialog" aria-label={t.trustGuideTitle} className="dialog">
+            <h2>{t.trustGuideTitle}</h2>
+            <p>{t.trustNotice}</p>
             <p className="trust-command">
-              {/* Once any Codex entry is observed working, the official /hooks
-                  confirmation is demonstrably done: remaining pending entries
-                  just await their first real occurrence — inform, don't
-                  re-instruct. */}
-              {codexConfirmed ? (
-                <span>{t.trustDoneAwaiting}</span>
-              ) : (
-                <>
-                  <span>
-                    {t.trustNotice} <code>{t.trustCommand}</code>
-                  </span>
-                  <button
-                    type="button"
-                    className="cc-focusable"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(t.trustCommand);
-                    }}
-                  >
-                    <ClipboardCopy size={14} aria-hidden="true" /> {t.copyCommand}
-                  </button>
-                  <button
-                    type="button"
-                    className="cc-focusable"
-                    onClick={() => {
-                      void detect();
-                    }}
-                  >
-                    {t.recheck}
-                  </button>
-                </>
-              )}
+              <code>{t.trustCommand}</code>
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(t.trustCommand);
+                }}
+              >
+                <ClipboardCopy size={14} aria-hidden="true" /> {t.copyCommand}
+              </button>
             </p>
-          )}
-        </section>
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setTrustGuideOpen(false);
+                  void detect();
+                }}
+              >
+                {t.recheck}
+              </button>
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => setTrustGuideOpen(false)}
+              >
+                {t.drawerClose}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {uninstallTarget !== null && (

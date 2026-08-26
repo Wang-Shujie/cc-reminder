@@ -118,7 +118,7 @@ test("shows every Hook including unavailable and high-frequency rows", async () 
 
   // Fixed capability columns.
   const headers = (await screen.findAllByRole("columnheader")).map((cell) => cell.textContent);
-  expect(headers).toEqual(["开关", "Hook", "阶段", "Agent", "频率", "渠道", "配置来源", "状态"]);
+  expect(headers).toEqual(["开关", "Hook", "阶段", "Agent", "频率", "渠道", "配置来源"]);
 
   // Experimental and deprecated catalog states surface as badges.
   expect(screen.getByText("实验")).toBeVisible();

@@ -1,8 +1,9 @@
 // Quiet desktop shell: 184px rail + 48px header + unframed content, one grid.
-// Four destinations (spec §1); in-page sub-navigation lives in each page's
-// TabBar. Health colors are the only accents; everything else is neutral.
+// Five destinations (v2.1 第四轮裁决:规则/项目拆分);Health colors are the
+// only accents; everything else is neutral.
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  FolderGit2,
   LayoutDashboard,
   ListChecks,
   Settings as SettingsIcon,
@@ -10,8 +11,9 @@ import {
 } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
+import { HookRulesPage } from "../hooks/HookRulesPage";
 import { IntegrationsPage } from "../integrations/IntegrationsPage";
-import { RulesPage } from "../rules/RulesPage";
+import { ProjectsPage } from "../projects/ProjectsPage";
 import { SettingsPage } from "../settings/SettingsPage";
 import { WorkbenchPage } from "../workbench/WorkbenchPage";
 import {
@@ -22,7 +24,12 @@ import {
 } from "../lib/contracts";
 import { dictionary, type Dictionary } from "../lib/i18n";
 
-export type PageId = "workbench" | "rules" | "integrations" | "settings";
+export type PageId =
+  | "workbench"
+  | "rules"
+  | "projects"
+  | "integrations"
+  | "settings";
 
 const PAGES: readonly {
   id: PageId;
@@ -31,6 +38,7 @@ const PAGES: readonly {
 }[] = [
   { id: "workbench", icon: LayoutDashboard, label: (d) => d.navWorkbench },
   { id: "rules", icon: ListChecks, label: (d) => d.navRules },
+  { id: "projects", icon: FolderGit2, label: (d) => d.navProjects },
   { id: "integrations", icon: Webhook, label: (d) => d.navIntegrations },
   { id: "settings", icon: SettingsIcon, label: (d) => d.navSettings },
 ];
@@ -40,7 +48,7 @@ const LEGACY_PAGE_MAP: Record<string, PageId> = {
   overview: "workbench",
   history: "workbench",
   hooks: "rules",
-  projects: "rules",
+  projects: "projects",
   agents: "integrations",
   channels: "integrations",
   settings: "settings",
@@ -114,6 +122,13 @@ export function AppShell({
       <header className="shell-header">
         <span className="shell-title">{t.statusTitle}</span>
         <span className={`health-dot health-${overall}`} aria-hidden="true" />
+        <span className="shell-status">
+          {overall === "ok"
+            ? t.statusWordOk
+            : overall === "warning"
+              ? t.statusWordWarning
+              : t.statusWordError}
+        </span>
         <span className="shell-counts">
           {t.pendingJobs}: {health?.pending_jobs ?? 0} · {t.failedJobs}:{" "}
           {health?.failed_jobs ?? 0}
@@ -137,9 +152,11 @@ export function AppShell({
         {page === "workbench" ? (
           <WorkbenchPage locale={locale} onNavigate={openPage} />
         ) : page === "rules" ? (
-          <RulesPage locale={locale} />
+          <HookRulesPage locale={locale} />
+        ) : page === "projects" ? (
+          <ProjectsPage locale={locale} />
         ) : page === "integrations" ? (
-          <IntegrationsPage locale={locale} />
+          <IntegrationsPage locale={locale} onNavigate={openPage} />
         ) : (
           <SettingsPage locale={locale} />
         )}
