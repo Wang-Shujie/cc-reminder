@@ -30,6 +30,8 @@ export interface Dictionary {
   gotoIntegrations: string;
   gotoRules: string;
   gotoHistoryTab: string;
+  manageChannels: string;
+  noChannelsHint: string;
   onboardingDetect: string;
   onboardingInstall: string;
   onboardingChannel: string;
@@ -353,6 +355,8 @@ const zhCn: Dictionary = {
   gotoIntegrations: "前往集成",
   gotoRules: "前往规则",
   gotoHistoryTab: "查看通知记录",
+  manageChannels: "管理渠道",
+  noChannelsHint: "尚未配置渠道。",
   onboardingDetect: "检测 Agent",
   onboardingInstall: "安装 Hooks",
   onboardingChannel: "添加渠道",
@@ -674,6 +678,8 @@ const en: Dictionary = {
   gotoIntegrations: "Go to Integrations",
   gotoRules: "Go to Rules",
   gotoHistoryTab: "View notification log",
+  manageChannels: "Manage channels",
+  noChannelsHint: "No channels configured yet.",
   onboardingDetect: "Detect Agents",
   onboardingInstall: "Install Hooks",
   onboardingChannel: "Add Channel",

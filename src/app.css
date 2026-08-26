@@ -953,3 +953,27 @@ input[type="radio"] {
   border-top: 2px solid var(--line-strong);
   overflow-y: auto;
 }
+
+/* 集成页(单页布局):去向区块与来源区块分层间距;渠道摘要行。 */
+.integrations-gap {
+  margin-top: 32px;
+}
+
+.channel-summary {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.channel-summary li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  border-bottom: 1px solid var(--line);
+}
+
+.channel-summary .channel-name {
+  font-weight: 600;
+}

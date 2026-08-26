@@ -219,11 +219,28 @@ export function AgentsPage({
 
       {loadFailed && <p role="alert">{t.listLoadFailed}</p>}
 
+      {/* 动作结果以弹窗呈现(用户裁决):内层保留 role=alert 语义。 */}
       {error !== null && (
-        <p role="alert">
-          {error.message}
-          {error.suggested_action !== null && <>（{error.suggested_action}）</>}
-        </p>
+        <div className="dialog-overlay">
+          <div role="dialog" aria-label={t.navAgents} className="dialog">
+            <h2>{t.navAgents}</h2>
+            <p role="alert">
+              {error.message}
+              {error.suggested_action !== null && <>（{error.suggested_action}）</>}
+            </p>
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setError(null);
+                }}
+              >
+                {t.drawerClose}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <table className="rules-table">

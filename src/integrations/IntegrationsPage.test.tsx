@@ -1,20 +1,24 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { vi } from "vitest";
 
 import { BackendProvider } from "../lib/backend";
-import { configuredBackend } from "../test/TestApp";
+import { configuredBackend, testChannelSummary } from "../test/TestApp";
 import { IntegrationsPage } from "./IntegrationsPage";
 
-test("defaults to sources and can switch to destinations", async () => {
+test("sources and destinations render as one page; manage jumps to settings", async () => {
+  const onNavigate = vi.fn();
   const user = userEvent.setup();
   render(
-    <BackendProvider backend={configuredBackend()}>
-      <IntegrationsPage locale="zh_cn" />
+    <BackendProvider backend={configuredBackend({ channels: [testChannelSummary()] })}>
+      <IntegrationsPage locale="zh_cn" onNavigate={onNavigate} />
     </BackendProvider>,
   );
-  expect(
-    await screen.findByRole("heading", { name: "Agent 集成" }),
-  ).toBeVisible();
-  await user.click(screen.getByRole("tab", { name: "通知去向" }));
-  expect(screen.getByRole("heading", { name: "渠道" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "通知来源" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Agent 集成" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "通知去向" })).toBeVisible();
+  // 渠道摘要列表来自 listChannels(fake 默认渠道:值班群)。
+  expect(await screen.findByText("值班群")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "管理渠道" }));
+  expect(onNavigate).toHaveBeenCalledWith("settings");
 });

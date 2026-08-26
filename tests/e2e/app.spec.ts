@@ -38,11 +38,6 @@ async function openPage(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: label }).click();
 }
 
-/** In-page TabBar tab (role=tab), e.g. 通知去向 inside 集成. */
-async function openTab(page: Page, label: string): Promise<void> {
-  await page.getByRole("tab", { name: label }).click();
-}
-
 async function openAndSettle(page: Page, entry: (typeof NAV_PAGES)[number]): Promise<void> {
   const [label] = entry;
   await openPage(page, label);
@@ -161,8 +156,8 @@ test.describe("workflow coverage", () => {
     await expect(drawer.getByText("预览：Stop")).toBeVisible();
 
     // Raw credential material must never reach ANY rendered output.
-    await openPage(page, "集成");
-    await openTab(page, "通知去向");
+    // Channels live in Settings since the v2.1 revision.
+    await openPage(page, "设置");
     await page.getByRole("cell", { name: "值班群", exact: true }).waitFor();
     await expect(page.locator("body")).not.toContainText("secret-raw-value");
   });

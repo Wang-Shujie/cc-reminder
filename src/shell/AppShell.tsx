@@ -146,7 +146,7 @@ export function AppShell({
         ) : page === "rules" ? (
           <RulesPage locale={locale} />
         ) : page === "integrations" ? (
-          <IntegrationsPage locale={locale} />
+          <IntegrationsPage locale={locale} onNavigate={openPage} />
         ) : (
           <SettingsPage locale={locale} />
         )}

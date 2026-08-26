@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
+import { ChannelsPage } from "../channels/ChannelsPage";
 import { errorOf, type PageError } from "../lib/errors";
 import type {
   HealthIssue,
@@ -543,6 +544,9 @@ export function SettingsPage({
           </ul>
         </div>
       )}
+
+      {/* 渠道管理整体自集成页移入(用户裁决)。 */}
+      <ChannelsPage locale={locale} backend={backend} />
 
       {installConfirmOpen && (
         <div className="dialog-overlay">
