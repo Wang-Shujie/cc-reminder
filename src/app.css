@@ -448,7 +448,7 @@ input[type="radio"] {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--slab);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 18px;
   white-space: nowrap;
 }
@@ -519,7 +519,7 @@ input[type="radio"] {
 .tag {
   padding: 0 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 18px;
 }
 
