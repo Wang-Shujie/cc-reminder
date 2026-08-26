@@ -859,3 +859,90 @@ input[type="radio"] {
 .settings-section input[type="number"] {
   width: 120px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Wayfinding v2.1: 徽章标牌、警戒带动效、浏览器表面。
+ * ------------------------------------------------------------------------- */
+
+/* 徽章 = 小标牌:细描边 + 透明底,直角;语义色只描边不填底。 */
+.badge,
+.tag-overridden {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--ink) 40%, transparent);
+  border-radius: 0;
+}
+
+/* 警戒带滑入:异常行进入视野时带从 0 展宽到 4px,一次即止。 */
+@keyframes hazard-in {
+  from {
+    width: 0;
+  }
+  to {
+    width: 4px;
+  }
+}
+
+.hazard-row td:first-child::before {
+  animation: hazard-in 180ms ease-out 1 both;
+}
+
+/* 键盘导向:焦点环淡入(仅动效允许时;reduce 下即静态环)。 */
+@media (prefers-reduced-motion: no-preference) {
+  .cc-focusable:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    animation: focus-in 120ms ease-out 1 both;
+  }
+
+  @keyframes focus-in {
+    from {
+      outline-color: transparent;
+    }
+
+    to {
+      outline-color: var(--guide);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hazard-row td:first-child::before {
+    animation: none;
+  }
+}
+
+/* 空状态:安静文案上方一段 24px 刻度线——导视里空白也是牌面。 */
+.shell-content p.muted:only-of-type::before {
+  content: "";
+  display: block;
+  width: 24px;
+  margin-bottom: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* 浏览器表面:选区、光标、滚动条同属这套系统。 */
+::selection {
+  background: color-mix(in srgb, var(--guide) 30%, transparent);
+}
+
+::caret {
+  color: var(--guide);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-2);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
