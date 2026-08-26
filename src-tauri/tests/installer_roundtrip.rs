@@ -950,6 +950,30 @@ fn atomic_rename_failure_leaves_original_unchanged() {
 // Task 11: full checked Hook mutation transaction (lifecycle, snapshot, trust)
 // ============================================================================
 
+/// The hook_installations row written by apply(Install) must carry the exact
+/// fingerprint a LIVE helper reports for itself: canonical_hook_command always
+/// includes the Windows override component, even for agents whose config
+/// schema cannot persist it (Claude drops commandWindows on round-trip, so
+/// deriving the fingerprint from the parsed-back entry silently breaks the
+/// process_live trust gate for every real invocation).
+#[test]
+fn recorded_command_fingerprint_matches_what_the_runtime_helper_reports() {
+    for agent in [CLAUDE, CODEX] {
+        let env = InstallerEnvironment::new(agent, true);
+        let selection = env.selection(&["Stop"]);
+        env.apply(HookAction::Install, &selection).unwrap();
+
+        let row = env.repository.hook(agent, "Stop").unwrap();
+        let expected = cc_reminder_lib::hook_command::command_fingerprint(
+            &cc_reminder_lib::installer::owned_command(&env.helper.stable_path(), agent, "Stop"),
+        );
+        assert_eq!(
+            row.command_fingerprint, expected,
+            "{agent:?} stored fingerprint diverges from the runtime self-report"
+        );
+    }
+}
+
 /// Wired test environment for one agent. Owns the tempdir, database, cipher,
 /// helper installer, and the HookInstaller under test. Mirrors how the desktop
 /// shell wires a `HookEnvironment`, with a deterministic data key.

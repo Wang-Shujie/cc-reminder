@@ -135,7 +135,15 @@ impl HookInstaller {
                 });
                 continue;
             };
-            let cmd_fp = command_fingerprint_of(installed_entry);
+            // Compare against what a LIVE helper reports for itself (the
+            // canonical stable-path command, Windows component included) — not
+            // against the parsed-back config entry, whose schema may have
+            // dropped fields like Claude's commandWindows.
+            let cmd_fp = crate::hook_command::command_fingerprint(&owned_command(
+                &selection.helper_path,
+                self.agent,
+                event,
+            ));
             let def_fp = hook_definition_fingerprint(self.agent, installed_entry);
             let health = entry_health(
                 row.as_ref(),
@@ -341,7 +349,16 @@ impl HookInstaller {
         let helper_version = selection.helper_version.to_string();
         let mut records = Vec::with_capacity(installed.len());
         for entry in installed {
-            let cmd_fp = command_fingerprint_of(entry);
+            // Record the fingerprint the runtime helper self-reports (canonical
+            // stable-path command incl. its Windows component), NOT a hash of
+            // the parsed-back config entry: Claude's settings schema cannot
+            // persist commandWindows, so deriving from it broke the process_live
+            // trust gate for every real Claude Code invocation.
+            let cmd_fp = crate::hook_command::command_fingerprint(&owned_command(
+                &selection.helper_path,
+                self.agent,
+                &entry.source_event,
+            ));
             let def_fp = hook_definition_fingerprint(self.agent, entry);
             let trust = self.resolve_trust(&entry.source_event, &cmd_fp, &def_fp);
             let last_seen_at = if trust == TrustStatus::ObservedWorking {
@@ -390,10 +407,6 @@ impl HookInstaller {
             _ => TrustStatus::NeedsUserConfirmation,
         }
     }
-}
-
-fn command_fingerprint_of(entry: &OwnedHookEntry) -> String {
-    crate::hook_command::command_fingerprint(&entry.command)
 }
 
 fn entry_health(
