@@ -38,6 +38,21 @@ fn valid_hook_invocation_is_neutral_even_when_every_sink_is_unavailable() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn helper_proceeds_without_stdin_eof_like_codex() {
+    let env = HookEnvironment::new();
+    std::fs::create_dir(env.app().join("cc-reminder.sqlite3")).unwrap();
+    std::fs::write(env.app().join("spool"), b"unavailable").unwrap();
+
+    let output = env.run_open_pipe(
+        br#"{"source_version":"0.145.0","session_id":"raw-session-id","cwd":"/private/client"}"#,
+    );
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"{}\n");
+    assert!(output.stderr.is_empty());
+}
+
 struct HookEnvironment {
     root: TempDir,
 }
@@ -118,6 +133,41 @@ impl HookEnvironment {
             .unwrap();
         child.stdin.take().unwrap().write_all(input).unwrap();
         child.wait_with_output().unwrap()
+    }
+
+    /// Field reality (Codex 0.145.0): the parent writes the hook JSON and
+    /// KEEPS the pipe open. The helper must proceed once the JSON document
+    /// is complete, not wait for EOF — otherwise the agent's 1s hook timeout
+    /// kills it and the event is lost.
+    fn run_open_pipe(&self, input: &[u8]) -> std::process::Output {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_cc-reminder-hook"))
+            .args([
+                "--owner",
+                "cc-reminder",
+                "--agent",
+                "codex",
+                "--event",
+                "Stop",
+            ])
+            .env("CC_REMINDER_TEST_DATA_DIR", self.root.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input).unwrap();
+        stdin.flush().unwrap();
+        let started = std::time::Instant::now();
+        let output = child.wait_with_output().unwrap();
+        // Deliberately hold the pipe open for the child's whole lifetime.
+        drop(stdin);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(1500),
+            "helper must not wait for EOF; took {:?}",
+            started.elapsed()
+        );
+        output
     }
 }
 

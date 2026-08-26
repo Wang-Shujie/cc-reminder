@@ -1,3 +1,81 @@
+/// Read the hook JSON from stdin WITHOUT waiting for EOF.
+///
+/// Claude Code closes its side of the pipe after writing the payload, but
+/// Codex (0.145.0 observed in the field) keeps stdin open — a plain
+/// `read_to_end` then blocks past the agent's 1s hook timeout and the event
+/// is lost. Strategy: a reader thread streams chunks over a channel while the
+/// main loop retries a full JSON parse after every chunk, returning the moment
+/// the document is complete (EOF also completes). A hard read deadline covers
+/// the pathological no-data case so the helper always finishes well inside
+/// the 1s budget.
+fn read_hook_stdin() -> Result<Vec<u8>, &'static str> {
+    use std::io::Read;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    const READ_DEADLINE: Duration = Duration::from_millis(600);
+    const CHUNK: usize = 8192;
+
+    struct Eof;
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, Eof>>();
+    // Detached by design: if the parent holds the pipe open forever, this
+    // thread dies with the process — it never keeps the helper alive.
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        loop {
+            let mut chunk = vec![0u8; CHUNK];
+            match stdin.read(&mut chunk) {
+                Ok(0) => {
+                    let _ = tx.send(Err(Eof));
+                    return;
+                }
+                Ok(n) => {
+                    chunk.truncate(n);
+                    if tx.send(Ok(chunk)).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => {
+                    let _ = tx.send(Err(Eof));
+                    return;
+                }
+            }
+        }
+    });
+
+    let mut input: Vec<u8> = Vec::with_capacity(1024);
+    let started = Instant::now();
+    loop {
+        match rx.recv_timeout(READ_DEADLINE.saturating_sub(started.elapsed())) {
+            Ok(Ok(chunk)) => {
+                input.extend_from_slice(&chunk);
+                if input.len() > MAX_HOOK_BYTES {
+                    return Err("oversize");
+                }
+                // Complete JSON document available? Done — no need to wait
+                // for the writer to close the pipe.
+                if serde_json::from_slice::<Value>(&input).is_ok() {
+                    return Ok(input);
+                }
+            }
+            Ok(Err(Eof)) => return Ok(input),
+            // Deadline: partial data that still parses as complete JSON is
+            // usable; anything else is a failure (neutral exit upstream).
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return if input.is_empty() {
+                    Err("stdin")
+                } else if serde_json::from_slice::<Value>(&input).is_ok() {
+                    Ok(input)
+                } else {
+                    Err("stdin")
+                };
+            }
+            // The reader thread ended without EOF (channel dropped).
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(input),
+        }
+    }
+}
+
 use crate::events::{
     catalog::catalogued_hooks,
     normalize::{SafeIngressEvent, capture_hook_json, normalize_safe_ingress},
@@ -98,14 +176,7 @@ fn process() -> Result<(), String> {
     if !catalogued_hooks().contains(&(agent, event.clone())) {
         return Err("event".into());
     }
-    let mut input = Vec::new();
-    std::io::stdin()
-        .take((MAX_HOOK_BYTES + 1) as u64)
-        .read_to_end(&mut input)
-        .map_err(|_| "stdin")?;
-    if input.len() > MAX_HOOK_BYTES {
-        return Err("oversize".into());
-    }
+    let input = read_hook_stdin()?;
     let raw: Value = serde_json::from_slice(&input).map_err(|_| "json")?;
     let object = raw.as_object().ok_or("object")?;
     if let Some(name) = object.get("hook_event_name").and_then(Value::as_str)
