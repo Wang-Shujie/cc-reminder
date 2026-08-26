@@ -269,6 +269,10 @@ export interface Dictionary {
   retryQueued: string;
   loadMore: string;
   emptyHistory: string;
+  presetLabel: string;
+  presetFailed: string;
+  presetQueued: string;
+  presetRetry: string;
   detailTitle: string;
   detailOccurred: string;
   detailReceived: string;
@@ -591,6 +595,10 @@ const zhCn: Dictionary = {
   retryQueued: "重试已加入队列。",
   loadMore: "加载更多",
   emptyHistory: "暂无通知历史",
+  presetLabel: "快捷筛选",
+  presetFailed: "失败",
+  presetQueued: "排队中",
+  presetRetry: "重试中",
   detailTitle: "通知详情（脱敏）",
   detailOccurred: "发生时间",
   detailReceived: "接收时间",
@@ -922,6 +930,10 @@ const en: Dictionary = {
   retryQueued: "Re-delivery queued.",
   loadMore: "Load more",
   emptyHistory: "No notification history",
+  presetLabel: "Quick filters",
+  presetFailed: "Failed",
+  presetQueued: "Queued",
+  presetRetry: "Retrying",
   detailTitle: "Notification details (redacted)",
   detailOccurred: "Occurred at",
   detailReceived: "Received at",

@@ -69,6 +69,32 @@ export function HistoryPage({
     ...EMPTY_FILTERS,
     delivery_status: initialDeliveryStatus ?? "",
   }));
+
+  /** 常用预设筛选(用户裁决第三轮):全部/失败/排队中/重试中。
+   *  预设只改结果状态与时间窗;项目/渠道/Hook 关键字保留叠加。 */
+  type PresetCode = "all" | "failed" | "queued" | "retry";
+  const presetStatus: Record<Exclude<PresetCode, "all">, string> = {
+    failed: "failed",
+    queued: "pending",
+    retry: "retry_wait",
+  };
+  const activePreset: PresetCode | null =
+    filters.occurred_from === "" && filters.occurred_until === ""
+      ? filters.delivery_status === ""
+        ? "all"
+        : (Object.entries(presetStatus).find(
+            ([, status]) => status === filters.delivery_status,
+          )?.[0] as PresetCode | undefined) ?? null
+      : null;
+
+  function applyPreset(code: PresetCode): void {
+    setFilters({
+      ...filters,
+      delivery_status: code === "all" ? "" : presetStatus[code],
+      occurred_from: "",
+      occurred_until: "",
+    });
+  }
   /** Free-text Hook filter commits on Enter; the draft stays local meanwhile. */
   const [hookDraft, setHookDraft] = useState("");
   const [items, setItems] = useState<HistoryItem[] | null>(null);
@@ -284,77 +310,123 @@ export function HistoryPage({
         </p>
       )}
 
-      <div className="history-toolbar">
-        <label htmlFor="hist-from">{t.filterTimeFrom}</label>
-        <input
-          id="hist-from"
-          type="date"
-          value={filters.occurred_from}
-          onChange={(event) =>
-            setFilters({ ...filters, occurred_from: event.target.value })
-          }
-        />
-        <label htmlFor="hist-until">{t.filterTimeUntil}</label>
-        <input
-          id="hist-until"
-          type="date"
-          value={filters.occurred_until}
-          onChange={(event) =>
-            setFilters({ ...filters, occurred_until: event.target.value })
-          }
-        />
-        <label htmlFor="hist-project">{t.colProject}</label>
-        <select
-          id="hist-project"
-          value={filters.project_id}
-          onChange={(event) => setFilters({ ...filters, project_id: event.target.value })}
-        >
-          <option value="">{t.filterAll}</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="hist-hook">{t.colHook}</label>
-        <input
-          id="hist-hook"
-          type="text"
-          autoComplete="off"
-          value={hookDraft}
-          onChange={(event) => setHookDraft(event.target.value)}
-          onKeyDown={onHookKeyDown}
-        />
-        <label htmlFor="hist-channel">{t.navChannels}</label>
-        <select
-          id="hist-channel"
-          value={filters.channel_id}
-          onChange={(event) => setFilters({ ...filters, channel_id: event.target.value })}
-        >
-          <option value="">{t.filterAll}</option>
-          {channels.map((channel) => (
-            <option key={channel.id} value={channel.id}>
-              {channel.name}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="hist-result">{t.filterResult}</label>
-        <select
-          id="hist-result"
-          value={filters.delivery_status}
-          onChange={(event) =>
-            setFilters({ ...filters, delivery_status: event.target.value })
-          }
-        >
-          <option value="">{t.filterAll}</option>
-          {(["pending", "sending", "retry_wait", "succeeded", "failed", "expired"] as const).map(
-            (code) => (
+      {/* 预设行(用户裁决):常用筛选一键直达,替代"查看失败任务"式跳转。 */}
+      <div className="history-presets" role="group" aria-label={t.presetLabel}>
+        {(
+          [
+            ["all", t.filterAll],
+            ["failed", t.presetFailed],
+            ["queued", t.presetQueued],
+            ["retry", t.presetRetry],
+          ] as const
+        ).map(([code, label]) => (
+          <button
+            key={code}
+            type="button"
+            className={`cc-focusable history-preset${activePreset === code ? " preset-active" : ""}`}
+            aria-pressed={activePreset === code}
+            onClick={() => applyPreset(code)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* 高级筛选:标签包裹控件的行内排布,不再文字与选框分行。 */}
+      <div className="history-filters">
+        <label htmlFor="hist-from">
+          {t.filterTimeFrom}
+          <input
+            id="hist-from"
+            type="date"
+            value={filters.occurred_from}
+            onChange={(event) =>
+              setFilters({ ...filters, occurred_from: event.target.value })
+            }
+          />
+        </label>
+        <label htmlFor="hist-until">
+          {t.filterTimeUntil}
+          <input
+            id="hist-until"
+            type="date"
+            value={filters.occurred_until}
+            onChange={(event) =>
+              setFilters({ ...filters, occurred_until: event.target.value })
+            }
+          />
+        </label>
+        <label htmlFor="hist-project">
+          {t.colProject}
+          <select
+            id="hist-project"
+            value={filters.project_id}
+            onChange={(event) =>
+              setFilters({ ...filters, project_id: event.target.value })
+            }
+          >
+            <option value="">{t.filterAll}</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label htmlFor="hist-hook">
+          {t.colHook}
+          <input
+            id="hist-hook"
+            type="text"
+            autoComplete="off"
+            value={hookDraft}
+            onChange={(event) => setHookDraft(event.target.value)}
+            onKeyDown={onHookKeyDown}
+          />
+        </label>
+        <label htmlFor="hist-channel">
+          {t.navChannels}
+          <select
+            id="hist-channel"
+            value={filters.channel_id}
+            onChange={(event) =>
+              setFilters({ ...filters, channel_id: event.target.value })
+            }
+          >
+            <option value="">{t.filterAll}</option>
+            {channels.map((channel) => (
+              <option key={channel.id} value={channel.id}>
+                {channel.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label htmlFor="hist-result">
+          {t.filterResult}
+          <select
+            id="hist-result"
+            value={filters.delivery_status}
+            onChange={(event) =>
+              setFilters({ ...filters, delivery_status: event.target.value })
+            }
+          >
+            <option value="">{t.filterAll}</option>
+            {(
+              [
+                "pending",
+                "sending",
+                "retry_wait",
+                "succeeded",
+                "failed",
+                "expired",
+              ] as const
+            ).map((code) => (
               <option key={code} value={code}>
                 {deliveryStatusText(t, code)}
               </option>
-            ),
-          )}
-        </select>
+            ))}
+          </select>
+        </label>
       </div>
 
       {loadError !== null && (
@@ -364,6 +436,8 @@ export function HistoryPage({
         </p>
       )}
 
+      {/* 滚动体:仅记录区滚动,标题与筛选恒定(用户裁决第三轮)。 */}
+      <div className="history-body">
       <table className="rules-table">
         <thead>
           <tr>
@@ -437,6 +511,7 @@ export function HistoryPage({
           </button>
         </div>
       )}
+      </div>
 
       {/* Single detail drawer: redacted document + attempt timeline. */}
       {detailEventId !== null && (

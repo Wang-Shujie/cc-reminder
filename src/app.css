@@ -801,23 +801,50 @@ input[type="radio"] {
   font-size: 13px;
 }
 
-.history-toolbar {
+/* 通知记录筛选(用户裁决第三轮):预设 chips 行 + 标签包裹控件的
+   行内高级筛选,文字与选框不再分行。 */
+.history-presets {
+  display: inline-flex;
+  gap: 20px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-preset {
+  padding: 6px 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.preset-active {
+  color: var(--ink);
+  box-shadow: inset 0 -3px 0 var(--guide);
+}
+
+.history-filters {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
+  gap: 6px 24px;
   margin-bottom: 12px;
   font-size: 13px;
 }
 
-.history-toolbar label {
+.history-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
+  color: var(--ink-2);
 }
 
-.history-toolbar input,
-.history-toolbar select {
+.history-filters input,
+.history-filters select {
   width: auto;
   margin: 0;
+  color: var(--ink);
 }
 
 .detail-meta {
@@ -944,13 +971,35 @@ input[type="radio"] {
   background: transparent;
 }
 
-/* 工作台底部:通知记录小窗(用户裁决)——固定高度、内部滚动,
-   顶缘 2px 强线与概览区分层。 */
+/* 工作台(用户裁决第三轮):整页撑满视口余量,通知记录区吃掉剩余
+   高度——标题/预设/筛选恒定,仅记录体(.history-body)滚动;窗口
+   变大记录区跟随变高,窗口小于内容时整页在内容区滚动。 */
+.workbench {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 48px - 40px);
+}
+
 .log-pane {
-  max-height: 300px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 240px;
   margin-top: 24px;
   padding-top: 8px;
   border-top: 2px solid var(--line-strong);
+}
+
+.log-pane > section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.history-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 

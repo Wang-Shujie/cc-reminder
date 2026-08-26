@@ -32,7 +32,7 @@ export function WorkbenchPage({
   }
 
   return (
-    <section aria-label={t.navWorkbench}>
+    <section aria-label={t.navWorkbench} className="workbench">
       <OverviewPage
         locale={locale}
         backend={injected}
