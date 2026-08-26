@@ -38,3 +38,7 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 ## v2 新增（2026-08-26 终审记录）
 
 - ~~**`pagePlaceholder` 孤儿字典键**~~ **已解决(v2-fixes d8920e0)**。：v1 遗留（分支点 1e1613e 即无组件使用），下次动 i18n 时顺手删除（接口 + zh + en 三处）。
+
+## 实机事件记录(2026-08-27)
+
+- ~~**v2-fixes 构建后 hook 全部静默失效**~~ **已定位并修复(fad9187)**:症状 = 测试发送通、hook 零事件零报错。法医链路:helper 0.9s 超时中性退出 → 外部读 SQLITE_BUSY → `sample` 抓到 open_connection 在 `PRAGMA journal_mode=WAL → walIndexReadHdr/unixShmMap` 永久卡死 → 全部写入冻结。根因 = per-op 连接每次重复设置 journal_mode,与"最后连接关闭时 checkpoint 移除 -wal/-shm"窗口相撞(连接池为每次操作开/关连接,放大了窗口)。修复 = WAL 仅在 migrate() 设一次(持久化于库头,重复设置纯冗余);重启后手动 hook 0.021s 落库,两事件恢复(含卡死期间被阻的一发)。
