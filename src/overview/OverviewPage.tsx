@@ -124,7 +124,7 @@ export function OverviewPage({
   if (snapshot === null) {
     return (
       <section aria-label={t.navOverview}>
-        <h1>{t.navOverview}</h1>
+        <h2>{t.navOverview}</h2>
         {loadFailed ? <p role="alert">{t.overviewLoadFailed}</p> : <p className="muted">{t.loading}</p>}
       </section>
     );
@@ -140,7 +140,7 @@ export function OverviewPage({
 
   return (
     <section aria-label={t.navOverview}>
-      <h1>{t.navOverview}</h1>
+      <h2>{t.navOverview}</h2>
 
       {loadFailed && <p role="alert">{t.overviewLoadFailed}</p>}
       <p role="status" className="sr-only">

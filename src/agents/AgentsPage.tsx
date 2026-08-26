@@ -200,7 +200,7 @@ export function AgentsPage({
 
   return (
     <section aria-label={t.navAgents}>
-      <h1>{t.navAgents}</h1>
+      <h2>{t.navAgents}</h2>
 
       <div className="rules-toolbar">
         <div className="rules-toolbar-controls">
