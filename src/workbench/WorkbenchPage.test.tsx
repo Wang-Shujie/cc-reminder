@@ -42,16 +42,13 @@ function renderWorkbench(backend: FakeBackend) {
   );
 }
 
-test("defaults to the status overview tab", async () => {
+test("overview and the bottom log pane render as one page", async () => {
   renderWorkbench(configuredBackend());
-  expect(await screen.findByRole("tab", { name: "状态概览" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByRole("heading", { name: "概览" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "概览" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "通知历史" })).toBeVisible();
 });
 
-test("查看失败任务 switches to the log tab pre-filtered to failed", async () => {
+test("查看失败任务 refilters the log pane and keeps both sections present", async () => {
   const user = userEvent.setup();
   renderWorkbench(
     configuredBackend({
@@ -67,18 +64,10 @@ test("查看失败任务 switches to the log tab pre-filtered to failed", async 
     }),
   );
   await user.click(await screen.findByRole("button", { name: "查看失败任务" }));
-  expect(screen.getByRole("tab", { name: "通知记录" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(await screen.findByText("PostToolUseFailure")).toBeVisible();
+  // 底部记录区按 failed 过滤:只剩失败行。
+  const failedRows = await screen.findAllByText("PostToolUseFailure");
+  expect(failedRows.length).toBeGreaterThan(0);
   expect(screen.queryByText("StopSuccess")).not.toBeInTheDocument();
-});
-
-test("switching back to 状态概览 restores the overview panel", async () => {
-  const user = userEvent.setup();
-  renderWorkbench(configuredBackend());
-  await user.click(await screen.findByRole("button", { name: "查看失败任务" }));
-  await user.click(screen.getByRole("tab", { name: "状态概览" }));
+  // 概览区仍在同一页。
   expect(screen.getByRole("heading", { name: "概览" })).toBeVisible();
 });

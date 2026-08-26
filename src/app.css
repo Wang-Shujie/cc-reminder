@@ -943,3 +943,13 @@ input[type="radio"] {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* 工作台底部:通知记录小窗(用户裁决)——固定高度、内部滚动,
+   顶缘 2px 强线与概览区分层。 */
+.log-pane {
+  max-height: 300px;
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 2px solid var(--line-strong);
+  overflow-y: auto;
+}
