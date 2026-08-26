@@ -43,7 +43,7 @@ impl Database {
     }
 
     pub fn migrate(&self) -> Result<(), AppError> {
-        let mut connection = open_connection(&self.path, DESKTOP_BUSY_TIMEOUT)?;
+        let mut connection = open_connection_set_wal(&self.path, DESKTOP_BUSY_TIMEOUT)?;
         apply_migrations(&mut connection, MIGRATIONS)
     }
 
@@ -108,6 +108,14 @@ fn prepare_database_path(path: &Path) -> Result<(), AppError> {
     ensure_current_user_dacl(path)
 }
 
+/// 打开一个工作连接:只做连接级配置(busy_timeout / foreign_keys /
+/// synchronous——均为连接本地,不加库级锁)。
+///
+/// 实机法医教训(2026-08-27):journal_mode=WAL 持久化在库头,过去在每个
+/// per-op 连接上重复 PRAGMA journal_mode,与"最后一个连接关闭时
+/// checkpoint 移除 -wal/-shm"的窗口相撞,会在 walIndexReadHdr/unixShmMap
+/// 处把 opener 永久卡死,进而冻住全部写入(hook 全部静默超时、外部读
+/// BUSY)。因此 journal_mode 仅由 migrate() 在启动单线程时设置一次。
 fn open_connection(path: &Path, busy_timeout: Duration) -> Result<Connection, AppError> {
     let connection = Connection::open(path)
         .map_err(|_| storage_error("storage.open_failed", "database could not be opened"))?;
@@ -118,10 +126,17 @@ fn open_connection(path: &Path, busy_timeout: Duration) -> Result<Connection, Ap
         .pragma_update(None, "foreign_keys", true)
         .map_err(|_| storage_error("storage.open_failed", "database could not be configured"))?;
     connection
-        .pragma_update(None, "journal_mode", "WAL")
-        .map_err(|_| storage_error("storage.open_failed", "database could not be configured"))?;
-    connection
         .pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|_| storage_error("storage.open_failed", "database could not be configured"))?;
+    Ok(connection)
+}
+
+/// 仅初始化路径使用:设置持久化 journal_mode(WAL)。库级排他操作,
+/// 决不放进 per-op 热路径。
+fn open_connection_set_wal(path: &Path, busy_timeout: Duration) -> Result<Connection, AppError> {
+    let connection = open_connection(path, busy_timeout)?;
+    connection
+        .pragma_update(None, "journal_mode", "WAL")
         .map_err(|_| storage_error("storage.open_failed", "database could not be configured"))?;
     Ok(connection)
 }
