@@ -206,7 +206,7 @@ test.describe("workflow coverage", () => {
     await page.keyboard.press("Enter");
 
     // Completion lands in the main shell at its default workbench.
-    await page.getByRole("heading", { name: "工作台" }).waitFor();
+    await page.getByRole("heading", { name: "待处理问题" }).waitFor();
     await expect(page.getByRole("button", { name: "通知规则" })).toBeVisible();
   });
 

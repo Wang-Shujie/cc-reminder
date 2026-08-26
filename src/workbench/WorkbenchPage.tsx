@@ -35,7 +35,6 @@ export function WorkbenchPage({
 
   return (
     <section aria-label={t.navWorkbench}>
-      <h1>{t.navWorkbench}</h1>
       <TabBar
         ariaLabel={t.navWorkbench}
         active={tab}

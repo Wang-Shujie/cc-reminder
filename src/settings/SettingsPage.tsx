@@ -284,8 +284,6 @@ export function SettingsPage({
 
   return (
     <section aria-label={t.navSettings}>
-      <h1>{t.navSettings}</h1>
-
       {loadError !== null && <p role="alert">{t.settingsLoadFailed}</p>}
       {actionError !== null && (
         <p role="alert">

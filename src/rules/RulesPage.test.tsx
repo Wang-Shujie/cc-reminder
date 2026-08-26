@@ -13,9 +13,8 @@ test("defaults to the rules tab and can switch to project management", async () 
     </BackendProvider>,
   );
   expect(
-    await screen.findByRole("heading", { name: "通知规则", level: 1 }),
+    await screen.findByRole("heading", { name: "Hook 规则" }),
   ).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Hook 规则" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "项目管理" }));
   expect(screen.getByRole("heading", { name: "项目" })).toBeVisible();
 });

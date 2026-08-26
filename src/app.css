@@ -25,9 +25,10 @@
   --health-ok: #1E7A3C;
   --health-warning: #B45309;
   --health-error: #B3221D;
-  --font-step-1: 22px;
-  --font-step-2: 15px;
-  --font-step-3: 13px;
+  /* 两阶字号(用户裁决):信息文字 13,唯一导向大字 22(状态横幅)。
+     层级由字重(400/600)、颜色(ink/ink-2)与位置承担。 */
+  --font-display: 22px;
+  --font-text: 13px;
   --radius: 4px;
 }
 
@@ -95,7 +96,7 @@ body {
 }
 
 .shell-status {
-  font-size: var(--font-step-1);
+  font-size: var(--font-display);
   font-weight: 600;
   line-height: 1;
 }
@@ -186,11 +187,7 @@ select:focus-visible {
   overflow: auto;
 }
 
-.shell-content h1 {
-  margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 600;
-}
+/* 页面不再有 h1:位置感由导航立柱的蓝色当前牌承担(用户裁决)。 */
 
 .muted {
   color: var(--ink-2);
@@ -448,7 +445,7 @@ input[type="radio"] {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--slab);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 18px;
   white-space: nowrap;
 }
@@ -511,7 +508,7 @@ input[type="radio"] {
 .drawer-section h3,
 .drawer-section legend {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink-2);
 }
@@ -519,7 +516,7 @@ input[type="radio"] {
 .tag {
   padding: 0 6px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 18px;
 }
 
@@ -549,13 +546,13 @@ input[type="radio"] {
   align-items: center;
   gap: 2px;
   margin-right: 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .field-label {
   display: block;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ink-2);
 }
 
@@ -576,7 +573,7 @@ input[type="radio"] {
   border-radius: 0;
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -607,7 +604,7 @@ input[type="radio"] {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--slab);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .preview-doc pre {
@@ -649,7 +646,7 @@ input[type="radio"] {
 
 .drawer-reset-status {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ink-2);
 }
 
@@ -801,7 +798,7 @@ input[type="radio"] {
   padding: 0 6px;
   border-radius: 4px;
   background: var(--slab);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .history-toolbar {

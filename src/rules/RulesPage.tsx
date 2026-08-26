@@ -22,7 +22,6 @@ export function RulesPage({
   const [tab, setTab] = useState<RulesTab>("rules");
   return (
     <section aria-label={t.navRules}>
-      <h1>{t.navRules}</h1>
       <TabBar
         ariaLabel={t.navRules}
         active={tab}

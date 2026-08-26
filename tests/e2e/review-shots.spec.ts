@@ -25,8 +25,8 @@ test("capture finish-review screenshots", async ({ page }) => {
     await page.setViewportSize({ width, height });
     await page.goto("/");
     // The previous shot's nav click persists last-page; wait for ANY settled
-    // page, then navigate to the shot's destination explicitly.
-    await page.getByRole("heading", { level: 1 }).waitFor();
+    // page (nav present), then navigate to the shot's destination explicitly.
+    await page.getByRole("navigation").waitFor();
     const label =
       name === "workbench" || name === "workbench-1280"
         ? "工作台"

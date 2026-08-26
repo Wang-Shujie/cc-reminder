@@ -44,10 +44,7 @@ function renderWorkbench(backend: FakeBackend) {
 
 test("defaults to the status overview tab", async () => {
   renderWorkbench(configuredBackend());
-  expect(
-    await screen.findByRole("heading", { name: "工作台", level: 1 }),
-  ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "状态概览" })).toHaveAttribute(
+  expect(await screen.findByRole("tab", { name: "状态概览" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

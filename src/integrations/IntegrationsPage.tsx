@@ -21,7 +21,6 @@ export function IntegrationsPage({
   const [tab, setTab] = useState<IntegrationsTab>("sources");
   return (
     <section aria-label={t.navIntegrations}>
-      <h1>{t.navIntegrations}</h1>
       <TabBar
         ariaLabel={t.navIntegrations}
         active={tab}

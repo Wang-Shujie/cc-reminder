@@ -170,7 +170,8 @@ test("exports diagnostics and clears only inactive history after confirmation", 
   const user = userEvent.setup();
   const backend = settingsBackend();
   render(<SettingsPage backend={backend} />);
-  await screen.findByRole("heading", { name: "设置" });
+  // 无页题(立柱定位):以诊断按钮出现为就绪信号。
+  await screen.findByRole("button", { name: "导出诊断" });
 
   // The save dialog lives in the core: the page sends NO argument at all.
   await user.click(screen.getByRole("button", { name: "导出诊断" }));

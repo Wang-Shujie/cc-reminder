@@ -13,9 +13,8 @@ test("defaults to sources and can switch to destinations", async () => {
     </BackendProvider>,
   );
   expect(
-    await screen.findByRole("heading", { name: "集成", level: 1 }),
+    await screen.findByRole("heading", { name: "Agent 集成" }),
   ).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Agent 集成" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "通知去向" }));
   expect(screen.getByRole("heading", { name: "渠道" })).toBeVisible();
 });
