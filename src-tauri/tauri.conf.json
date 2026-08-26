@@ -38,7 +38,9 @@
     "resources": [
       "resources/capabilities/claude-code-2.1.218.json",
       "resources/capabilities/codex-0.145.0.json",
-      "resources/helper-manifest.json"
+      "resources/helper-manifest.json",
+      "resources/bin/cc-reminder-hook",
+      "resources/bin/cc-reminder-hook.exe"
     ],
     "createUpdaterArtifacts": true,
     "macOS": {

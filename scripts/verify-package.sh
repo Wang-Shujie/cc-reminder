@@ -145,29 +145,33 @@ if not isinstance(entries, list) or not entries:
 
 filename = os.path.basename(helper_path)
 matching = [entry for entry in entries if isinstance(entry, dict) and entry.get("filename") == filename]
-if len(matching) != 1:
-    print(f"expected exactly one manifest entry for filename '{filename}', found {len(matching)}")
-    sys.exit(1)
-
-entry = matching[0]
-digest = entry.get("sha256", "")
-length = entry.get("length", 0)
-if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
-    print(f"manifest entry for '{filename}' still carries an unreplaced placeholder sha256")
-    sys.exit(1)
-if not isinstance(length, int) or length <= 0:
-    print(f"manifest entry for '{filename}' carries an unreplaced placeholder length")
+if not matching:
+    print(f"no manifest entry for filename '{filename}'")
     sys.exit(1)
 
 data = open(helper_path, "rb").read()
 actual_length = len(data)
 actual_digest = hashlib.sha256(data).hexdigest()
-if actual_length != length:
-    print(f"helper length mismatch: manifest={length} actual={actual_length}")
-    sys.exit(1)
-if actual_digest != digest.lower():
-    print(f"helper sha-256 mismatch: manifest={digest} actual={actual_digest}")
-    sys.exit(1)
+
+# A universal/fat helper is legitimately described by SEVERAL entries (one
+# per slice triple). EVERY entry for this filename must carry a real
+# (non-placeholder) length + sha256 describing EXACTLY these bytes.
+for index, entry in enumerate(matching):
+    triple = entry.get("target_triple")
+    digest = entry.get("sha256", "")
+    length = entry.get("length", 0)
+    if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
+        print(f"manifest entry {index} ({triple}) still carries an unreplaced placeholder sha256")
+        sys.exit(1)
+    if not isinstance(length, int) or length <= 0:
+        print(f"manifest entry {index} ({triple}) carries an unreplaced placeholder length")
+        sys.exit(1)
+    if actual_length != length:
+        print(f"helper length mismatch for entry {index} ({triple}): manifest={length} actual={actual_length}")
+        sys.exit(1)
+    if actual_digest != digest.lower():
+        print(f"helper sha-256 mismatch for entry {index} ({triple}): manifest={digest} actual={actual_digest}")
+        sys.exit(1)
 print("ok")
 PYEOF
 )

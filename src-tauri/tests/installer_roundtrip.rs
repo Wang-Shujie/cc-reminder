@@ -1434,3 +1434,145 @@ fn dummy_detection(agent: AgentKind) -> cc_reminder_lib::agents::Detection {
         checked_at: Utc::now(),
     }
 }
+
+// ============================================================================
+// Fix wave: production bundled-helper loading bridge
+//
+// The desktop shell previously built its HelperInstaller from an EMPTY manifest
+// with no bytes, so no Install/Repair could ever satisfy lifecycle.rs's stable-
+// path requirement (`update.helper_not_installed`). The bridge lives in
+// `installer::helper::load_bundled_installer` + `HelperInstaller::ensure_installed`;
+// these tests drive it end-to-end against a fixture directory laid out exactly
+// like the packaged resources (release CI regenerates both files from signed
+// bytes at the same relative paths).
+// ============================================================================
+
+/// Lay out `root` like Tauri's resource directory: `resources/helper-manifest.json`
+/// plus `resources/bin/cc-reminder-hook`, with ONE synthetic entry describing
+/// THIS compile target so the loader's selection succeeds.
+fn write_bundled_resources(root: &std::path::Path, bytes: &[u8], version: &str) {
+    let resources = root.join("resources");
+    fs::create_dir_all(resources.join("bin")).unwrap();
+    fs::write(resources.join("bin").join("cc-reminder-hook"), bytes).unwrap();
+    let manifest = serde_json::json!({
+        "helpers": [{
+            "target_triple": current_target_triple(),
+            "helper_version": version,
+            "filename": "cc-reminder-hook",
+            "length": bytes.len(),
+            "sha256": sha256_hex(bytes),
+        }],
+    });
+    fs::write(
+        resources.join("helper-manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Full production path: load from a packaged-resource fixture → deploy the
+/// stable-path helper → run a real checked Install transaction whose selection
+/// is derived from the WIRED installer (path + manifest version).
+#[test]
+fn bundled_resource_fixture_drives_a_full_install_through_the_production_loader() {
+    let root = tempfile::tempdir().unwrap();
+    let helper_bytes = b"synthetic signed helper body".to_vec();
+    write_bundled_resources(root.path(), &helper_bytes, "0.1.0");
+
+    // The shell passes Tauri's resource dir here; the fixture mirrors it.
+    let data_dir = root.path().join("com.ccreminder.app");
+    let bin_dir = data_dir.join("bin");
+    let installer =
+        cc_reminder_lib::installer::helper::load_bundled_installer(root.path(), &bin_dir)
+            .expect("packaged-resource layout must yield an installer");
+    assert_eq!(
+        installer.manifest_version(),
+        &semver::Version::parse("0.1.0").unwrap()
+    );
+
+    // Idempotent deployment: first call copies verified bytes, a second call
+    // skips the copy because the stable file already matches the manifest.
+    let deployed = installer.ensure_installed().unwrap();
+    assert!(installed_bytes_are(&deployed.path, &helper_bytes));
+    let redeployed = installer.ensure_installed().unwrap();
+    assert_eq!(redeployed.path, deployed.path);
+    assert_eq!(
+        cc_reminder_lib::installer::sha256_hex(&fs::read(&redeployed.path).unwrap()),
+        cc_reminder_lib::installer::sha256_hex(&helper_bytes)
+    );
+
+    // A full checked mutation now succeeds WITHOUT update.helper_not_installed,
+    // using a selection derived from the wired installer itself.
+    let database_path = data_dir.join("cc-reminder.sqlite3");
+    let database = Database::open(&database_path).unwrap();
+    let repository = IntegrationRepository::new(database);
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let config_path = home.join(".claude/settings.json");
+    let hook_installer = HookInstaller::new(
+        CLAUDE,
+        config_path.clone(),
+        repository,
+        Some(FieldCipher::from_key([5_u8; 32])),
+        installer,
+    );
+    let selection = HookSelection {
+        events: ["Stop".to_owned()].into_iter().collect::<BTreeSet<_>>(),
+        helper_path: deployed.path,
+        helper_version: semver::Version::parse("0.1.0").unwrap(),
+    };
+    hook_installer
+        .apply(HookAction::Install, &selection)
+        .unwrap();
+    assert_eq!(
+        owned_events_on_disk(CLAUDE, &config_path),
+        vec!["Stop".to_owned()]
+    );
+}
+
+fn installed_bytes_are(path: &Path, expected: &[u8]) -> bool {
+    fs::read(path)
+        .map(|bytes| bytes == expected)
+        .unwrap_or(false)
+}
+
+/// The committed development layout (placeholder triple) must fail selection
+/// with the typed `configuration.helper_unavailable` — never panic, never
+/// install anything.
+#[test]
+fn placeholder_manifest_fixture_is_rejected_with_helper_unavailable() {
+    let root = tempfile::tempdir().unwrap();
+    let resources = root.path().join("resources");
+    fs::create_dir_all(resources.join("bin")).unwrap();
+    fs::write(
+        resources.join("bin").join("cc-reminder-hook"),
+        b"placeholder",
+    )
+    .unwrap();
+    fs::write(
+        resources.join("helper-manifest.json"),
+        r#"{"helpers":[{"target_triple":"REPLACE_WITH_TARGET_TRIPLE","helper_version":"0.0.0-placeholder","filename":"cc-reminder-hook","length":0,"sha256":"REPLACE_WITH_SHA256_OF_THE_PACKAGED_HELPER_BYTES"}]}"#,
+    )
+    .unwrap();
+
+    let error = cc_reminder_lib::installer::helper::load_bundled_installer(
+        root.path(),
+        &root.path().join("data").join("bin"),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.domain,
+        cc_reminder_lib::error::ErrorDomain::Configuration
+    );
+    assert_eq!(error.code, "configuration.helper_unavailable");
+    assert!(error.suggested_action.is_some());
+    // Nothing reached any stable path.
+    assert!(
+        !root
+            .path()
+            .join("data")
+            .join("bin")
+            .join("cc-reminder-hook")
+            .exists()
+    );
+}

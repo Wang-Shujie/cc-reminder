@@ -73,6 +73,11 @@ pub struct CoreState {
     /// WebView. Defaults to a DISCONNECTED sender so pure command tests need
     /// no wiring — sends fail harmlessly.
     pub core_events: crate::worker::CoreEventSink,
+    /// Absolute resource directory resolved by the app shell from Tauri's
+    /// resource-dir API (`app.path().resource_dir()`); `None` in pure command
+    /// tests and whenever resolution fails. The bundled-helper loader joins
+    /// ONLY fixed relative paths under it — never caller-supplied input.
+    pub resources_dir: Option<std::path::PathBuf>,
 }
 
 /// Applies an autostart on/off request. Returns an error message on failure.
@@ -105,6 +110,7 @@ impl CoreState {
             worker_task: std::sync::Arc::new(Mutex::new(None)),
             autostart_control: std::sync::Arc::new(|_| Ok(())),
             core_events,
+            resources_dir: None,
         }
     }
 }

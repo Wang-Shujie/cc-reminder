@@ -1,6 +1,6 @@
 //! Signed helper installation (Task 11, design 9.1).
 //!
-//! The packaged helper binary is verified against an embedded manifest BEFORE it
+//! The packaged helper binary is verified against a bundled manifest BEFORE it
 //! is copied to its stable per-user `bin` path. Verification is length +
 //! SHA-256 over the packaged bytes; the manifest is never accepted from runtime
 //! configuration. Installation writes a same-directory temp, applies owner-only
@@ -9,14 +9,19 @@
 //! semantic helper version is rejected unless the caller passes an explicit
 //! rollback confirmation.
 //!
-//! The install LOGIC here is fully covered by unit tests with injected fixture
-//! bytes + manifest. Production wiring (compiling `cc-reminder-hook.rs` as a
-//! per-target Tauri external binary, generating a real `helper-manifest.json`
-//! with target triple / length / SHA-256 during release packaging, and
-//! selecting the current target's entry at startup) is documented in
-//! `resources/helper-manifest.json` and deferred to release tooling — the
-//! runtime installer only consumes an already-selected manifest entry plus its
-//! bytes, so the security-critical path is exercised exactly as shipped.
+//! Production wiring: release packaging stages the signed helper under
+//! `resources/bin/` and regenerates `resources/helper-manifest.json` from the
+//! final signed bytes (see `.github/workflows/release.yml`); Tauri bundles both
+//! files relative to the resource directory. [`load_bundled_installer`] is the
+//! only production bridge between those files and [`HelperInstaller`]: it joins
+//! FIXED relative paths under the shell-resolved resource directory — never a
+//! caller-supplied path — selects the current target's entry, reads the bundled
+//! bytes, and hands entry + bytes to the same verify-then-copy logic the unit
+//! tests exercise. Development builds ship the committed PLACEHOLDER manifest
+//! whose triple matches no compile target; in that case (and whenever the
+//! bundled bytes are absent) the loader fails with the typed
+//! `configuration.helper_unavailable` error instead of panicking or installing
+//! placeholder bytes.
 
 use std::fs;
 use std::io::Write;
@@ -31,6 +36,16 @@ use crate::security::permissions::{ensure_current_user_dacl, ensure_private_dire
 
 const STABLE_NAME: &str = "cc-reminder-hook";
 const VERSION_SIDECAR: &str = "cc-reminder-hook.version";
+
+/// Manifest location RELATIVE to Tauri's resource directory
+/// (`app.path().resource_dir()`; dev builds mirror the layout under
+/// `target/<profile>` via tauri-build). Fixed by construction — never accepted
+/// from runtime configuration or command input.
+pub const MANIFEST_RESOURCE_PATH: &str = "resources/helper-manifest.json";
+
+/// Directory holding the staged helper binaries, RELATIVE to the resource
+/// directory. Release CI overwrites its contents with signed per-target bytes.
+pub const BIN_RESOURCE_DIR: &str = "resources/bin";
 
 /// On-disk `helper-manifest.json`: one entry per compile target. At runtime the
 /// current target's entry is selected and passed to [`HelperInstaller::new`].
@@ -78,6 +93,88 @@ pub fn current_target_triple() -> &'static str {
         ("aarch64", "windows") => "aarch64-pc-windows-msvc",
         _ => "unknown-target",
     }
+}
+
+// ---------------------------------------------------------------------------
+// Production loading bridge: bundled resources → HelperInstaller
+// ---------------------------------------------------------------------------
+
+/// Typed failure for "this installation cannot deploy a signed helper".
+/// Development builds carry the committed PLACEHOLDER manifest whose target
+/// triple matches no compile target, and may lack the staged helper bytes
+/// entirely — that state must surface as an actionable error, NEVER as a panic
+/// or a placeholder install.
+pub(crate) fn helper_unavailable_error(detail: &str) -> AppError {
+    AppError {
+        domain: ErrorDomain::Configuration,
+        code: "configuration.helper_unavailable".to_owned(),
+        message: format!("signed hook helper is unavailable in this installation: {detail}"),
+        suggested_action: Some(
+            "install an official release build; development builds do not bundle the signed helper"
+                .to_owned(),
+        ),
+    }
+}
+
+/// Reject manifest filenames that could escape the fixed `resources/bin`
+/// directory (defense in depth: the manifest ships inside the signed bundle,
+/// but nothing here should ever trust it with path structure).
+fn sanitize_bundled_filename(filename: &str) -> Result<(), AppError> {
+    let ok = !filename.is_empty()
+        && filename
+            == Path::new(filename)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+    if ok {
+        Ok(())
+    } else {
+        Err(helper_unavailable_error(&format!(
+            "manifest entry filename {filename:?} is not a plain file name"
+        )))
+    }
+}
+
+/// Build a [`HelperInstaller`] from the packaged resources: parse
+/// `<resources_dir>/helper-manifest.json`, select the entry for the CURRENT
+/// compile target, and read the bundled bytes from `resources/bin/<filename>`.
+///
+/// `resources_dir` is resolved by the app shell from Tauri's resource-dir API
+/// (never from command input); both joined subpaths are the constants above.
+/// Any failure — missing/malformed manifest, no entry for this target
+/// (placeholder manifests), missing bytes — returns
+/// `configuration.helper_unavailable`.
+pub fn load_bundled_installer(
+    resources_dir: &Path,
+    bin_dir: &Path,
+) -> Result<HelperInstaller, AppError> {
+    let manifest_path = resources_dir.join(MANIFEST_RESOURCE_PATH);
+    let text = fs::read_to_string(&manifest_path).map_err(|_| {
+        helper_unavailable_error(&format!(
+            "{} is missing or unreadable",
+            MANIFEST_RESOURCE_PATH
+        ))
+    })?;
+    let manifest: HelperManifestFile = serde_json::from_str(&text)
+        .map_err(|_| helper_unavailable_error("helper manifest is malformed"))?;
+    let triple = current_target_triple();
+    let entry = select_target_entry(&manifest, triple)
+        .map_err(|_| {
+            helper_unavailable_error(&format!(
+                "manifest has no helper entry for the current target ({triple}); \
+                 this is expected only for development builds with the placeholder manifest"
+            ))
+        })?
+        .clone();
+    sanitize_bundled_filename(&entry.filename)?;
+    let bytes_path = resources_dir.join(BIN_RESOURCE_DIR).join(&entry.filename);
+    let bytes = fs::read(&bytes_path).map_err(|_| {
+        helper_unavailable_error(&format!(
+            "bundled helper {} is missing",
+            bytes_path.display()
+        ))
+    })?;
+    Ok(HelperInstaller::new(bin_dir.to_path_buf(), entry, bytes))
 }
 
 /// Installed helper location and verified version.
@@ -133,6 +230,25 @@ impl HelperInstaller {
     /// Verify the packaged bytes against the manifest, then atomically install.
     pub fn install(&self) -> Result<InstalledHelper, AppError> {
         self.install_with(InstallOptions::default())
+    }
+
+    /// Deployment bridge for the desktop shell: make sure the stable-path
+    /// binary exists and matches this manifest entry. Idempotent — when the
+    /// stable file already carries byte-identical content (same length +
+    /// SHA-256), the copy is skipped entirely; otherwise a full verified
+    /// install runs. Every Install/Repair pass calls this BEFORE mutating
+    /// Agent config so `HookInstaller::apply` always finds its helper.
+    pub fn ensure_installed(&self) -> Result<InstalledHelper, AppError> {
+        if let Ok(existing) = fs::read(self.stable_path())
+            && existing.len() as u64 == self.entry.length
+            && sha256_hex(&existing) == self.entry.sha256
+        {
+            return Ok(InstalledHelper {
+                path: self.stable_path(),
+                version: self.entry.helper_version.clone(),
+            });
+        }
+        self.install()
     }
 
     pub fn install_with(&self, options: InstallOptions) -> Result<InstalledHelper, AppError> {
@@ -470,5 +586,115 @@ mod tests {
             }],
         };
         assert!(select_target_entry(&manifest, "x86_64-pc-windows-msvc").is_err());
+    }
+
+    // ---- production loading bridge ----------------------------------------
+
+    /// Lay out a directory exactly like the packaged resources: a manifest at
+    /// `resources/helper-manifest.json` and bytes under `resources/bin/`.
+    fn bundled_resources(root: &Path, entry_triple: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let resources = root.join("resources");
+        fs::create_dir_all(resources.join("bin")).unwrap();
+        fs::write(resources.join("bin").join(stable_filename()), bytes).unwrap();
+        let manifest = HelperManifestFile {
+            helpers: vec![HelperManifestEntry {
+                target_triple: entry_triple.to_owned(),
+                helper_version: Version::parse("0.9.0").unwrap(),
+                filename: stable_filename(),
+                length: bytes.len() as u64,
+                sha256: sha256_hex(bytes),
+            }],
+        };
+        fs::write(
+            resources.join("helper-manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        resources
+    }
+
+    #[test]
+    fn bundled_resources_load_and_install_through_the_bridge() {
+        let root = tempfile::tempdir().unwrap();
+        let payload = b"signed dev-loop helper bytes";
+        // The synthetic manifest carries THIS compile target's triple, exactly
+        // like release packaging does per platform.
+        bundled_resources(root.path(), current_target_triple(), payload);
+        let bin_dir = root.path().join("data").join("bin");
+
+        let installer = load_bundled_installer(root.path(), &bin_dir).unwrap();
+        assert_eq!(
+            installer.manifest_version(),
+            &Version::parse("0.9.0").unwrap()
+        );
+        let installed = installer.ensure_installed().unwrap();
+        assert_eq!(fs::read(&installed.path).unwrap(), payload);
+
+        // Idempotent re-run skips the copy (stable bytes already match).
+        let before = fs::read(&installed.path).unwrap();
+        installer.ensure_installed().unwrap();
+        assert_eq!(fs::read(&installed.path).unwrap(), before);
+    }
+
+    #[test]
+    fn placeholder_manifest_without_matching_target_is_rejected_as_unavailable() {
+        let root = tempfile::tempdir().unwrap();
+        // The committed development manifest: a placeholder triple that can
+        // never match a real compile target.
+        bundled_resources(root.path(), "REPLACE_WITH_TARGET_TRIPLE", b"x");
+        let error =
+            load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap_err();
+        assert_eq!(error.domain, ErrorDomain::Configuration);
+        assert_eq!(error.code, "configuration.helper_unavailable");
+        assert!(error.suggested_action.is_some());
+        // Nothing was installed.
+        assert!(!root.path().join("bin").join(stable_filename()).exists());
+    }
+
+    #[test]
+    fn missing_bundled_bytes_are_rejected_as_unavailable_without_panicking() {
+        let root = tempfile::tempdir().unwrap();
+        let resources = bundled_resources(root.path(), current_target_triple(), b"bytes");
+        // Remove the staged binary: release parity broken / absent bundle.
+        fs::remove_file(resources.join("bin").join(stable_filename())).unwrap();
+        let error =
+            load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap_err();
+        assert_eq!(error.code, "configuration.helper_unavailable");
+    }
+
+    #[test]
+    fn malformed_manifest_is_rejected_as_unavailable() {
+        let root = tempfile::tempdir().unwrap();
+        let resources = root.path().join("resources");
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join("helper-manifest.json"), b"{ not json").unwrap();
+        let error =
+            load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap_err();
+        assert_eq!(error.code, "configuration.helper_unavailable");
+    }
+
+    #[test]
+    fn manifest_filename_that_escapes_the_bin_dir_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let resources = bundled_resources(root.path(), current_target_triple(), b"bytes");
+        // Rewrite the manifest with a traversal filename; even though this file
+        // lives inside the signed bundle, the loader refuses path structure.
+        let manifest = HelperManifestFile {
+            helpers: vec![HelperManifestEntry {
+                target_triple: current_target_triple().to_owned(),
+                helper_version: Version::parse("0.9.0").unwrap(),
+                filename: "../escape".to_owned(),
+                length: 5,
+                sha256: sha256_hex(b"bytes"),
+            }],
+        };
+        fs::write(
+            resources.join("helper-manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let error =
+            load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap_err();
+        assert_eq!(error.code, "configuration.helper_unavailable");
     }
 }

@@ -134,29 +134,36 @@ try {
     } catch {
         Fail "manifest is not valid JSON: $_"
     }
-    $entries = @($doc.helpers | Where-Object { $_.filename -eq (Split-Path $HelperBinary -Leaf) })
-    if ($entries.Count -ne 1) {
-        Fail ("expected exactly one manifest entry for filename '{0}', found {1}" -f (Split-Path $HelperBinary -Leaf), $entries.Count)
-    }
-    $entry = $entries[0]
-    if ($entry.sha256 -notmatch "^[0-9a-fA-F]{64}$") {
-        Fail ("manifest entry for '{0}' still carries an unreplaced placeholder sha256" -f $entry.filename)
-    }
-    if (-not $entry.length -or [int64]$entry.length -le 0) {
-        Fail ("manifest entry for '{0}' carries an unreplaced placeholder length" -f $entry.filename)
+    # A universal/fat helper is legitimately described by SEVERAL entries (one
+    # per slice triple). EVERY entry for this filename must carry a real
+    # (non-placeholder) length + sha256 describing EXACTLY these bytes.
+    $filename = Split-Path $HelperBinary -Leaf
+    $entries = @($doc.helpers | Where-Object { $_.filename -eq $filename })
+    if ($entries.Count -lt 1) {
+        Fail ("no manifest entry for filename '{0}'" -f $filename)
     }
     $helperBytes = [IO.File]::ReadAllBytes($HelperBinary)
-    if ([int64]$helperBytes.Length -ne [int64]$entry.length) {
-        Fail ("helper length mismatch: manifest={0} actual={1}" -f $entry.length, $helperBytes.Length)
-    }
     $sha256Provider = [System.Security.Cryptography.SHA256]::Create()
     try {
         $actualDigest = ([BitConverter]::ToString($sha256Provider.ComputeHash($helperBytes)) -replace "-", "").ToLowerInvariant()
     } finally {
         $sha256Provider.Dispose()
     }
-    if ($actualDigest -ne $entry.sha256.ToLowerInvariant()) {
-        Fail ("helper sha-256 mismatch: manifest={0} actual={1}" -f $entry.sha256, $actualDigest)
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        $entry = $entries[$i]
+        $triple = $entry.target_triple
+        if ($entry.sha256 -notmatch "^[0-9a-fA-F]{64}$") {
+            Fail ("manifest entry {0} ({1}) still carries an unreplaced placeholder sha256" -f $i, $triple)
+        }
+        if (-not $entry.length -or [int64]$entry.length -le 0) {
+            Fail ("manifest entry {0} ({1}) carries an unreplaced placeholder length" -f $i, $triple)
+        }
+        if ([int64]$helperBytes.Length -ne [int64]$entry.length) {
+            Fail ("helper length mismatch for entry {0} ({1}): manifest={2} actual={3}" -f $i, $triple, $entry.length, $helperBytes.Length)
+        }
+        if ($actualDigest -ne $entry.sha256.ToLowerInvariant()) {
+            Fail ("helper sha-256 mismatch for entry {0} ({1}): manifest={2} actual={3}" -f $i, $triple, $entry.sha256, $actualDigest)
+        }
     }
     Write-Host "  manifest hash  : matches helper bytes"
 

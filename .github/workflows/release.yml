@@ -164,6 +164,10 @@ jobs:
             src-tauri/resources/bin/cc-reminder-hook
 
       # --- 3. Embedded helper manifest from the FINAL SIGNED bytes --------
+      # A universal desktop binary executes EITHER slice at runtime, and the
+      # loader selects entries by the per-slice triple it computes from
+      # std::env::consts — so BOTH triples must appear here, each describing
+      # the same final signed fat bytes.
       - name: Regenerate embedded helper manifest
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -176,12 +180,12 @@ jobs:
               "title": "CC Reminder signed helper manifest",
               "description": "Generated at release time from the final signed helper bytes (see .github/workflows/release.yml).",
               "helpers": [{
-                  "target_triple": "universal-apple-darwin",
+                  "target_triple": triple,
                   "helper_version": sys.argv[1],
                   "filename": "cc-reminder-hook",
                   "length": len(data),
                   "sha256": hashlib.sha256(data).hexdigest(),
-              }],
+              } for triple in ("aarch64-apple-darwin", "x86_64-apple-darwin")],
           }, indent=2))
           PYEOF
           cat src-tauri/resources/helper-manifest.json
@@ -189,9 +193,10 @@ jobs:
       # --- 4. Package + sign + notarize the app ----------------------------
       # TAURI_SIGNING_* signs the .app.tar.gz updater artifact (creates .sig);
       # APPLE_* drive Tauri's codesign + notarization + stapling of the
-      # bundle. The --config overlay appends resources/bin/cc-reminder-hook to
-      # the packaged resource list (overlay arrays REPLACE, so the original
-      # three entries are repeated).
+      # bundle. No resource overlay is needed: tauri.conf.json already bundles
+      # helper-manifest.json AND resources/bin/cc-reminder-hook(.exe), and the
+      # staging steps above replaced the committed placeholder bytes with the
+      # real signed ones.
       - name: Build and sign universal app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -200,9 +205,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: >
-          pnpm tauri build --target universal-apple-darwin --config
-          '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook"]}}'
+        run: pnpm tauri build --target universal-apple-darwin
 
       # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
       # Sidecars record "<sha256>  <basename>" so they stay valid wherever the
@@ -349,16 +352,16 @@ jobs:
       # --- 4. Package + sign the app ----------------------------------------
       # TAURI_SIGNING_* signs the updater artifact; TAURI_WINDOWS_CERTIFICATE_
       # THUMBPRINT makes Tauri Authenticode-sign the bundled executables and
-      # the NSIS installer. Overlay appends the signed helper resource.
+      # the NSIS installer. No resource overlay is needed: tauri.conf.json
+      # already bundles helper-manifest.json AND resources/bin/, and step 3
+      # replaced the committed placeholder bytes with the signed ones.
       - name: Build and sign x64 installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ env.WINDOWS_CERT_THUMBPRINT }}
         shell: bash
-        run: >
-          pnpm tauri build --config
-          '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook.exe"]}}'
+        run: pnpm tauri build
 
       # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
       - name: Generate SHA-256 sidecars for every Windows artifact
@@ -497,9 +500,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: >
-          pnpm tauri build --bundles appimage deb --config
-          '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook"]}}'
+        run: pnpm tauri build --bundles appimage deb
 
       # --- 5. Checksums + verify-package gate -------------------------------
       # Sidecars record "<sha256>  <basename>" (standard sha256sum -c layout),

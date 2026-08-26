@@ -205,25 +205,20 @@ pub(crate) fn apply_hook_action_impl(
         .flatten()
         .collect();
     let required = required_hook_selection(&global, &overrides);
-    let helper_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
-        .unwrap_or_else(|_| semver::Version::new(0, 1, 0));
-    let helper_path = state
-        .integrations
-        .database_path()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("bin")
-        .join("cc-reminder-hook");
+    // Deploy the bundled signed helper to its stable path (idempotent) and
+    // derive the selection from the WIRED installer: the lifecycle requires
+    // the selection's helper path/version to equal the stable binary's, so a
+    // hand-built path here would drift (e.g. the Windows `.exe` suffix).
+    let env = build_hook_environment(state)?;
     let selection = crate::agents::HookSelection {
         events: required
             .into_iter()
             .filter(|(a, _)| *a == agent)
             .map(|(_, e)| e)
             .collect(),
-        helper_path,
-        helper_version,
+        helper_path: env.helper.stable_path(),
+        helper_version: env.helper.manifest_version().clone(),
     };
-    let env = build_hook_environment(state);
     let installer = build_installer(agent, &detection, state, &env);
     installer.apply(action, &selection)?;
     let health = installer.inspect(&selection)?;
@@ -262,32 +257,40 @@ fn collect_project_patches(
     Ok(out)
 }
 
-fn build_hook_environment(state: &CoreState) -> crate::installer::lifecycle::HookEnvironment {
+/// Wire the hook environment for a real mutation. The signed helper is loaded
+/// from the bundled resources (fixed paths under the shell-resolved resource
+/// directory — never caller input) and DEPLOYED to its stable per-user path
+/// first, idempotently (`ensure_installed` skips the copy when identical bytes
+/// are already in place). Without this bridge every Install/Repair would fail
+/// with `update.helper_not_installed` because nothing else ever populates the
+/// stable path. Development builds carry the placeholder manifest and surface
+/// the typed `configuration.helper_unavailable` error here.
+fn build_hook_environment(
+    state: &CoreState,
+) -> Result<crate::installer::lifecycle::HookEnvironment, AppError> {
     let bin_dir = state
         .integrations
         .database_path()
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("bin");
+    let resources_dir = state.resources_dir.as_deref().ok_or_else(|| {
+        crate::installer::helper::helper_unavailable_error(
+            "the application resource directory is unavailable",
+        )
+    })?;
+    let helper = crate::installer::helper::load_bundled_installer(resources_dir, &bin_dir)?;
+    helper.ensure_installed()?;
     let home = directories::BaseDirs::new()
         .map(|d| d.home_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let helper_entry = crate::installer::helper::HelperManifestEntry {
-        target_triple: crate::installer::helper::current_target_triple().to_owned(),
-        helper_version: semver::Version::parse(env!("CARGO_PKG_VERSION"))
-            .unwrap_or_else(|_| semver::Version::new(0, 1, 0)),
-        filename: "cc-reminder-hook".into(),
-        length: 0,
-        sha256: String::new(),
-    };
-    let helper = crate::installer::helper::HelperInstaller::new(bin_dir, helper_entry, Vec::new());
-    crate::installer::lifecycle::HookEnvironment {
+    Ok(crate::installer::lifecycle::HookEnvironment {
         repository: state.integrations.clone(),
         cipher: Some((*state.cipher).clone()),
         helper,
         home,
         codex_home: None,
-    }
+    })
 }
 
 fn build_installer(

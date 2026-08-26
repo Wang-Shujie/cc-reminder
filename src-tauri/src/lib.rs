@@ -438,6 +438,13 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         state.core_events = core_event_sink;
     }
     {
+        // Production root for the bundled signed helper (manifest + bytes).
+        // Resolution is FIXED via Tauri's resource-dir API; failure leaves
+        // `None` and apply_hook_action reports the typed
+        // `configuration.helper_unavailable` instead of guessing a path.
+        state.resources_dir = app.path().resource_dir().ok();
+    }
+    {
         // Autostart is applied only from save_settings (plan Task 15); the
         // control delegates to the official autostart plugin.
         use tauri_plugin_autostart::ManagerExt;
@@ -609,6 +616,9 @@ mod tests {
         assert_eq!(super::local_offset_from_stored(0).local_minus_utc(), 0);
         // ...and a stale/corrupt stored value degrades to UTC instead of
         // failing startup.
-        assert_eq!(super::local_offset_from_stored(i32::MAX).local_minus_utc(), 0);
+        assert_eq!(
+            super::local_offset_from_stored(i32::MAX).local_minus_utc(),
+            0
+        );
     }
 }
