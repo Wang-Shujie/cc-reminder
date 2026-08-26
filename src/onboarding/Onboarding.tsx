@@ -15,6 +15,7 @@ import type {
 } from "../lib/contracts";
 import { dictionary } from "../lib/i18n";
 import { errorOf, type PageError } from "../lib/errors";
+import { ChannelGuide } from "../channels/ChannelGuide";
 import { AppShell } from "../shell/AppShell";
 
 type Step = "detect" | "install" | "channel" | "defaults" | "test";
@@ -334,6 +335,8 @@ export function Onboarding({
               void saveChannel();
             }}
           >
+            {/* v2-issues:分步指引随平台切换,与 docs/operations.md §5 同源。 */}
+            <ChannelGuide locale={locale} kind={kind} />
             <label htmlFor="ob-channel-name">{t.channelName}</label>
             <input
               id="ob-channel-name"
@@ -365,12 +368,14 @@ export function Onboarding({
                   value={signingSecret}
                   onChange={(event) => setSigningSecret(event.target.value)}
                 />
+                <p className="muted field-hint">{t.secretHint}</p>
                 <label htmlFor="ob-channel-prefix">{t.keywordPrefixField}</label>
                 <input
                   id="ob-channel-prefix"
                   value={keywordPrefix}
                   onChange={(event) => setKeywordPrefix(event.target.value)}
                 />
+                <p className="muted field-hint">{t.keywordHint}</p>
               </>
             )}
             {errorLine}
