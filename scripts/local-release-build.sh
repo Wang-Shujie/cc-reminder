@@ -53,7 +53,12 @@ print(json.dumps({
 EOF
 
 echo "[3/4] building the app bundle (updater artifacts off: no signing key locally)"
-pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+# v2-issues: 按平台注入资源表,异平台 0 字节占位 helper 不再进包。
+case "$triple" in
+  *-windows-*) host_bin="resources/bin/cc-reminder-hook.exe" ;;
+  *) host_bin="resources/bin/cc-reminder-hook" ;;
+esac
+pnpm tauri build --config "$(printf '{"bundle":{"createUpdaterArtifacts":false,"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","%s"]}}' "$host_bin")"
 
 echo "[4/4] verifying the bundle actually embeds the staged manifest"
 bundled="src-tauri/target/release/bundle/macos/CC Reminder.app/Contents/Resources/resources/helper-manifest.json"
