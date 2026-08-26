@@ -977,3 +977,19 @@ input[type="radio"] {
 .channel-summary .channel-name {
   font-weight: 600;
 }
+
+/* 字体统一根治(用户反馈第二轮):原生控件默认不继承字体——UA 默认
+   Arial/13.33px 与页面 system-ui/13px 混排即"大小不一"。全部继承。 */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* 壳体固定(用户反馈):grid 子项默认 min-height:auto,内容超过时行高
+   被撑开、整个窗体滚动;归零后仅内容区内部滚动,顶栏与立柱恒定。 */
+.shell-content {
+  min-height: 0;
+  min-width: 0;
+}
