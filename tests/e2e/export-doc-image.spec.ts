@@ -13,6 +13,7 @@ test("export the reviewed Hook Rules documentation image", async ({ page }) => {
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await page.getByRole("button", { name: "通知规则" }).click();
   await page.getByRole("row", { name: /Stop/ }).waitFor();
   // Settled state only: no drawers, no dialogs, no transient status text.
   await expect(page.locator(".drawer")).toHaveCount(0);

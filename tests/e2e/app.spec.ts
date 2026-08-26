@@ -19,32 +19,28 @@ import { expect, test, type Page } from "@playwright/test";
 
 /** Nav rail labels (zh-CN authoritative dictionary) + snapshot stems. */
 const NAV_PAGES = [
-  ["概览", "overview"],
-  ["Agent 集成", "agents"],
-  ["Hook 规则", "hooks"],
-  ["渠道", "channels"],
-  ["项目", "projects"],
-  ["通知历史", "history"],
+  ["工作台", "workbench"],
+  ["通知规则", "rules"],
+  ["集成", "integrations"],
   ["设置", "settings"],
 ] as const;
 
 const SETTLE_TARGETS: Record<(typeof NAV_PAGES)[number][1], () => Promise<unknown>> = {
-  overview: (page) => page.getByRole("heading", { name: "待处理问题" }).waitFor(),
-  agents: (page) => page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
-  hooks: (page) => page.getByRole("row", { name: /Stop/ }).waitFor(),
-  channels: (page) => page.getByRole("cell", { name: "值班群", exact: true }).waitFor(),
-  projects: (page) => page.getByRole("cell", { name: "演示项目" }).waitFor(),
-  // Wait for the HYDRATED channel-name cell: history rows can render before
-  // the async listChannels swap resolves, and screenshotting that transient
-  // state is the one nondeterminism on this page.
-  history: (page) =>
-    page.getByRole("cell", { name: "值班群", exact: true }).first().waitFor(),
+  workbench: (page) => page.getByRole("heading", { name: "待处理问题" }).waitFor(),
+  rules: (page) => page.getByRole("row", { name: /Stop/ }).waitFor(),
+  integrations: (page) =>
+    page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
   // Hydration enables the retention inputs; value proves get_settings landed.
   settings: (page) => expect(page.locator("#settings-event-days")).toHaveValue("30"),
 };
 
 async function openPage(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: label }).click();
+}
+
+/** In-page TabBar tab (role=tab), e.g. 通知去向 inside 集成. */
+async function openTab(page: Page, label: string): Promise<void> {
+  await page.getByRole("tab", { name: label }).click();
 }
 
 async function openAndSettle(page: Page, entry: (typeof NAV_PAGES)[number]): Promise<void> {
@@ -138,7 +134,7 @@ test.describe("workflow coverage", () => {
     page,
   }) => {
     await page.goto("/");
-    await openPage(page, "Hook 规则");
+    await openPage(page, "通知规则");
     await page.getByRole("row", { name: /Stop/ }).waitFor();
 
     // Switch to the project scope and pick the seeded project.
@@ -165,7 +161,8 @@ test.describe("workflow coverage", () => {
     await expect(drawer.getByText("预览：Stop")).toBeVisible();
 
     // Raw credential material must never reach ANY rendered output.
-    await openPage(page, "渠道");
+    await openPage(page, "集成");
+    await openTab(page, "通知去向");
     await page.getByRole("cell", { name: "值班群", exact: true }).waitFor();
     await expect(page.locator("body")).not.toContainText("secret-raw-value");
   });
@@ -208,13 +205,14 @@ test.describe("workflow coverage", () => {
     await sendTest.focus();
     await page.keyboard.press("Enter");
 
-    // Completion lands in the main shell.
-    await page.getByRole("heading", { name: "Hook 规则" }).waitFor();
-    await expect(page.getByRole("button", { name: "概览" })).toBeVisible();
+    // Completion lands in the main shell at its default workbench.
+    await page.getByRole("heading", { name: "工作台" }).waitFor();
+    await expect(page.getByRole("button", { name: "通知规则" })).toBeVisible();
   });
 
   test("keyboard-only rule edit toggles a hook and closes the drawer", async ({ page }) => {
     await page.goto("/");
+    await openPage(page, "通知规则");
     await page.getByRole("row", { name: /Stop/ }).waitFor();
 
     const row = page.getByRole("row", { name: /Stop/ });
@@ -241,7 +239,7 @@ test.describe("workflow coverage", () => {
 test.describe("desktop layout coverage", () => {
   test("all primary pages fit at the minimum window without overlap", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("row", { name: /Stop/ }).waitFor(); // initial hooks page ready
+    await page.getByRole("heading", { name: "待处理问题" }).waitFor(); // default workbench ready
     for (const entry of NAV_PAGES) {
       await openAndSettle(page, entry);
       await assertDesktopLayout(page);
@@ -253,20 +251,21 @@ test.describe("desktop layout coverage", () => {
   test("hook rules fit at 1280×800 and 1440×900", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
+    await openPage(page, "通知规则");
     await page.getByRole("row", { name: /Stop/ }).waitFor();
     await assertDesktopLayout(page);
-    await expect(page.locator("main")).toHaveScreenshot("hooks-1280x800.png");
+    await expect(page.locator("main")).toHaveScreenshot("rules-1280x800.png");
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await assertDesktopLayout(page);
-    await expect(page.locator("main")).toHaveScreenshot("hooks-1440x900.png");
+    await expect(page.locator("main")).toHaveScreenshot("rules-1440x900.png");
   });
 
   test("content survives 200% browser zoom without loss", async ({ page }) => {
     // 1920×1080 at zoom 2 ≈ the 960×640 minimum CSS viewport (WCAG 1.4.4).
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto("/");
-    await page.getByRole("row", { name: /Stop/ }).waitFor();
+    await page.getByRole("heading", { name: "待处理问题" }).waitFor();
     await page.evaluate(() => {
       (document.documentElement.style as CSSStyleDeclaration & { zoom: string }).zoom = "200%";
     });
@@ -286,11 +285,11 @@ test.describe("desktop layout coverage", () => {
     await expect(page.locator("html[data-theme=dark]")).toHaveCount(1);
     await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(page.getByText("设置已保存。")).toBeVisible();
-    await openPage(page, "Hook 规则");
+    await openPage(page, "通知规则");
     await page.getByRole("row", { name: /Stop/ }).waitFor();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await assertDesktopLayout(page);
-    await expect(page.locator("main")).toHaveScreenshot("hooks-dark.png");
+    await expect(page.locator("main")).toHaveScreenshot("rules-dark.png");
 
     // Light comes back cleanly.
     await openPage(page, "设置");
@@ -303,8 +302,9 @@ test.describe("desktop layout coverage", () => {
       window.localStorage.setItem("cc-reminder-e2e:locale", "en");
     });
     await page.goto("/");
-    const longest = page.getByRole("button", { name: "Notification History" });
+    const longest = page.getByRole("button", { name: "Integrations" });
     await longest.waitFor();
+    await openPage(page, "Rules");
     await page.getByRole("row", { name: /Stop/ }).waitFor();
 
     const clipped = await page.evaluate(() => {
@@ -318,6 +318,6 @@ test.describe("desktop layout coverage", () => {
     });
     expect(clipped, "nav labels must wrap or shrink, never clip").toEqual([]);
     await assertDesktopLayout(page);
-    await expect(page.locator("main")).toHaveScreenshot("hooks-en.png");
+    await expect(page.locator("main")).toHaveScreenshot("rules-en.png");
   });
 });
