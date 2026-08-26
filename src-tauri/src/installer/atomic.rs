@@ -22,13 +22,42 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Publish the temp by renaming it over the target. Routed through a seam so the
 /// rename-failure cleanup path can be exercised under the `test-support` feature
-/// (production builds always call `fs::rename`).
-fn publish_rename(temp: &Path, target: &Path) -> std::io::Result<()> {
+/// (production builds always call the real rename).
+///
+/// v2-issues(Windows write-through):Unix 上同文件系统 rename 原子、耐久性由
+/// 调用方先行的 fsync 覆盖;Windows 走 MoveFileExW + WRITE_THROUGH,让替换
+/// 落盘后才返回,关闭崩溃窗口。需 Windows 实机验收(macOS 无法编译验证)。
+pub(crate) fn publish_rename(temp: &Path, target: &Path) -> std::io::Result<()> {
     #[cfg(feature = "test-support")]
     if RENAME_FAIL.with(|flag| flag.get()) {
         return Err(std::io::Error::from_raw_os_error(5));
     }
-    fs::rename(temp, target)
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
+        const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0002;
+        let mut temp_w: Vec<u16> = temp.as_os_str().encode_wide().collect();
+        let mut target_w: Vec<u16> = target.as_os_str().encode_wide().collect();
+        temp_w.push(0);
+        target_w.push(0);
+        // SAFETY: 两个 NUL 结尾的 UTF-16 路径指针仅在本调用内使用。
+        let moved = unsafe {
+            windows_sys::Win32::Storage::FileSystem::MoveFileExW(
+                temp_w.as_ptr(),
+                target_w.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if moved == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(temp, target)
+    }
 }
 
 #[cfg(feature = "test-support")]

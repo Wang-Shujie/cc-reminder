@@ -391,9 +391,9 @@ fn write_version_sidecar(bin_dir: &Path, version: &Version) -> Result<(), AppErr
 }
 
 fn publish_rename(temp: &Path, target: &Path) -> std::io::Result<()> {
-    // ponytail: Windows durability (MoveFileExW/replace) is left to the platform
-    // owner; same-filesystem rename is atomic on the Unix path under test.
-    fs::rename(temp, target)
+    // v2-issues: 统一走 atomic.rs 的耐久重命名(Windows MoveFileExW
+    // WRITE_THROUGH;test-support 失败缝合流经同一路径)。
+    crate::installer::atomic::publish_rename(temp, target)
 }
 
 #[cfg(unix)]
