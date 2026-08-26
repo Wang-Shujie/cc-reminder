@@ -103,6 +103,9 @@ export function AgentsPage({
   const [loadFailed, setLoadFailed] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<AgentKindCode | null>(null);
   const [trustGuideOpen, setTrustGuideOpen] = useState(false);
+  /** 最近应用结果弹窗(用户裁决第四轮):动作完成后自动弹出一次,
+   *  页面不再常驻结果区块;工具栏箭头可随时回看。 */
+  const [resultOpen, setResultOpen] = useState(false);
   /** Set after the backend rejects with agent_confirmation_required; the open
    *  dialog discloses the compatibility caveat before retrying with true. */
   const [needsConsent, setNeedsConsent] = useState<{
@@ -167,6 +170,9 @@ export function AgentsPage({
       });
       setNeedsConsent(null);
       setUninstallTarget(null);
+      if (action !== "uninstall") {
+        setResultOpen(true);
+      }
       await refresh();
     } catch (e: unknown) {
       if (!confirmCompatibleVersion && errorCodeOf(e) === AGENT_CONFIRMATION_REQUIRED) {
@@ -215,6 +221,17 @@ export function AgentsPage({
           >
             {detecting ? t.agentDetecting : t.agentDetect}
           </button>
+          {(entries["claude-code"] !== undefined ||
+            entries["codex"] !== undefined) && (
+            <button
+              type="button"
+              className="cc-focusable link-arrow"
+              onClick={() => setResultOpen(true)}
+            >
+              {t.lastApplied}
+              <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -355,55 +372,70 @@ export function AgentsPage({
       </table>
       {summaries === null && <p className="muted">{t.loading}</p>}
 
-      {(entries["claude-code"] !== undefined || entries["codex"] !== undefined) && (
-        <section aria-label={t.lastApplied}>
-          <h2>{t.lastApplied}</h2>
-          {AGENTS.map((agent) =>
-            (entries[agent] ?? []).length > 0 ? (
-              <div key={agent}>
-                <h3>{agentName(t, agent)}</h3>
-                <ul>
-                  {(entries[agent] ?? []).map((entry) => (
-                    <li key={entry.source_event}>
-                      {entry.source_event} · {entryHealthLabel(t, entry.health)}
-                      {entry.trust_status === "needs_user_confirmation" &&
-                        ` · ${
-                          codexConfirmed
-                            ? t.ehAwaitingFirstRun
-                            : t.ehNeedsTrust
-                        }`}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null,
-          )}
-          {(entries["codex"] ?? []).some(
-            (entry) =>
-              entry.trust_status === "needs_user_confirmation" ||
-              entry.health === "needs_trust",
-          ) && (
-            <p className="trust-command">
-              {/* Once any Codex entry is observed working, the official /hooks
-                  confirmation is demonstrably done: remaining pending entries
-                  just await their first real occurrence — inform, don't
-                  re-instruct. */}
-              {codexConfirmed ? (
-                <span>{t.trustDoneAwaiting}</span>
-              ) : (
-                /* 长指引文字弹窗化(用户裁决):行内只留入口箭头。 */
-                <button
-                  type="button"
-                  className="cc-focusable link-arrow"
-                  onClick={() => setTrustGuideOpen(true)}
-                >
-                  {t.trustViewGuide}
-                  <ArrowRight size={14} aria-hidden="true" />
-                </button>
-              )}
-            </p>
-          )}
-        </section>
+      {resultOpen &&
+        (entries["claude-code"] !== undefined ||
+          entries["codex"] !== undefined) && (
+        <div className="dialog-overlay">
+          <div role="dialog" aria-label={t.lastApplied} className="dialog">
+            <h2>{t.lastApplied}</h2>
+            {AGENTS.map((agent) =>
+              (entries[agent] ?? []).length > 0 ? (
+                <div key={agent}>
+                  <h3>{agentName(t, agent)}</h3>
+                  <ul>
+                    {(entries[agent] ?? []).map((entry) => (
+                      <li key={entry.source_event}>
+                        {entry.source_event} · {entryHealthLabel(t, entry.health)}
+                        {entry.trust_status === "needs_user_confirmation" &&
+                          ` · ${
+                            codexConfirmed
+                              ? t.ehAwaitingFirstRun
+                              : t.ehNeedsTrust
+                          }`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null,
+            )}
+            {(entries["codex"] ?? []).some(
+              (entry) =>
+                entry.trust_status === "needs_user_confirmation" ||
+                entry.health === "needs_trust",
+            ) && (
+              <p className="trust-command">
+                {/* Once any Codex entry is observed working, the official /hooks
+                    confirmation is demonstrably done: remaining pending entries
+                    just await their first real occurrence — inform, don't
+                    re-instruct. */}
+                {codexConfirmed ? (
+                  <span>{t.trustDoneAwaiting}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="cc-focusable link-arrow"
+                    onClick={() => {
+                      setResultOpen(false);
+                      setTrustGuideOpen(true);
+                    }}
+                  >
+                    {t.trustViewGuide}
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+                )}
+              </p>
+            )}
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => setResultOpen(false)}
+              >
+                {t.drawerClose}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {trustGuideOpen && (

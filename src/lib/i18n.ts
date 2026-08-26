@@ -79,7 +79,6 @@ export interface Dictionary {
   colFrequency: string;
   colChannels: string;
   colSource: string;
-  colStatus: string;
   highFrequency: string;
   normalFrequency: string;
   experimentalBadge: string;
@@ -405,7 +404,6 @@ const zhCn: Dictionary = {
   colFrequency: "频率",
   colChannels: "渠道",
   colSource: "配置来源",
-  colStatus: "状态",
   highFrequency: "高频",
   normalFrequency: "常规",
   experimentalBadge: "实验",
@@ -731,7 +729,6 @@ const en: Dictionary = {
   colFrequency: "Rate",
   colChannels: "Channels",
   colSource: "Source",
-  colStatus: "Status",
   highFrequency: "High-freq",
   normalFrequency: "Normal",
   experimentalBadge: "Experimental",

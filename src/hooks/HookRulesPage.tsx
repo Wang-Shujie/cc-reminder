@@ -376,7 +376,6 @@ export function HookRulesPage({
             <th>{t.colFrequency}</th>
             <th>{t.colChannels}</th>
             <th>{t.colSource}</th>
-            <th>{t.colStatus}</th>
           </tr>
         </thead>
         <tbody>
@@ -410,6 +409,9 @@ export function HookRulesPage({
                     <span className="badge">{t.experimentalBadge}</span>
                   )}
                   {row.status === "deprecated" && <span className="badge">{t.deprecatedBadge}</span>}
+                  {!row.available && (
+                    <span className="badge">{t.unsupportedVersion}</span>
+                  )}
                 </td>
                 <td>{row.phase}</td>
                 <td>{row.agent === "claude-code" ? t.agentClaudeCode : t.agentCodex}</td>
@@ -426,7 +428,6 @@ export function HookRulesPage({
                     {row.patched_fields.length > 0 ? t.sourceOverridden : t.sourceGlobal}
                   </span>
                 </td>
-                <td>{!row.available && <span className="badge">{t.unsupportedVersion}</span>}</td>
               </tr>
             );
           })}
