@@ -46,3 +46,8 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 ## 实机事件记录(2026-08-27 第二轮:上午静默失联)
 
 - ~~**v2-fixes 修复后,次日上午 hook 再次全灭**~~ **已定位并加固(244b641)**:症状同前——测试发送通、hook 零事件、应用日志零痕迹。法医链:事件表停在 00:49 → 采样显示新进程健康 → **今晨两份 .ips 崩溃报告(09:20/10:10) exposé 退出路径 panic**(`application_will_terminate` 内 abort)。定罪链:① 托盘菜单在 forwarder **非主线程**重建(NSMenu 违规,代码确凿)——6h 重检 06:48 首次触发,正落在"凌晨正常→上午全灭"空档;② AppKit 状态被污染 → 退出时 tao 清理 panic → SIGABRT(两份 .ips 完全一致);③ IPC 环无 panic 防护,任一任务 panic 即无声死亡(stderr 对 launchd 应用不可见)。**加固四层**:托盘重建回主线程(run_on_main_thread)、全局 panic 钩子写应用日志(今后任何 panic 必留 file:line 现场)、IPC 环 catch_unwind(单请求 panic 记录并答拒绝,环不死)、退出锁中毒免疫(quit 永不 abort)。根因链中"托盘 UB → IPC 环死亡"一段为时序吻合的领先假设(panic 原文随 stderr 丢失),加固后若复发必留现场。
+
+## 实机事件记录(2026-08-27 第三轮:真根因 = 钥匙串 ACL 隐藏弹窗)
+
+- **终极根因**(活体 sample 定罪):每次重编译二进制 ad-hoc 签名变化,钥匙串条目 ACL 对新二进制弹「允许访问?」;应用启动早期无窗口,弹窗不可见,主线程在 `SecKeychainFindGenericPassword → securityd` 上无限 mach_msg。此前两轮的 WAL 竞态与托盘 UB 都是**真实但非当前主因**的并发缺陷(均已修复加固)。三层表现同源:卡在钥匙串 → IPC/日志/托盘全无 → helper 中性退出 → 全灭零痕。
+- **修复(de50f64)**:钥匙串读取看门狗(5/20/60/120s 分级把卡点写进应用日志,指明恢复路径);**用户侧一次性** `security set-key-partition-list -S apple:, -k <登录密码>` 消除每构建弹窗。执行后实测:启动秒过钥匙串、探针秒落库、文档为统一新格式。
