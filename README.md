@@ -34,8 +34,10 @@ pnpm tauri dev
 
 ## 文档
 
-- 设计文档：[docs/superpowers/plans/2026-07-29-cc-reminder.md](docs/superpowers/plans/2026-07-29-cc-reminder.md)
 - 运维手册（安装、信任、队列语义、诊断、卸载与发布验收清单）：[docs/operations.md](docs/operations.md)
+- 分层架构与依赖方向约定：[docs/architecture.md](docs/architecture.md)
+- 待办与实机事件记录：[docs/v2-issues.md](docs/v2-issues.md)
+- v1 设计与实施计划：[docs/superpowers/specs/2026-07-29-cc-reminder-design.md](docs/superpowers/specs/2026-07-29-cc-reminder-design.md) / [docs/superpowers/plans/2026-07-29-cc-reminder.md](docs/superpowers/plans/2026-07-29-cc-reminder.md)
 
 ## 许可证
 
