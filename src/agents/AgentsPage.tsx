@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, ClipboardCopy } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
+import { useCoreQuery } from "../lib/useCoreQuery";
 import {
   AGENT_CONFIRMATION_REQUIRED,
   errorOf,
@@ -86,8 +87,7 @@ export function AgentsPage({
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
-  const [summaries, setSummaries] = useState<AgentIntegrationSummary[] | null>(null);
-  const [rows, setRows] = useState<HookRuleRow[]>([]);
+
   /** Per-event health of the LAST successful apply per agent. */
   const [entries, setEntries] = useState<Partial<Record<AgentKindCode, HookApplyEntry[]>>>({});
   /** True once any Codex entry is observed working: the official /hooks
@@ -99,8 +99,6 @@ export function AgentsPage({
   const [busy, setBusy] = useState<Busy | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<PageError | null>(null);
-  /** Initial load of the PRIMARY list (list_agent_integrations) failed. */
-  const [loadFailed, setLoadFailed] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<AgentKindCode | null>(null);
   const [trustGuideOpen, setTrustGuideOpen] = useState(false);
   /** 最近应用结果弹窗(用户裁决第四轮):动作完成后自动弹出一次,
@@ -113,31 +111,34 @@ export function AgentsPage({
     action: HookActionCode;
   } | null>(null);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    // Drift must see project patches too: global rows + every project scope.
-    const projects = await backend.listProjects().catch(() => []);
-    const scopes: ListHookRulesInput[] = AGENTS.flatMap((agent) => [
-      { agent, project_id: null },
-      ...projects.map((p) => ({ agent, project_id: p.id })),
-    ]);
-    const [integrations, rowLists] = await Promise.all([
-      backend.listAgentIntegrations(),
-      Promise.all(scopes.map((scope) => backend.listHookRules(scope).catch(() => []))),
-    ]);
-    setSummaries(integrations);
-    setRows(rowLists.flat());
-  }, [backend]);
-
-  useEffect(() => {
-    refresh()
-      .then(() => setLoadFailed(false))
-      .catch(() => {
-        // Surface the incomplete data instead of silently showing an empty
-        // (drift-misleading) list; the rest of the page stays usable.
-        setSummaries([]);
-        setLoadFailed(true);
-      });
-  }, [refresh]);
+  // 统一请求层(架构提案 §1):集成摘要 + 全范围规则行一次取回
+  // (drift 必须看见项目补丁:全局行 + 每个项目 scope)。失败语义保持
+  // "空表 + 显式告警,其余页面可用"。
+  const integrationsQuery = useCoreQuery(
+    async (b) => {
+      const projects = await b.listProjects().catch(() => []);
+      const scopes: ListHookRulesInput[] = AGENTS.flatMap((agent) => [
+        { agent, project_id: null },
+        ...projects.map((p) => ({ agent, project_id: p.id })),
+      ]);
+      const [integrations, rowLists] = await Promise.all([
+        b.listAgentIntegrations(),
+        Promise.all(
+          scopes.map((scope) => b.listHookRules(scope).catch(() => [])),
+        ),
+      ]);
+      return { summaries: integrations, rows: rowLists.flat() };
+    },
+    [],
+    [],
+    backend,
+  );
+  const summaries: AgentIntegrationSummary[] | null = integrationsQuery.failed
+    ? []
+    : (integrationsQuery.data?.summaries ?? null);
+  const rows: HookRuleRow[] = integrationsQuery.data?.rows ?? [];
+  const loadFailed = integrationsQuery.failed;
+  const refresh = integrationsQuery.refresh;
 
   function hasInstalledHooks(agent: AgentKindCode): boolean {
     return rows.some((row) => row.agent === agent && row.installed);
@@ -192,9 +193,9 @@ export function AgentsPage({
     setDetecting(true);
     setError(null);
     try {
-      setSummaries(
-        await backend.detectAgents({ confirm_compatible_version: false }),
-      );
+      // 检测结果由核心落库,列表接口本就实时探测——经请求层重取即得。
+      await backend.detectAgents({ confirm_compatible_version: false });
+      await refresh();
     } catch (e: unknown) {
       setError(errorOf(e));
     } finally {
