@@ -2,10 +2,11 @@
 // list and recent delivery failures — mirroring get_health_snapshot exactly.
 // Not decorative: every issue carries a button navigating to the management
 // page that fixes it.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
+import { useCoreQuery } from "../lib/useCoreQuery";
 import type {
   DeliveryStatusCode,
   HealthSnapshot,
@@ -51,74 +52,38 @@ export function OverviewPage({
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
-  const [snapshot, setSnapshot] = useState<HealthSnapshot | null>(null);
-  const [recentFailures, setRecentFailures] = useState<HistoryItem[] | null>(null);
-  /** True when the failures query itself failed (≠ an empty failure list). */
-  const [failuresErrored, setFailuresErrored] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  /** Polite live-region content for background refreshes (never moves focus). */
-  const [notice, setNotice] = useState("");
-  const mounted = useRef(true);
+  // 统一请求层(架构提案 §1):健康快照 + 失败预览一次取回,随
+  // health/queue 事件重取;failures 子查询失败不拖垮整体(记 errored)。
+  const boardQuery = useCoreQuery(
+    async (b) => {
+      const [snap, failedPage] = await Promise.all([
+        b.getHealthSnapshot(),
+        b
+          .listHistory({ delivery_status: "failed", limit: RECENT_FAILURES_LIMIT })
+          .catch(() => null),
+      ]);
+      return { snap, failedItems: failedPage === null ? null : failedPage.items };
+    },
+    [],
+    ["core://health-changed", "core://queue-changed"],
+    backend,
+  );
+  const snapshot = boardQuery.failed
+    ? null
+    : (boardQuery.data?.snap ?? null);
+  /** null = 加载中或子查询失败(≠ 空失败列表)。 */
+  const recentFailures = boardQuery.failed
+    ? null
+    : (boardQuery.data?.failedItems ?? null);
+  const failuresErrored =
+    !boardQuery.failed && boardQuery.data !== null && boardQuery.data.failedItems === null;
+  const loadFailed = boardQuery.failed;
+  const refresh = boardQuery.refresh;
+  const notice =
+    boardQuery.noticeRevision === null
+      ? ""
+      : `${t.refreshedNotice}(#${boardQuery.noticeRevision})`;
 
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    const [snap, failedPage] = await Promise.all([
-      backend.getHealthSnapshot(),
-      backend
-        .listHistory({ delivery_status: "failed", limit: RECENT_FAILURES_LIMIT })
-        .catch(() => null),
-    ]);
-    if (!mounted.current) return;
-    setSnapshot(snap);
-    if (failedPage === null) {
-      // The failures query failed: say so instead of claiming 没有失败任务.
-      setRecentFailures(null);
-      setFailuresErrored(true);
-    } else {
-      setRecentFailures(failedPage.items);
-      setFailuresErrored(false);
-    }
-  }, [backend]);
-
-  useEffect(() => {
-    let cancelled = false;
-    refresh().catch(() => {
-      if (!cancelled) {
-        setLoadFailed(true);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [refresh]);
-
-  useEffect(() => {
-    const events = ["core://health-changed", "core://queue-changed"] as const;
-    const subscriptions = events.map((event) =>
-      backend.subscribe(event, (revision: number) => {
-        refresh()
-          .then(() => {
-            if (mounted.current) {
-              setNotice(`${t.refreshedNotice}(#${revision})`);
-            }
-          })
-          .catch(() => {
-            /* keep the last snapshot on transient failures */
-          });
-      }),
-    );
-    return () => {
-      for (const subscription of subscriptions) {
-        subscription.then((unlisten) => unlisten()).catch(() => {});
-      }
-    };
-  }, [backend, refresh, t.refreshedNotice]);
 
   if (snapshot === null) {
     return (
