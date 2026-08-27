@@ -246,6 +246,7 @@ pub(crate) fn list_hook_rules_impl(
     let reference = reference_catalog(agent);
     let mut views = Vec::new();
     for rule in state
+        .storage
         .config
         .list_global_rules()?
         .into_iter()
@@ -253,6 +254,7 @@ pub(crate) fn list_hook_rules_impl(
     {
         let patch = match project_id {
             Some(pid) => state
+                .storage
                 .config
                 .get_project_patch(pid, agent, &rule.source_event)
                 .ok(),
@@ -267,7 +269,11 @@ pub(crate) fn list_hook_rules_impl(
             .hooks
             .iter()
             .find(|hook| hook.source_event == rule.source_event);
-        let installed = state.integrations.hook(agent, &rule.source_event).is_ok();
+        let installed = state
+            .storage
+            .integrations
+            .hook(agent, &rule.source_event)
+            .is_ok();
         views.push(build_rule_view(
             rule,
             patch.as_ref(),
@@ -291,6 +297,7 @@ pub(crate) fn save_global_rule_impl(
         ));
     }
     let existing = state
+        .storage
         .config
         .get_global_rule(agent, &input.source_event)
         .ok();
@@ -306,11 +313,14 @@ pub(crate) fn save_global_rule_impl(
         version,
         config: input.config,
     };
-    state.config.save_global_rule(&stored)?;
+    state.storage.config.save_global_rule(&stored)?;
     // Recompute selection and emit a revision if it differs from installed
     // rows — but do NOT mutate Agent config (only apply_hook_action does).
     let _ = recompute_selection_health(state)?;
-    let fresh = state.config.get_global_rule(agent, &stored.source_event)?;
+    let fresh = state
+        .storage
+        .config
+        .get_global_rule(agent, &stored.source_event)?;
     let resolution = resolve_catalog(state, agent);
     let reference = reference_catalog(agent);
     let available = resolution
@@ -322,7 +332,11 @@ pub(crate) fn save_global_rule_impl(
         .hooks
         .iter()
         .find(|hook| hook.source_event == fresh.source_event);
-    let installed = state.integrations.hook(agent, &fresh.source_event).is_ok();
+    let installed = state
+        .storage
+        .integrations
+        .hook(agent, &fresh.source_event)
+        .is_ok();
     Ok(build_rule_view(fresh, None, installed, cap, available))
 }
 
@@ -338,9 +352,12 @@ pub(crate) fn save_project_rule_patch_impl(
             "rule capability is not catalogued",
         ));
     }
-    state
-        .config
-        .save_project_patch(project_id, agent, &input.source_event, &input.patch)?;
+    state.storage.config.save_project_patch(
+        project_id,
+        agent,
+        &input.source_event,
+        &input.patch,
+    )?;
     let _ = recompute_selection_health(state)?;
     Ok(())
 }
@@ -352,9 +369,12 @@ pub(crate) fn reset_project_rule_field_impl(
     let project_id = parse_uuid_input(&input.project_id)?;
     let agent = input.agent.into_kind();
     let field = input.field.into_field();
-    state
-        .config
-        .reset_project_patch_field(project_id, agent, &input.source_event, field)?;
+    state.storage.config.reset_project_patch_field(
+        project_id,
+        agent,
+        &input.source_event,
+        field,
+    )?;
     let _ = recompute_selection_health(state)?;
     Ok(())
 }
@@ -379,12 +399,14 @@ pub(crate) fn preview_notification_impl(
         Some(id) => {
             let pid = parse_uuid_input(id)?;
             match state
+                .storage
                 .config
                 .get_project_patch(pid, agent, &input.source_event)
                 .ok()
             {
                 Some(patch) => crate::rules::resolve::resolve_rule(
                     &state
+                        .storage
                         .config
                         .get_global_rule(agent, &input.source_event)?
                         .config,
@@ -392,6 +414,7 @@ pub(crate) fn preview_notification_impl(
                 ),
                 None => {
                     state
+                        .storage
                         .config
                         .get_global_rule(agent, &input.source_event)?
                         .config
@@ -400,6 +423,7 @@ pub(crate) fn preview_notification_impl(
         }
         None => {
             state
+                .storage
                 .config
                 .get_global_rule(agent, &input.source_event)?
                 .config
@@ -431,7 +455,7 @@ pub(crate) async fn send_rule_test_impl(
     input: SendRuleTestInput,
 ) -> Result<(), AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
-    let channel = state.config.get_channel(channel_id)?;
+    let channel = state.storage.config.get_channel(channel_id)?;
     // A DingTalk keyword robot only accepts messages containing the configured
     // keyword, so the test must carry it exactly like a real delivery.
     let keyword_prefix = match &channel.public_config {
@@ -479,6 +503,7 @@ fn is_known_capability(state: &CoreState, agent: AgentKind, event: &str) -> Resu
     let catalogued = crate::events::catalog::catalogued_hooks();
     Ok(catalogued.contains(&(agent, event.to_owned()))
         || state
+            .storage
             .config
             .list_global_rules()?
             .iter()
@@ -487,6 +512,7 @@ fn is_known_capability(state: &CoreState, agent: AgentKind, event: &str) -> Resu
 
 fn resolve_catalog(state: &CoreState, agent: AgentKind) -> CapabilityResolution {
     let version = state
+        .storage
         .integrations
         .agent(agent)
         .ok()
@@ -504,13 +530,15 @@ fn resolve_catalog(state: &CoreState, agent: AgentKind) -> CapabilityResolution 
 /// forwarder task in lib.rs turns it into a revision-only WebView emit; in
 /// pure command tests the default sink is disconnected and drops it).
 fn recompute_selection_health(state: &CoreState) -> Result<SelectionOutOfDateView, AppError> {
-    let globals = state.config.list_global_rules()?;
+    let globals = state.storage.config.list_global_rules()?;
     let mut overrides = Vec::new();
-    for project in state.config.list_projects()? {
+    for project in state.storage.config.list_projects()? {
         for g in &globals {
-            if let Ok(patch) = state
-                .config
-                .get_project_patch(project.id, g.agent, &g.source_event)
+            if let Ok(patch) =
+                state
+                    .storage
+                    .config
+                    .get_project_patch(project.id, g.agent, &g.source_event)
             {
                 overrides.push(patch);
             }
@@ -521,7 +549,7 @@ fn recompute_selection_health(state: &CoreState) -> Result<SelectionOutOfDateVie
     // installed hook row means selection is out of date.
     let mut out_of_date = false;
     for (agent, event) in &required {
-        if state.integrations.hook(*agent, event).is_err() {
+        if state.storage.integrations.hook(*agent, event).is_err() {
             out_of_date = true;
             break;
         }
@@ -529,7 +557,7 @@ fn recompute_selection_health(state: &CoreState) -> Result<SelectionOutOfDateVie
     // Board-wide health revision bump (no single channel triggered it). The
     // payload carries only the revision — subscribers refetch details.
     crate::worker::emit(
-        &state.core_events,
+        &state.runtime.core_events,
         crate::worker::CoreEvent::HealthChanged { channel_id: None },
     );
     let _ = CatalogVerification::Exact; // suppress unused import on some cfgs

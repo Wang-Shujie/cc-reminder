@@ -108,7 +108,7 @@ pub fn run() {
                 let close_to_tray = window
                     .app_handle()
                     .try_state::<CoreState>()
-                    .and_then(|state| state.config.get_settings().ok())
+                    .and_then(|state| state.storage.config.get_settings().ok())
                     .map(|settings| settings.close_to_tray)
                     .unwrap_or(true);
                 if close_action(close_to_tray) == CloseAction::HideToTray {
@@ -216,10 +216,10 @@ fn shutdown_core(app: &tauri::AppHandle) {
     let Some(state) = app.try_state::<CoreState>() else {
         return;
     };
-    if let Some(token) = state.cancel_token.lock().unwrap().take() {
+    if let Some(token) = state.runtime.cancel_token.lock().unwrap().take() {
         token.cancel();
     }
-    let worker_task = state.worker_task.lock().unwrap().take();
+    let worker_task = state.runtime.worker_task.lock().unwrap().take();
     if let Some(task) = worker_task {
         // Awaiting the join handle covers "active sends finish": `run` only
         // returns after the current pass completes, so this waits for real
@@ -456,31 +456,31 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         diagnostics,
     );
     {
-        let mut guard = state.cancel_token.lock().unwrap();
+        let mut guard = state.runtime.cancel_token.lock().unwrap();
         *guard = Some(cancel);
     }
     {
-        let mut guard = state.worker_task.lock().unwrap();
+        let mut guard = state.runtime.worker_task.lock().unwrap();
         *guard = Some(worker_task);
     }
     {
         // Commands push revision notifications onto the same channel the
         // worker uses; the forwarder task above is their only consumer.
-        state.core_events = core_event_sink;
+        state.runtime.core_events = core_event_sink;
     }
     {
         // Production root for the bundled signed helper (manifest + bytes).
         // Resolution is FIXED via Tauri's resource-dir API; failure leaves
         // `None` and apply_hook_action reports the typed
         // `configuration.helper_unavailable` instead of guessing a path.
-        state.resources_dir = app.path().resource_dir().ok();
+        state.runtime.resources_dir = app.path().resource_dir().ok();
     }
     {
         // Autostart is applied only from save_settings (plan Task 15); the
         // control delegates to the official autostart plugin.
         use tauri_plugin_autostart::ManagerExt;
         let handle = app.clone();
-        state.autostart_control = Arc::new(move |enable| {
+        state.runtime.autostart_control = Arc::new(move |enable| {
             let manager = handle.autolaunch();
             let result = if enable {
                 manager.enable()

@@ -102,7 +102,7 @@ fn build_menu(
 
 fn locale_of(app: &AppHandle) -> String {
     app.try_state::<CoreState>()
-        .and_then(|state| state.config.get_settings().ok())
+        .and_then(|state| state.storage.config.get_settings().ok())
         .map(|settings| match settings.locale {
             crate::model::Locale::En => "en".to_owned(),
             crate::model::Locale::ZhCn => "zh_cn".to_owned(),
@@ -154,7 +154,7 @@ where
         tauri::async_runtime::spawn_blocking(move || {
             let _ = action(&state);
             emit(
-                &state.core_events,
+                &state.runtime.core_events,
                 CoreEvent::HealthChanged { channel_id: None },
             );
         });

@@ -170,7 +170,7 @@ fn apply_public_config(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn list_channels_impl(state: &CoreState) -> Result<Vec<ChannelView>, AppError> {
-    let records = state.config.list_channels()?;
+    let records = state.storage.config.list_channels()?;
     let mut views = Vec::with_capacity(records.len());
     for record in &records {
         let present = credential_present(state, &record.credential_ref);
@@ -221,7 +221,7 @@ pub(crate) fn save_channel_impl(
         last_succeeded_at: None,
         next_allowed_at: None,
     };
-    match state.config.save_channel(&record) {
+    match state.storage.config.save_channel(&record) {
         Ok(()) => Ok(ChannelView::from_record(&record, true)),
         Err(e) => {
             // best-effort cleanup of the credential we just stored
@@ -236,7 +236,7 @@ pub(crate) fn replace_channel_credential_impl(
     input: ReplaceCredentialInput,
 ) -> Result<ChannelView, AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
-    let existing = state.config.get_channel(channel_id)?;
+    let existing = state.storage.config.get_channel(channel_id)?;
     let (payload, kind, _public) = validate_credential_input(&input.credential)?;
     if kind != existing.kind {
         return Err(configuration_error(
@@ -255,7 +255,7 @@ pub(crate) fn replace_channel_credential_impl(
     updated.paused_reason_code = None;
     updated.consecutive_auth_failures = 0;
     updated.next_allowed_at = None;
-    state.config.save_channel(&updated)?;
+    state.storage.config.save_channel(&updated)?;
     let _ = state.credentials.delete(&prior_ref);
     Ok(ChannelView::from_record(&updated, true))
 }
@@ -265,9 +265,9 @@ pub(crate) fn delete_channel_impl(
     input: DeleteChannelInput,
 ) -> Result<(), AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
-    let existing = state.config.get_channel(channel_id)?;
+    let existing = state.storage.config.get_channel(channel_id)?;
     let credential_ref = existing.credential_ref.clone();
-    state.config.delete_channel(channel_id)?;
+    state.storage.config.delete_channel(channel_id)?;
     // best-effort: deleting the channel row already refuses targeted channels,
     // so any leftover credential is now orphaned.
     let _ = state.credentials.delete(&credential_ref);
@@ -279,7 +279,7 @@ pub(crate) async fn test_channel_impl(
     input: TestChannelInput,
 ) -> Result<TestChannelResult, AppError> {
     let channel_id = parse_uuid_input(&input.channel_id)?;
-    let existing = state.config.get_channel(channel_id)?;
+    let existing = state.storage.config.get_channel(channel_id)?;
     // A DingTalk keyword robot only accepts messages containing the configured
     // keyword, so the connection test must carry it exactly like a real send.
     let keyword_prefix = match &existing.public_config {
@@ -542,6 +542,7 @@ mod tests {
         .unwrap();
         let id = Uuid::parse_str(&saved.id).unwrap();
         let mut rule = state
+            .storage
             .config
             .get_global_rule(crate::model::AgentKind::Codex, "Stop")
             .unwrap();
@@ -550,7 +551,7 @@ mod tests {
             channel_id: id,
             template: None,
         }];
-        state.config.save_global_rule(&rule).unwrap();
+        state.storage.config.save_global_rule(&rule).unwrap();
 
         let err = delete_channel_impl(
             &state,
