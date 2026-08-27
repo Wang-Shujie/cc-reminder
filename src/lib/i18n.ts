@@ -179,6 +179,10 @@ export interface Dictionary {
   trustNotice: string;
   // Channels page (Task 18)
   addChannelAction: string;
+  templateLabel: string;
+  templateHelp: string;
+  templatePlaceholder: string;
+  templateReset: string;
   guideToggle: string;
   guideDingTalk: string;
   guideWeCom: string;
@@ -505,6 +509,11 @@ const zhCn: Dictionary = {
   trustNotice: "Codex 的 Hook 需要在官方界面确认：请运行以下命令后重新检测。",
   // Channels page (Task 18)
   addChannelAction: "添加渠道",
+  templateLabel: "通知模板",
+  templateHelp:
+    "留空使用统一默认格式(标题 + 字段列表 + 摘要)。自定义变量:{{agent.name}} {{agent.version}} {{event.label}} {{event.name}} {{event.status}} {{project.name}} {{event.summary}} {{event.occurred_at}}",
+  templatePlaceholder: "[{{agent.name}}] {{event.label}}\n项目:{{project.name}}\n状态:{{event.status}}\n摘要:{{event.summary}}\n时间:{{event.occurred_at}}",
+  templateReset: "恢复默认",
   guideToggle: "如何获取 Webhook?",
   guideDingTalk:
     "钉钉:群设置 → 智能群助手 → 添加「自定义」机器人;安全设置选「加签」或「自定义关键词」。选加签:把 SEC 开头的密钥填到下方「签名密钥」;选关键词:把关键词填到下方「关键词前缀」(测试与真实通知都会携带)。复制机器人的 Webhook 地址,回来粘贴。",
@@ -840,6 +849,11 @@ const en: Dictionary = {
     "Codex hooks need confirmation in the official UI: run the command below, then re-check.",
   // Channels page (Task 18)
   addChannelAction: "Add channel",
+  templateLabel: "Notification template",
+  templateHelp:
+    "Empty = the unified default (title + field list + summary). Variables: {{agent.name}} {{agent.version}} {{event.label}} {{event.name}} {{event.status}} {{project.name}} {{event.summary}} {{event.occurred_at}}",
+  templatePlaceholder: "[{{agent.name}}] {{event.label}}\nProject: {{project.name}}\nStatus: {{event.status}}\nSummary: {{event.summary}}\nTime: {{event.occurred_at}}",
+  templateReset: "Reset to default",
   guideToggle: "How do I get a Webhook?",
   guideDingTalk:
     "DingTalk: Group Settings → Smart group assistant → add a Custom bot; pick Signed or Custom keyword under Security. Signed: paste the SEC-prefixed secret into Signing secret below. Custom keyword: paste it into Keyword prefix (every notification carries it). Copy the bot's Webhook URL back here.",

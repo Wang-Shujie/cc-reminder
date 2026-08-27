@@ -454,6 +454,7 @@ export interface SettingsView {
   log_retention_days: number;
   onboarding_completed: boolean;
   paused_until: string | null;
+  notification_template: string | null;
 }
 
 export interface SaveSettingsInput {
@@ -464,6 +465,8 @@ export interface SaveSettingsInput {
   event_retention_days: number;
   log_retention_days: number;
   onboarding_completed: boolean;
+  /** 保存时原样回传(整存整取语义);null = 恢复内建统一默认。 */
+  notification_template: string | null;
 }
 
 export type PauseDurationCode = "fifteen_minutes" | "one_hour" | "today";

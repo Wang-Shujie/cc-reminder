@@ -400,6 +400,7 @@ export class BrowserTestBackend implements Backend {
       theme: "system",
       event_retention_days: 30,
       log_retention_days: 7,
+      notification_template: null,
       onboarding_completed: !fresh,
       paused_until: null,
     };

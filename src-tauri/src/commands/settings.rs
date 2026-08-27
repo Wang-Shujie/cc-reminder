@@ -51,6 +51,9 @@ pub struct SaveSettingsInput {
     pub event_retention_days: u16,
     pub log_retention_days: u16,
     pub onboarding_completed: bool,
+    /// 保存时必须原样回传当前值(与既有字段的整存整取语义一致)。
+    #[serde(default)]
+    pub notification_template: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -80,6 +83,8 @@ pub struct SettingsView {
     pub log_retention_days: u16,
     pub onboarding_completed: bool,
     pub paused_until: Option<chrono::DateTime<Utc>>,
+    /// 全局通知正文模板(None = 内建统一默认)。
+    pub notification_template: Option<String>,
 }
 
 impl From<AppSettings> for SettingsView {
@@ -93,6 +98,7 @@ impl From<AppSettings> for SettingsView {
             log_retention_days: s.log_retention_days,
             onboarding_completed: s.onboarding_completed,
             paused_until: s.notification_pause.map(|p| p.until),
+            notification_template: s.notification_template,
         }
     }
 }
@@ -125,6 +131,7 @@ pub(crate) fn save_settings_impl(
     settings.event_retention_days = input.event_retention_days;
     settings.log_retention_days = input.log_retention_days;
     settings.onboarding_completed = input.onboarding_completed;
+    settings.notification_template = input.notification_template.filter(|t| !t.trim().is_empty());
     let saved = state.storage.config.save_settings(&settings)?;
     // Autostart is the only side-effecting setting; the OS registration is
     // applied ONLY here, per the plan ("updated only from save_settings"). The
@@ -269,6 +276,7 @@ mod tests {
 
     fn default_input() -> SaveSettingsInput {
         SaveSettingsInput {
+            notification_template: None,
             autostart: false,
             close_to_tray: true,
             locale: LocaleInput::ZhCn,
