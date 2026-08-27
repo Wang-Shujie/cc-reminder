@@ -1,7 +1,7 @@
 // Quiet desktop shell: 184px rail + 48px header + unframed content, one grid.
 // Five destinations (v2.1 第四轮裁决:规则/项目拆分);Health colors are the
 // only accents; everything else is neutral.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   FolderGit2,
   LayoutDashboard,
@@ -73,6 +73,7 @@ export function AppShell({
 }): ReactNode {
   const backend = useBackend();
   const t = dictionary(locale);
+  const contentRef = useRef<HTMLElement | null>(null);
   const [page, setPage] = useState<PageId>(savedPage);
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
 
@@ -111,8 +112,13 @@ export function AppShell({
   }, [theme]);
 
   function openPage(id: PageId): void {
+    // Destinations always open at the top — a tall settings scroll must not
+    // leak into the next page's first paint.
     setPage(id);
     localStorage.setItem(LAST_PAGE_KEY, id);
+    if (contentRef.current !== null) {
+      contentRef.current.scrollTop = 0;
+    }
   }
 
   const overall = health?.overall ?? "ok";
@@ -148,7 +154,7 @@ export function AppShell({
           </button>
         ))}
       </nav>
-      <main className="shell-content">
+      <main className="shell-content" ref={contentRef}>
         {page === "workbench" ? (
           <WorkbenchPage locale={locale} onNavigate={openPage} />
         ) : page === "rules" ? (

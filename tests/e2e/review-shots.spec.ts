@@ -59,6 +59,15 @@ test("capture native-mac redesign screenshots", async ({ page }) => {
     .getByRole("button", { name: "关闭" })
     .click();
 
+  // Destructive-confirm dialog open (blurred overlay + elevated card).
+  await page.getByRole("button", { name: "集成" }).click();
+  const trash = page.getByRole("button", { name: /^删除渠道/ }).first();
+  await trash.waitFor();
+  await trash.click();
+  await expect(page.getByText("确认删除渠道")).toBeVisible();
+  await snap(page, outDir, "light-dialog");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+
   // Dark pass: applied through the real settings flow so persistence runs.
   await page.getByRole("button", { name: "设置" }).click();
   await page.locator("#settings-event-days").waitFor();

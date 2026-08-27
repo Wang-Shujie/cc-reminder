@@ -404,10 +404,10 @@ button.primary:disabled {
 }
 
 /* 非主要按钮的缺省控件脸:细描边白底小圆角(macOS mini 按钮)。 */
-.rules-toolbar-controls button,
-.row-end button,
-.agent-actions button,
-.issue-list button {
+.rules-toolbar-controls button:not(.primary),
+.row-end button:not(.primary),
+.agent-actions button:not(.primary),
+.issue-list button:not(.primary) {
   padding: 4px 11px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -416,10 +416,10 @@ button.primary:disabled {
   box-shadow: var(--shadow-xs);
 }
 
-.rules-toolbar-controls button:hover,
-.row-end button:hover,
-.agent-actions button:hover,
-.issue-list button:hover {
+.rules-toolbar-controls button:hover:not(.primary),
+.row-end button:hover:not(.primary),
+.agent-actions button:hover:not(.primary),
+.issue-list button:hover:not(.primary) {
   background: var(--slab);
 }
 
@@ -489,6 +489,14 @@ select {
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23878787' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 9px center;
+}
+
+/* 多选列表不是下拉:交还原生形态,去掉误导性的 Chevron。 */
+select[multiple],
+select[size]:not([size="1"]) {
+  appearance: auto;
+  padding-right: 10px;
+  background-image: none;
 }
 
 /* Checkboxes and radios are controls, not 320px text fields (e2e-caught). */
@@ -808,9 +816,8 @@ input[type="radio"]:checked::after {
 }
 
 .metric-last {
-  justify-self: end;
-  align-self: stretch;
-  justify-content: center;
+  grid-column: 1 / -1;
+  justify-self: start;
   margin-left: 0;
   color: var(--ink-2);
 }
@@ -932,9 +939,10 @@ input[type="radio"]:checked::after {
   border-bottom-right-radius: var(--r-md);
 }
 
+/* 行高由内容+padding 决定(固定 height 在表格布局里会钳住 flex 换行内容,
+   导致操作按钮越界绘制到下一行——e2e 截图逮住的真缺陷)。 */
 .rules-table td {
-  height: 42px;
-  padding: 6px 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--line-hair);
   transition: background-color 140ms var(--ease-out);
 }
@@ -1356,7 +1364,13 @@ input[type="radio"]:checked::after {
 .agent-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
+}
+
+/* 行内操作组紧凑一档:目标是最小窗宽下"两个文字钮+垃圾桶"仍能一行放下。
+   (:not 提权与上方分组选择器保持同级,后者声明在前,此处按源序胜出。) */
+.agent-actions button:not(.primary) {
+  padding: 3px 9px;
 }
 
 .alias-list {
