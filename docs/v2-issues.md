@@ -42,3 +42,7 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 ## 实机事件记录(2026-08-27)
 
 - ~~**v2-fixes 构建后 hook 全部静默失效**~~ **已定位并修复(fad9187)**:症状 = 测试发送通、hook 零事件零报错。法医链路:helper 0.9s 超时中性退出 → 外部读 SQLITE_BUSY → `sample` 抓到 open_connection 在 `PRAGMA journal_mode=WAL → walIndexReadHdr/unixShmMap` 永久卡死 → 全部写入冻结。根因 = per-op 连接每次重复设置 journal_mode,与"最后连接关闭时 checkpoint 移除 -wal/-shm"窗口相撞(连接池为每次操作开/关连接,放大了窗口)。修复 = WAL 仅在 migrate() 设一次(持久化于库头,重复设置纯冗余);重启后手动 hook 0.021s 落库,两事件恢复(含卡死期间被阻的一发)。
+
+## 实机事件记录(2026-08-27 第二轮:上午静默失联)
+
+- ~~**v2-fixes 修复后,次日上午 hook 再次全灭**~~ **已定位并加固(244b641)**:症状同前——测试发送通、hook 零事件、应用日志零痕迹。法医链:事件表停在 00:49 → 采样显示新进程健康 → **今晨两份 .ips 崩溃报告(09:20/10:10) exposé 退出路径 panic**(`application_will_terminate` 内 abort)。定罪链:① 托盘菜单在 forwarder **非主线程**重建(NSMenu 违规,代码确凿)——6h 重检 06:48 首次触发,正落在"凌晨正常→上午全灭"空档;② AppKit 状态被污染 → 退出时 tao 清理 panic → SIGABRT(两份 .ips 完全一致);③ IPC 环无 panic 防护,任一任务 panic 即无声死亡(stderr 对 launchd 应用不可见)。**加固四层**:托盘重建回主线程(run_on_main_thread)、全局 panic 钩子写应用日志(今后任何 panic 必留 file:line 现场)、IPC 环 catch_unwind(单请求 panic 记录并答拒绝,环不死)、退出锁中毒免疫(quit 永不 abort)。根因链中"托盘 UB → IPC 环死亡"一段为时序吻合的领先假设(panic 原文随 stderr 丢失),加固后若复发必留现场。
