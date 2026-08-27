@@ -37,6 +37,40 @@ impl FieldCipher {
         Self::load_or_create_with_store(&CredentialStore::system())
     }
 
+    /// 生产启动路径:带看门狗的钥匙串读取。实机教训 2026-08-27——每次重编
+    /// 二进制签名变化,钥匙串 ACL 会对新二进制弹「允许访问」;应用启动早期
+    /// 尚无窗口,弹窗不可见,主线程在 SecKeychainFindGenericPassword 上
+    /// 无限等待(launchd 下 stderr 不可见,外部表现为 hook 全灭且零日志)。
+    /// 读取本身不设超时(Security 框架无安全超时语义),看门狗只把"卡在
+    /// 钥匙串"变成可见日志,指向修复路径。
+    pub fn load_or_create_logged(
+        log: &std::sync::Arc<crate::diagnostics::Diagnostics>,
+    ) -> Result<Self, AppError> {
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watchdog_done = done.clone();
+        let watchdog_log = log.clone();
+        let watchdog = std::thread::spawn(move || {
+            let mut waited = 0u64;
+            for gap in [5, 15, 40, 60] {
+                std::thread::sleep(std::time::Duration::from_secs(gap));
+                waited += gap;
+                if watchdog_done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                watchdog_log.info(
+                    "keychain",
+                    &format!(
+                        "钥匙串读取已进行 {waited}s 仍未返回——很可能存在隐藏的钥匙串授权弹窗。请打开『钥匙串访问』查看弹窗并选择「始终允许」;或执行 security set-key-partition-list 授权后重启应用"
+                    ),
+                );
+            }
+        });
+        let result = Self::load_or_create_with_store(&CredentialStore::system());
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = watchdog.join();
+        result
+    }
+
     /// Construct a cipher from a raw key. Production callers should prefer
     /// [`FieldCipher::load_or_create`] so the key is sourced from the
     /// platform credential store; this constructor exists for boot paths

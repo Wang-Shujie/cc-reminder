@@ -283,7 +283,7 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let queue = QueueRepository::new(database.clone());
     let integrations = IntegrationRepository::new(database.clone());
     let credentials = CredentialStore::system();
-    let cipher = Arc::new(FieldCipher::load_or_create()?);
+    let cipher = Arc::new(FieldCipher::load_or_create_logged(&diagnostics)?);
 
     // 4. Recover stale `processing` ingress rows: flip them back to pending so
     //    the recovery batch reprocesses them. Idempotent — rows that already
