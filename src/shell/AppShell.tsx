@@ -11,11 +11,11 @@ import {
 } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
-import { HookRulesPage } from "../hooks/HookRulesPage";
-import { IntegrationsPage } from "../integrations/IntegrationsPage";
-import { ProjectsPage } from "../projects/ProjectsPage";
-import { SettingsPage } from "../settings/SettingsPage";
-import { WorkbenchPage } from "../workbench/WorkbenchPage";
+import { HookRulesPage } from "../pages/rules/HookRulesPage";
+import { IntegrationsPage } from "../pages/integrations/IntegrationsPage";
+import { ProjectsPage } from "../pages/projects/ProjectsPage";
+import { SettingsPage } from "../pages/settings/SettingsPage";
+import { WorkbenchPage } from "../pages/workbench/WorkbenchPage";
 import {
   CORE_EVENTS,
   type HealthSnapshot,

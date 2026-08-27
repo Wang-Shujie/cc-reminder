@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { BackendProvider, TauriBackend, useBackend, type Backend } from "./lib/backend";
 import type { BootstrapState } from "./lib/contracts";
 import { dictionary } from "./lib/i18n";
-import { Onboarding } from "./onboarding/Onboarding";
+import { Onboarding } from "./pages/onboarding/Onboarding";
 import { AppShell } from "./shell/AppShell";
 
 /** Bootstrapped root: picks onboarding or the shell from the core state. */

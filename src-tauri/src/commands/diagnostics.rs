@@ -76,7 +76,7 @@ pub(crate) fn export_diagnostics_impl(
 }
 
 fn build_archive(state: &CoreState) -> Result<Vec<u8>, AppError> {
-    let settings = state.config.get_settings();
+    let settings = state.storage.config.get_settings();
     let manifest = build_manifest(state, settings.as_ref().ok())?;
     // health.json: a fresh typed snapshot from the shared projection.
     let snapshot = super::health_snapshot(state)?;
@@ -86,7 +86,7 @@ fn build_archive(state: &CoreState) -> Result<Vec<u8>, AppError> {
         message: "health snapshot could not be serialized".to_owned(),
         suggested_action: None,
     })?;
-    let stats = state.queue.queue_stats()?;
+    let stats = state.storage.queue.queue_stats()?;
     let queue_stats = serde_json::to_vec(&serde_json::json!({
         "pending": stats.pending,
         "sending": stats.sending,
@@ -183,12 +183,11 @@ fn build_manifest(
     );
     // Schema version comes straight from the applied-migrations reader so it
     // can never go stale at migration 0002+.
-    let schema_version =
-        crate::storage::db::Database::open(std::path::Path::new(state.queue.database_path()))
-            .and_then(|database| database.schema_version())
-            .map_err(|_| {
-                configuration_error("diagnostics.unavailable", "schema version unavailable")
-            })?;
+    let schema_version = crate::storage::db::Database::open(std::path::Path::new(
+        state.storage.queue.database_path(),
+    ))
+    .and_then(|database| database.schema_version())
+    .map_err(|_| configuration_error("diagnostics.unavailable", "schema version unavailable"))?;
     manifest.insert(
         "schema_version".to_owned(),
         serde_json::json!(schema_version),
@@ -199,10 +198,10 @@ fn build_manifest(
     let mut agents = serde_json::Map::new();
     let mut helper_versions: BTreeSet<String> = BTreeSet::new();
     for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
-        if let Ok(hooks) = state.integrations.list_hooks(agent) {
+        if let Ok(hooks) = state.storage.integrations.list_hooks(agent) {
             helper_versions.extend(hooks.iter().map(|hook| hook.helper_version.clone()));
         }
-        let record = state.integrations.agent(agent).ok();
+        let record = state.storage.integrations.agent(agent).ok();
         let detected_version = record.as_ref().and_then(|r| r.version.clone());
         let verification = match &record {
             Some(record) => Some(
@@ -250,7 +249,7 @@ fn build_manifest(
             serde_json::json!(hex::encode(Sha256::digest(&serialized))),
         );
     }
-    for rule in state.config.list_global_rules()? {
+    for rule in state.storage.config.list_global_rules()? {
         let serialized = serde_json::to_vec(&rule.config)
             .map_err(|_| configuration_error("diagnostics.unavailable", "rule hash failed"))?;
         manifest.insert(
@@ -280,16 +279,21 @@ pub(crate) fn clear_history_impl(
         ));
     }
     let cleared = crate::storage::retention::clear_history(
-        &crate::storage::db::Database::open(std::path::Path::new(state.queue.database_path()))
-            .map_err(|_| {
-                configuration_error("diagnostics.unavailable", "database could not be opened")
-            })?,
+        &crate::storage::db::Database::open(std::path::Path::new(
+            state.storage.queue.database_path(),
+        ))
+        .map_err(|_| {
+            configuration_error("diagnostics.unavailable", "database could not be opened")
+        })?,
         chrono::Utc::now(),
     )?;
     // v2-issues: 清空历史后推送 history-changed,订阅端刷新而非停留在
     // 已被清除的列表上。清了 0 行则不打扰。
     if cleared > 0 {
-        crate::worker::emit(&state.core_events, crate::worker::CoreEvent::HistoryChanged);
+        crate::worker::emit(
+            &state.runtime.core_events,
+            crate::worker::CoreEvent::HistoryChanged,
+        );
     }
     Ok(cleared)
 }
@@ -458,7 +462,8 @@ mod tests {
         let st = state();
         // One agent detected with exact catalog match + one hook installed by
         // helper 0.1.0; Codex stays undetected.
-        st.integrations
+        st.storage
+            .integrations
             .upsert_agent(&crate::model::AgentInstallationRecord {
                 agent: AgentKind::ClaudeCode,
                 executable_path: Some("/usr/local/bin/claude".into()),
@@ -468,7 +473,8 @@ mod tests {
                 last_checked_at: chrono::Utc::now(),
             })
             .unwrap();
-        st.integrations
+        st.storage
+            .integrations
             .replace_hooks(
                 AgentKind::ClaudeCode,
                 &[crate::model::HookInstallationRecord {
@@ -485,12 +491,13 @@ mod tests {
             )
             .unwrap();
 
-        let settings = st.config.get_settings().ok();
+        let settings = st.storage.config.get_settings().ok();
         let manifest: serde_json::Value =
             serde_json::from_slice(&build_manifest(&st, settings.as_ref()).unwrap()).unwrap();
 
         // Schema version comes from the applied-migrations reader, not a literal.
-        let database = Database::open(std::path::Path::new(st.queue.database_path())).unwrap();
+        let database =
+            Database::open(std::path::Path::new(st.storage.queue.database_path())).unwrap();
         assert_eq!(
             manifest["schema_version"],
             serde_json::json!(database.schema_version().unwrap())

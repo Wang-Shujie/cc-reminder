@@ -71,7 +71,7 @@ pub struct ProjectPathView {
 }
 
 pub(crate) fn list_projects_impl(state: &CoreState) -> Result<Vec<ProjectView>, AppError> {
-    let projects = state.config.list_projects()?;
+    let projects = state.storage.config.list_projects()?;
     let mut views = Vec::with_capacity(projects.len());
     for p in projects {
         views.push(project_view(state, &p, None)?);
@@ -107,7 +107,7 @@ pub(crate) fn save_project_impl(
         && root != &canonical
         && let Some(owner) = find_project_owning_root(state, root)?
     {
-        state.config.save_project_path(&ProjectPathRecord {
+        state.storage.config.save_project_path(&ProjectPathRecord {
             id: Uuid::now_v7(),
             project_id: owner.id,
             canonical_path: canonical.clone(),
@@ -129,7 +129,7 @@ pub(crate) fn save_project_impl(
         created_at: now,
         updated_at: now,
     };
-    state.config.save_project(&record)?;
+    state.storage.config.save_project(&record)?;
     project_view(state, &record, git_root.as_deref())
 }
 
@@ -145,7 +145,7 @@ pub(crate) fn add_project_alias_impl(
         canonical_path: canonical,
         kind: ProjectPathKind::Alias,
     };
-    state.config.save_project_path(&record)
+    state.storage.config.save_project_path(&record)
 }
 
 pub(crate) fn remove_project_alias_impl(
@@ -153,7 +153,7 @@ pub(crate) fn remove_project_alias_impl(
     input: RemoveProjectAliasInput,
 ) -> Result<(), AppError> {
     let path_id = parse_uuid_input(&input.path_id)?;
-    state.config.delete_project_path(path_id)
+    state.storage.config.delete_project_path(path_id)
 }
 
 /// Canonicalize a project root/path input in the core, never trusting the
@@ -268,11 +268,11 @@ fn find_project_owning_root(
     state: &CoreState,
     root: &std::path::Path,
 ) -> Result<Option<ProjectRecord>, AppError> {
-    for project in state.config.list_projects()? {
+    for project in state.storage.config.list_projects()? {
         if project.canonical_root == root {
             return Ok(Some(project));
         }
-        for path in state.config.list_project_paths(project.id)? {
+        for path in state.storage.config.list_project_paths(project.id)? {
             if path.canonical_path == root {
                 return Ok(Some(project));
             }
@@ -286,7 +286,7 @@ fn project_view(
     record: &ProjectRecord,
     git_root: Option<&std::path::Path>,
 ) -> Result<ProjectView, AppError> {
-    let paths = state.config.list_project_paths(record.id)?;
+    let paths = state.storage.config.list_project_paths(record.id)?;
     Ok(ProjectView {
         id: record.id.to_string(),
         name: record.name.clone(),

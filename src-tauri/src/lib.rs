@@ -22,6 +22,7 @@ pub mod worker;
 use std::sync::Arc;
 
 use chrono::FixedOffset;
+use futures_util::FutureExt;
 use tauri::Manager;
 
 use crate::commands::CoreState;
@@ -108,7 +109,7 @@ pub fn run() {
                 let close_to_tray = window
                     .app_handle()
                     .try_state::<CoreState>()
-                    .and_then(|state| state.config.get_settings().ok())
+                    .and_then(|state| state.storage.config.get_settings().ok())
                     .map(|settings| settings.close_to_tray)
                     .unwrap_or(true);
                 if close_action(close_to_tray) == CloseAction::HideToTray {
@@ -216,10 +217,24 @@ fn shutdown_core(app: &tauri::AppHandle) {
     let Some(state) = app.try_state::<CoreState>() else {
         return;
     };
-    if let Some(token) = state.cancel_token.lock().unwrap().take() {
-        token.cancel();
+    // v2-issues:退出路径对中毒锁免疫(实机两次 quit abort 都在此 unwind,
+    // abort 反而抹掉优雅收尾)。into_inner 无论如何取到守卫。
+    {
+        let mut cancel_lock = state
+            .runtime
+            .cancel_token
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(token) = cancel_lock.take() {
+            token.cancel();
+        }
     }
-    let worker_task = state.worker_task.lock().unwrap().take();
+    let mut worker_lock = state
+        .runtime
+        .worker_task
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let worker_task = worker_lock.take();
     if let Some(task) = worker_task {
         // Awaiting the join handle covers "active sends finish": `run` only
         // returns after the current pass completes, so this waits for real
@@ -323,6 +338,25 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let pipeline_for_ipc = pipeline.clone();
     let ipc_diagnostics = diagnostics.clone();
     let ipc_events = core_event_sink.clone();
+    // v2-issues(实机教训):panic 钩子把每个 panic 落进应用日志——tokio
+    // 任务静默死亡(如 IPC 环)曾让 hook 全灭而无任何痕迹。stderr 对
+    // launchd 应用不可见,这里是我们唯一的现场。
+    {
+        let panic_diagnostics = diagnostics.clone();
+        std::panic::set_hook(Box::new(move |info| {
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_else(|| "<unknown>".to_owned());
+            let message = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_owned());
+            panic_diagnostics.info("panic", &format!("task panicked at {location}: {message}"));
+        }));
+    }
     let mut server =
         ipc::server::IpcServer::bind(paths.endpoint()).map_err(std::io::Error::other)?;
     let ipc_cancel = cancel.clone();
@@ -335,30 +369,48 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             let Some((request, response)) = received else {
                 break;
             };
-            let reply = match pipeline_for_ipc.process_live(request).await {
-                Ok(outcome) => {
-                    let event_id = match outcome {
-                        pipeline::LiveOutcome::Processed { event_id } => {
-                            // v2-issues: 事件落库即推送 history-changed,
-                            // 通知记录订阅端即时刷新(重复事件无历史变化)。
-                            crate::worker::emit(
-                                &ipc_events,
-                                crate::worker::CoreEvent::HistoryChanged,
-                            );
-                            event_id
-                        }
-                        pipeline::LiveOutcome::Duplicate { event_id } => event_id,
-                    };
+            // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
+            // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
+            let reply = match std::panic::AssertUnwindSafe(pipeline_for_ipc.process_live(request))
+                .catch_unwind()
+                .await
+            {
+                // 正常路径:Processed 推 history-changed;Duplicate 不推。
+                Ok(Ok(pipeline::LiveOutcome::Processed { event_id })) => {
+                    // v2-issues: 事件落库即推送 history-changed,
+                    // 通知记录订阅端即时刷新(重复事件无历史变化)。
+                    crate::worker::emit(&ipc_events, crate::worker::CoreEvent::HistoryChanged);
                     IngressResponse::Accepted { event_id }
                 }
-                Err(_) => {
+                Ok(Ok(pipeline::LiveOutcome::Duplicate { event_id })) => {
+                    IngressResponse::Accepted { event_id }
+                }
+                Ok(Err(_)) => {
                     // Redacted one-liner through the Diagnostics chokepoint;
                     // never the request contents.
                     ipc_diagnostics.info("ipc", "ingress request rejected");
                     IngressResponse::Rejected {
                         // The hook contract requires a neutral outcome + exit 0; the
                         // rejection code is diagnostic only. An unrecognized helper
-                        // surface as `unrecognized` so the hook does not retry.
+                        // surfaces as `unrecognized` so the hook does not retry.
+                        error_code: "unrecognized".to_owned(),
+                    }
+                }
+                // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
+                // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
+                Err(payload) => {
+                    // futures_util 的 catch_unwind:Err 即 panic 载荷本体。
+                    let message = payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                        .unwrap_or_else(|| "<non-string panic payload>".to_owned());
+                    ipc_diagnostics.info(
+                        "ipc",
+                        &format!("ingress handler panicked: {message}; loop survived"),
+                    );
+                    ipc_diagnostics.info("ipc", "ingress request rejected");
+                    IngressResponse::Rejected {
                         error_code: "unrecognized".to_owned(),
                     }
                 }
@@ -456,31 +508,31 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         diagnostics,
     );
     {
-        let mut guard = state.cancel_token.lock().unwrap();
+        let mut guard = state.runtime.cancel_token.lock().unwrap();
         *guard = Some(cancel);
     }
     {
-        let mut guard = state.worker_task.lock().unwrap();
+        let mut guard = state.runtime.worker_task.lock().unwrap();
         *guard = Some(worker_task);
     }
     {
         // Commands push revision notifications onto the same channel the
         // worker uses; the forwarder task above is their only consumer.
-        state.core_events = core_event_sink;
+        state.runtime.core_events = core_event_sink;
     }
     {
         // Production root for the bundled signed helper (manifest + bytes).
         // Resolution is FIXED via Tauri's resource-dir API; failure leaves
         // `None` and apply_hook_action reports the typed
         // `configuration.helper_unavailable` instead of guessing a path.
-        state.resources_dir = app.path().resource_dir().ok();
+        state.runtime.resources_dir = app.path().resource_dir().ok();
     }
     {
         // Autostart is applied only from save_settings (plan Task 15); the
         // control delegates to the official autostart plugin.
         use tauri_plugin_autostart::ManagerExt;
         let handle = app.clone();
-        state.autostart_control = Arc::new(move |enable| {
+        state.runtime.autostart_control = Arc::new(move |enable| {
             let manager = handle.autolaunch();
             let result = if enable {
                 manager.enable()

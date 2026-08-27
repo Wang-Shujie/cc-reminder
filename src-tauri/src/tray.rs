@@ -102,7 +102,7 @@ fn build_menu(
 
 fn locale_of(app: &AppHandle) -> String {
     app.try_state::<CoreState>()
-        .and_then(|state| state.config.get_settings().ok())
+        .and_then(|state| state.storage.config.get_settings().ok())
         .map(|settings| match settings.locale {
             crate::model::Locale::En => "en".to_owned(),
             crate::model::Locale::ZhCn => "zh_cn".to_owned(),
@@ -154,7 +154,7 @@ where
         tauri::async_runtime::spawn_blocking(move || {
             let _ = action(&state);
             emit(
-                &state.core_events,
+                &state.runtime.core_events,
                 CoreEvent::HealthChanged { channel_id: None },
             );
         });
@@ -216,10 +216,13 @@ fn current_level(app: &AppHandle) -> HealthLevel {
         .unwrap_or(HealthLevel::Ok)
 }
 
-/// health-changed 后由 forwarder 调用:重建菜单刷新健康条目(与安装时
-/// 同一构造路径,locale 可能已被用户改动,重读)。
+/// health-changed 后由 forwarder 调用。**必须在主线程动 AppKit**:菜单/
+/// 托盘是 NSMenu/NSStatusItem,off-main-thread 变更是未定义行为(实机
+/// 教训 2026-08-27:06:48 重检触发的一次 off-main 重建与上午 IPC 环失联
+/// 及两次退出 abort 同时段)。经 run_on_main_thread 派发,重复调用安全。
 pub fn refresh_health(app: &AppHandle) {
-    install(app);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || install(&handle));
 }
 
 #[cfg(test)]

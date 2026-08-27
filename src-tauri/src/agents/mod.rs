@@ -150,15 +150,22 @@ pub async fn redetect_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                for agent in [crate::model::AgentKind::ClaudeCode, crate::model::AgentKind::Codex] {
-                    let detection = crate::agents::detect::detect_agent(agent, None);
-                    if let Err(err) = persist_detection(&integrations, &detection) {
-                        diagnostics.info(
-                            "agents",
-                            &format!("periodic re-detection persist failed: {err}"),
-                        );
+                // detect_agent 阻塞式 spawn CLI 并等待——放 blocking 池,
+                // 不占 tokio worker。
+                let task_integrations = integrations.clone();
+                let task_diagnostics = diagnostics.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    for agent in [crate::model::AgentKind::ClaudeCode, crate::model::AgentKind::Codex] {
+                        let detection = crate::agents::detect::detect_agent(agent, None);
+                        if let Err(err) = persist_detection(&task_integrations, &detection) {
+                            task_diagnostics.info(
+                                "agents",
+                                &format!("periodic re-detection persist failed: {err}"),
+                            );
+                        }
                     }
-                }
+                })
+                .await;
                 crate::worker::emit(
                     &events,
                     crate::worker::CoreEvent::HealthChanged { channel_id: None },

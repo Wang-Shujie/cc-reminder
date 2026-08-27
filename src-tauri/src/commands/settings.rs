@@ -98,20 +98,20 @@ impl From<AppSettings> for SettingsView {
 }
 
 pub(crate) fn get_settings_impl(state: &CoreState) -> Result<SettingsView, AppError> {
-    Ok(state.config.get_settings()?.into())
+    Ok(state.storage.config.get_settings()?.into())
 }
 
 pub(crate) fn save_settings_impl(
     state: &CoreState,
     input: SaveSettingsInput,
 ) -> Result<SettingsView, AppError> {
-    let mut settings = state.config.get_settings()?;
+    let mut settings = state.storage.config.get_settings()?;
     let autostart_changed = settings.autostart != input.autostart;
     // Apply the OS registration BEFORE persisting: if the control fails, the
     // DB keeps its old value, so re-saving with the same target retries the
     // registration instead of silently no-op'ing on an unchanged field.
     if autostart_changed {
-        (state.autostart_control)(input.autostart).map_err(|message| AppError {
+        (state.runtime.autostart_control)(input.autostart).map_err(|message| AppError {
             domain: ErrorDomain::Configuration,
             code: "configuration.autostart_failed".to_owned(),
             message,
@@ -125,7 +125,7 @@ pub(crate) fn save_settings_impl(
     settings.event_retention_days = input.event_retention_days;
     settings.log_retention_days = input.log_retention_days;
     settings.onboarding_completed = input.onboarding_completed;
-    let saved = state.config.save_settings(&settings)?;
+    let saved = state.storage.config.save_settings(&settings)?;
     // Autostart is the only side-effecting setting; the OS registration is
     // applied ONLY here, per the plan ("updated only from save_settings"). The
     // control is injected by the app shell (the Tauri autostart plugin); tests
@@ -139,20 +139,20 @@ pub(crate) fn set_notification_pause_impl(
     now: chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<SettingsView, AppError> {
     let until = pause_until(duration.into_duration(), now);
-    let mut settings = state.config.get_settings()?;
+    let mut settings = state.storage.config.get_settings()?;
     settings.notification_pause = Some(NotificationPause {
         // Same request instant as `until`: mixing in a second clock read
         // could make started_at land after until and fail validation.
         started_at: now.with_timezone(&Utc),
         until: until.with_timezone(&Utc),
     });
-    Ok(state.config.save_settings(&settings)?.into())
+    Ok(state.storage.config.save_settings(&settings)?.into())
 }
 
 pub(crate) fn clear_notification_pause_impl(state: &CoreState) -> Result<SettingsView, AppError> {
-    let mut settings = state.config.get_settings()?;
+    let mut settings = state.storage.config.get_settings()?;
     settings.notification_pause = None;
-    Ok(state.config.save_settings(&settings)?.into())
+    Ok(state.storage.config.save_settings(&settings)?.into())
 }
 
 #[tauri::command]
@@ -284,7 +284,7 @@ mod tests {
         let mut st = state();
         let applied: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = applied.clone();
-        st.autostart_control = Arc::new(move |enable| {
+        st.runtime.autostart_control = Arc::new(move |enable| {
             sink.lock().unwrap().push(enable);
             Ok(())
         });
@@ -344,26 +344,42 @@ mod tests {
         // construction evaluates quiet hours in local time.
         crate::commands::bootstrap_state(&st, Some(8 * 3600)).unwrap();
         assert_eq!(
-            st.config.get_settings().unwrap().local_offset_seconds,
+            st.storage
+                .config
+                .get_settings()
+                .unwrap()
+                .local_offset_seconds,
             8 * 3600
         );
         // Re-reporting the same value is idempotent (no extra write needed to
         // stay correct)...
         crate::commands::bootstrap_state(&st, Some(8 * 3600)).unwrap();
         assert_eq!(
-            st.config.get_settings().unwrap().local_offset_seconds,
+            st.storage
+                .config
+                .get_settings()
+                .unwrap()
+                .local_offset_seconds,
             8 * 3600
         );
         // ...an absent report keeps the stored value...
         crate::commands::bootstrap_state(&st, None).unwrap();
         assert_eq!(
-            st.config.get_settings().unwrap().local_offset_seconds,
+            st.storage
+                .config
+                .get_settings()
+                .unwrap()
+                .local_offset_seconds,
             8 * 3600
         );
         // ...and an implausible report is ignored, never fatal, never stored.
         crate::commands::bootstrap_state(&st, Some(i32::MAX)).unwrap();
         assert_eq!(
-            st.config.get_settings().unwrap().local_offset_seconds,
+            st.storage
+                .config
+                .get_settings()
+                .unwrap()
+                .local_offset_seconds,
             8 * 3600
         );
     }

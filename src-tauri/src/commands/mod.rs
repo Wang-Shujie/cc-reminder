@@ -44,18 +44,18 @@ use crate::storage::queue::QueueRepository;
 // small; an interface-per-domain would be scaffolding for exactly one
 // implementation. The Mutex on the worker cancel token is the only interior
 // mutability the surface needs (commands are otherwise read/transactional).
+/// 领域分组(架构提案 §3):存储四件套与运行时句柄各成一 struct,
+/// 避免平铺十一个字段的"上帝对象";凭据/加密/日志横切关注保持顶层。
 #[derive(Clone)]
-pub struct CoreState {
+pub struct StorageHandles {
     pub config: ConfigRepository,
     pub events: EventRepository,
     pub queue: QueueRepository,
     pub integrations: IntegrationRepository,
-    pub credentials: CredentialStore,
-    pub cipher: std::sync::Arc<FieldCipher>,
-    /// Shared diagnostics logger (Task 20 fix round 1): the same instance the
-    /// startup wiring and the retention ticker write through, so exports see
-    /// the runtime log files and debug windows are process-wide.
-    pub diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
+}
+
+#[derive(Clone)]
+pub struct RuntimeHandles {
     pub cancel_token: std::sync::Arc<Mutex<Option<crate::worker::CancellationToken>>>,
     /// Join handle of the delivery-worker task, stashed by the app shell next
     /// to `cancel_token` so `RunEvent::Exit` can wait (≤10s) for the in-flight
@@ -80,6 +80,18 @@ pub struct CoreState {
     pub resources_dir: Option<std::path::PathBuf>,
 }
 
+#[derive(Clone)]
+pub struct CoreState {
+    pub storage: StorageHandles,
+    pub credentials: CredentialStore,
+    pub cipher: std::sync::Arc<FieldCipher>,
+    /// Shared diagnostics logger (Task 20 fix round 1): the same instance the
+    /// startup wiring and the retention ticker write through, so exports see
+    /// the runtime log files and debug windows are process-wide.
+    pub diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
+    pub runtime: RuntimeHandles,
+}
+
 /// Applies an autostart on/off request. Returns an error message on failure.
 pub type AutostartControl = std::sync::Arc<dyn Fn(bool) -> Result<(), String> + Send + Sync>;
 
@@ -99,18 +111,22 @@ impl CoreState {
         let (core_events, dead_receiver) = tokio::sync::mpsc::channel(1);
         drop(dead_receiver);
         Self {
-            config,
-            events,
-            queue,
-            integrations,
+            storage: StorageHandles {
+                config,
+                events,
+                queue,
+                integrations,
+            },
             credentials,
             cipher,
             diagnostics,
-            cancel_token: std::sync::Arc::new(Mutex::new(None)),
-            worker_task: std::sync::Arc::new(Mutex::new(None)),
-            autostart_control: std::sync::Arc::new(|_| Ok(())),
-            core_events,
-            resources_dir: None,
+            runtime: RuntimeHandles {
+                cancel_token: std::sync::Arc::new(Mutex::new(None)),
+                worker_task: std::sync::Arc::new(Mutex::new(None)),
+                autostart_control: std::sync::Arc::new(|_| Ok(())),
+                core_events,
+                resources_dir: None,
+            },
         }
     }
 }
@@ -203,8 +219,8 @@ pub(crate) fn bootstrap_state(
     state: &CoreState,
     offset_seconds: Option<i32>,
 ) -> Result<BootstrapState, AppError> {
-    persist_reported_offset(&state.config, offset_seconds)?;
-    let settings = state.config.get_settings()?;
+    persist_reported_offset(&state.storage.config, offset_seconds)?;
+    let settings = state.storage.config.get_settings()?;
     let snapshot = build_health_snapshot(state)?;
     let pending = snapshot.pending_jobs;
     let failed = snapshot.failed_jobs;
@@ -250,8 +266,8 @@ pub(crate) fn health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppEr
 fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> {
     use crate::health::{HealthInputs, project_health};
 
-    let stats = state.queue.queue_stats()?;
-    let channels = state.config.list_channels()?;
+    let stats = state.storage.queue.queue_stats()?;
+    let channels = state.storage.config.list_channels()?;
     let channel_states: Vec<_> = channels
         .iter()
         .map(|c| crate::health::ChannelHealthState {

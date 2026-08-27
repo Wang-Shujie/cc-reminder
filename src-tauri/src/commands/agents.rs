@@ -112,7 +112,7 @@ pub(crate) fn detect_agents_impl(
     for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
         let detection = crate::agents::detect_agent(agent, None);
         // Persist detection result so health reflects it.
-        let _ = crate::agents::persist_detection(&state.integrations, &detection);
+        let _ = crate::agents::persist_detection(&state.storage.integrations, &detection);
         views.push(build_agent_view(agent, &detection));
     }
     Ok(views)
@@ -196,8 +196,9 @@ pub(crate) fn apply_hook_action_impl(
 
     // Derive the required hook selection from the current rules — the frontend
     // cannot supply events/paths/fingerprints.
-    let global = state.config.list_global_rules()?;
+    let global = state.storage.config.list_global_rules()?;
     let overrides: Vec<_> = state
+        .storage
         .config
         .list_projects()?
         .into_iter()
@@ -244,12 +245,14 @@ fn collect_project_patches(
     // ponytail: there is no list_project_patches API; we iterate global rules
     // and probe per-project. Acceptable at the small list sizes here; promote
     // to a dedicated query if the rule table grows.
-    let globals = state.config.list_global_rules()?;
+    let globals = state.storage.config.list_global_rules()?;
     let mut out = Vec::new();
     for g in globals {
-        if let Ok(patch) = state
-            .config
-            .get_project_patch(project_id, g.agent, &g.source_event)
+        if let Ok(patch) =
+            state
+                .storage
+                .config
+                .get_project_patch(project_id, g.agent, &g.source_event)
         {
             out.push(patch);
         }
@@ -273,6 +276,7 @@ fn build_hook_environment(
     deploy_helper: bool,
 ) -> Result<crate::installer::lifecycle::HookEnvironment, AppError> {
     let bin_dir = state
+        .storage
         .integrations
         .database_path()
         .parent()
@@ -281,7 +285,7 @@ fn build_hook_environment(
     // 卸载完全不依赖 bundled helper(连资源目录都不要求):remove 按 owned
     // 条目指纹进行,inspect 在无 owned 条目时也不触 live helper。
     let helper = if deploy_helper {
-        let resources_dir = state.resources_dir.as_deref().ok_or_else(|| {
+        let resources_dir = state.runtime.resources_dir.as_deref().ok_or_else(|| {
             crate::installer::helper::helper_unavailable_error(
                 "the application resource directory is unavailable",
             )
@@ -296,7 +300,7 @@ fn build_hook_environment(
         .map(|d| d.home_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     Ok(crate::installer::lifecycle::HookEnvironment {
-        repository: state.integrations.clone(),
+        repository: state.storage.integrations.clone(),
         cipher: Some((*state.cipher).clone()),
         helper,
         home,

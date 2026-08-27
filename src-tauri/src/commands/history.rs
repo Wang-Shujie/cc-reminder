@@ -116,7 +116,10 @@ pub(crate) fn list_history_impl(
         processing_outcome: filter.processing_outcome.map(|o| o.into_outcome()),
         event_id: None,
     };
-    state.events.list_history(&parsed, page.to_page_request())
+    state
+        .storage
+        .events
+        .list_history(&parsed, page.to_page_request())
 }
 
 pub(crate) fn get_history_detail_impl(
@@ -132,6 +135,7 @@ pub(crate) fn get_history_detail_impl(
         ..HistoryFilter::default()
     };
     state
+        .storage
         .events
         .list_history(&filter, crate::storage::events::PageRequest::first(200))
 }
@@ -141,7 +145,7 @@ pub(crate) fn manual_retry_delivery_impl(
     input: ManualRetryInput,
 ) -> Result<(), AppError> {
     let job_id = parse_uuid_input(&input.job_id)?;
-    state.queue.manual_retry(job_id, Utc::now())
+    state.storage.queue.manual_retry(job_id, Utc::now())
 }
 
 #[tauri::command]
