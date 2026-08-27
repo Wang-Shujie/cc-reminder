@@ -458,6 +458,7 @@ export class FakeBackend implements Backend {
       log_retention_days: 7,
       onboarding_completed: this.opts.onboardingCompleted,
       paused_until: null,
+      notification_template: null,
     };
     this.getHealthSnapshot = vi.fn(async (): Promise<HealthSnapshot> => {
       if (this.snapshotError) {

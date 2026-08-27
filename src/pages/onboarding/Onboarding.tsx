@@ -213,6 +213,7 @@ export function Onboarding({
         event_retention_days: settings.event_retention_days,
         log_retention_days: settings.log_retention_days,
         onboarding_completed: true,
+          notification_template: null,
       } satisfies SaveSettingsInput);
       setCompleted(true);
     } catch (e: unknown) {

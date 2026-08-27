@@ -1488,3 +1488,149 @@ async fn three_strike_auth_pause_emits_health_changed() {
         "expected a HealthChanged event for the paused channel, got {health_changes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 统一消息格式(用户裁决 2026-08-27):所有事件共享同一文档形态;
+// 全局/规则级模板为正文覆盖逃生门。
+// ---------------------------------------------------------------------------
+
+fn delivered_document(harness: &PipelineHarness) -> NotificationDocument {
+    let conn = rusqlite::Connection::open(harness.database.path()).unwrap();
+    let document_json: String = conn
+        .query_row(
+            "SELECT document_json FROM delivery_jobs ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    serde_json::from_str(&document_json).unwrap()
+}
+
+fn enable_rule(harness: &PipelineHarness, agent: AgentKind, event: &str, chan: ChannelId) {
+    harness.override_global_rule(agent, event, |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+    });
+    harness.install_hook(agent, event, "fp");
+}
+
+#[tokio::test]
+async fn canonical_default_document_has_five_uniform_facts_and_zh_title() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    enable_rule(&harness, AgentKind::Codex, "PermissionRequest", chan);
+    let pipeline = harness.pipeline();
+    pipeline
+        .process_live(harness.ingress_request("PermissionRequest", "fp"))
+        .await
+        .unwrap();
+
+    let document = delivered_document(&harness);
+    // 统一形态:标题 = 中文事件标签;facts = 固定五键,顺序恒定。
+    assert_eq!(document.title, "权限请求");
+    let keys: Vec<&str> = document.facts.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["Agent", "Project", "Hook", "Status", "Time"]);
+    // metadata-only 默认:正文为空,元数据全部在 facts。
+    assert!(document.body.is_empty());
+}
+
+#[tokio::test]
+async fn events_with_and_without_summary_share_identical_fact_keys() {
+    // 统一性核心:有无摘要不改变 facts 形态(第二轮格式分裂的根因)。
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    enable_rule(&harness, AgentKind::Codex, "PermissionRequest", chan);
+    let pipeline = harness.pipeline();
+    pipeline
+        .process_live(harness.ingress_request("PermissionRequest", "fp"))
+        .await
+        .unwrap();
+    let permission = delivered_document(&harness);
+    let permission_keys: Vec<&str> = permission.facts.iter().map(|(k, _)| k.as_str()).collect();
+
+    harness.override_global_rule(AgentKind::Codex, "Stop", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: None,
+        }];
+        // 即使规则允许 500 字摘要正文,facts 也必须与无摘要事件一致。
+        rule.privacy.max_body_chars = 500;
+        rule.privacy.summary_mode = cc_reminder_lib::model::SummaryMode::NativeSummary;
+    });
+    harness.install_hook(AgentKind::Codex, "Stop", "fp");
+    pipeline
+        .process_live(harness.ingress_request("Stop", "fp"))
+        .await
+        .unwrap();
+    let stop = delivered_document(&harness);
+    let stop_keys: Vec<&str> = stop.facts.iter().map(|(k, _)| k.as_str()).collect();
+
+    assert_eq!(stop.title, "代理停止");
+    assert_eq!(stop_keys, permission_keys);
+}
+
+#[tokio::test]
+async fn global_template_replaces_body_and_suppresses_facts() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    enable_rule(&harness, AgentKind::Codex, "PermissionRequest", chan);
+
+    let db = Database::open(harness.database.path()).unwrap();
+    let config = ConfigRepository::new(db.clone());
+    let mut settings = config.get_settings().unwrap();
+    settings.notification_template = Some("自定义 {{event.label}}".into());
+    config.save_settings(&settings).unwrap();
+    drop(config);
+    // 模板正文长度受规则隐私上限约束(0 = metadata-only 语义);
+    // 使用模板必须显式给字数。
+    harness.override_global_rule(AgentKind::Codex, "PermissionRequest", |rule| {
+        rule.privacy.max_body_chars = 500;
+    });
+
+    let pipeline = harness.pipeline();
+    pipeline
+        .process_live(harness.ingress_request("PermissionRequest", "fp"))
+        .await
+        .unwrap();
+
+    let document = delivered_document(&harness);
+    assert_eq!(document.body, "自定义 权限请求");
+    assert!(document.facts.is_empty());
+}
+
+#[tokio::test]
+async fn rule_template_wins_over_global_template() {
+    let harness = PipelineHarness::new();
+    let chan = harness.add_channel(ChannelKind::WeCom, "a");
+    harness.override_global_rule(AgentKind::Codex, "PermissionRequest", |rule| {
+        rule.enabled = true;
+        rule.targets = vec![TargetConfig {
+            channel_id: chan,
+            template: Some("规则级 {{event.name}}".into()),
+        }];
+    });
+    harness.install_hook(AgentKind::Codex, "PermissionRequest", "fp");
+
+    let db = Database::open(harness.database.path()).unwrap();
+    let config = ConfigRepository::new(db.clone());
+    let mut settings = config.get_settings().unwrap();
+    settings.notification_template = Some("全局 {{event.label}}".into());
+    config.save_settings(&settings).unwrap();
+    drop(config);
+    harness.override_global_rule(AgentKind::Codex, "PermissionRequest", |rule| {
+        rule.privacy.max_body_chars = 500;
+    });
+
+    let pipeline = harness.pipeline();
+    pipeline
+        .process_live(harness.ingress_request("PermissionRequest", "fp"))
+        .await
+        .unwrap();
+
+    let document = delivered_document(&harness);
+    assert_eq!(document.body, "规则级 PermissionRequest");
+}

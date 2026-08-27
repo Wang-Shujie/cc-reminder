@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePageBackend, type Backend } from "../../lib/backend";
 import { ChannelsPage } from "../channels/ChannelsPage";
+import { ChannelsSectionTemplate } from "./ChannelsSectionTemplate";
 import { errorOf, type PageError } from "../../lib/errors";
 import type {
   HealthIssue,
@@ -54,6 +55,8 @@ export function SettingsPage({
   const [eventDays, setEventDays] = useState("30");
   const [logDays, setLogDays] = useState("7");
   const [onboardingCompleted, setOnboardingCompleted] = useState(true);
+  /** 全局通知正文模板;空串 = 内建统一默认(用户裁决 2026-08-27)。 */
+  const [template, setTemplate] = useState("");
 
   const [pausedUntil, setPausedUntil] = useState<string | null>(null);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -123,6 +126,7 @@ export function SettingsPage({
         setLogDays(String(view.log_retention_days));
         setOnboardingCompleted(view.onboarding_completed);
         setPausedUntil(view.paused_until);
+        setTemplate(view.notification_template ?? "");
         setHydrated(true);
       })
       .catch((e: unknown) => {
@@ -169,6 +173,7 @@ export function SettingsPage({
       event_retention_days: eventRetention,
       log_retention_days: logRetention,
       onboarding_completed: onboardingCompleted,
+      notification_template: template.trim() === "" ? null : template,
     };
     try {
       const view = await backend.saveSettings(input);
@@ -547,9 +552,13 @@ export function SettingsPage({
         </div>
       )}
 
-      {/* 渠道添加表单(用户裁决:仅"添加"部分在设置;管理表在集成页)。 */}
+      {/* 通知模板(用户裁决 2026-08-27):全局正文模板,留空 = 统一默认。 */}
       <div className="settings-channel-add">
-        <ChannelsPage locale={locale} backend={backend} variant="add" />
+        <ChannelsSectionTemplate
+          template={template}
+          onTemplateChange={setTemplate}
+          locale={locale}
+        />
       </div>
       </div>
 

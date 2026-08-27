@@ -28,13 +28,11 @@ use crate::error::{AppError, ErrorDomain};
 use crate::events::catalog::catalog_for;
 use crate::events::normalize::{NormalizeContext, normalize_event, stable_ingress_event_id};
 use crate::ipc::IngressRequest;
-use crate::model::{
-    AgentKind, EventEnvelope, NotificationDocument, RuleConfig, ScalarValue, TargetConfig,
-};
+use crate::model::{AgentKind, EventEnvelope, RuleConfig, ScalarValue, TargetConfig};
 use crate::projects::{PathPlatform, ProjectRegistration};
 use crate::rules::policy::{PolicyDecision, PolicyInput, SuppressReason, evaluate_policy};
 use crate::rules::resolve::{ResolvedRule, StoredRulePatch, resolve_stored_rule};
-use crate::rules::template::{DEFAULT_TEMPLATE_ZH, build_template_context, render_document};
+use crate::rules::template::{build_template_context, canonical_document, render_document};
 use crate::security::crypto::FieldCipher;
 use crate::security::redact::Redactor;
 use crate::storage::config::ConfigRepository;
@@ -45,41 +43,6 @@ use crate::storage::events::{
 };
 use crate::storage::integrations::{IntegrationRepository, mark_hook_seen_in_tx};
 use crate::storage::queue::{DeliveryJob, DeliveryStatus, QueueRepository, enqueue_in_tx};
-
-const METADATA_ONLY_TEMPLATE: &str = concat!(
-    "[{{agent.name}}] {{event.label}}\n",
-    "项目：{{project.name}}\n",
-    "状态：{{event.status}}\n",
-    "时间：{{event.occurred_at}}",
-);
-
-fn minimal_document(
-    envelope: &EventEnvelope,
-    local_offset: chrono::FixedOffset,
-) -> Result<NotificationDocument, AppError> {
-    Ok(NotificationDocument {
-        title: envelope.source_event.clone(),
-        severity: envelope.severity,
-        facts: vec![
-            ("Agent".to_owned(), envelope.source.as_str().to_owned()),
-            (
-                "Project".to_owned(),
-                envelope.project_display_name.clone().unwrap_or_default(),
-            ),
-            ("Hook".to_owned(), envelope.source_event.clone()),
-            (
-                "Time".to_owned(),
-                envelope
-                    .occurred_at
-                    .with_timezone(&local_offset)
-                    .format("%Y-%m-%d %H:%M:%S%:z")
-                    .to_string(),
-            ),
-        ],
-        body: String::new(),
-        footer: None,
-    })
-}
 
 /// Outcome of [`EventPipeline::process_live`]. `Duplicate` is returned when the
 /// event UUID had already been observed (idempotent replay of the same IPC
@@ -195,6 +158,7 @@ impl EventPipeline {
 
         // Resolve effective rule (global + project patch).
         let config = ConfigRepository::new(self.database.clone());
+        let global_template = self.global_notification_template(&config);
         let (resolved, _project_patch_used) =
             resolve_effective_rule(&config, &envelope, agent, &source_event)?;
 
@@ -275,6 +239,7 @@ impl EventPipeline {
                     &targets,
                     &rule_version_str,
                     &decision,
+                    global_template.as_deref(),
                 )?;
             }
             Ok(LiveOutcome::Processed {
@@ -296,9 +261,18 @@ impl EventPipeline {
     /// skipped and left in `'processing'` for the Task 15 reaper; the rest of
     /// the batch proceeds. Returns the count of rows that were attempted
     /// (successful or not).
+    /// 全局通知正文模板(设置页可编辑;None = 内建统一默认)。
+    fn global_notification_template(&self, config: &ConfigRepository) -> Option<String> {
+        config
+            .get_settings()
+            .ok()
+            .and_then(|settings| settings.notification_template)
+    }
+
     pub async fn recover_ingress(&self) -> Result<usize, AppError> {
         let events_repo = EventRepository::new(self.database.clone());
         let config = ConfigRepository::new(self.database.clone());
+        let global_template = self.global_notification_template(&config);
 
         let batch = events_repo.take_ingress_batch(50)?;
         if batch.is_empty() {
@@ -312,7 +286,7 @@ impl EventPipeline {
             // siblings. The failing row stays `'processing'` for the Task 15
             // startup reaper.
             if let Err(_error) = self
-                .process_safe_ingress_with(&events_repo, &config, safe)
+                .process_safe_ingress_with(&events_repo, &config, &global_template, safe)
                 .await
             {
                 // ponytail: no logger is wired yet (Task 15); the failed row
@@ -327,6 +301,7 @@ impl EventPipeline {
         &self,
         events_repo: &EventRepository,
         config: &ConfigRepository,
+        global_template: &Option<String>,
         safe: crate::events::normalize::SafeIngressEvent,
     ) -> Result<(), AppError> {
         let agent = safe.source;
@@ -444,6 +419,7 @@ impl EventPipeline {
                     &targets,
                     &rule_version_str,
                     &decision_for_tx,
+                    global_template.as_deref(),
                 )?;
             }
             delete_ingress_in_tx(tx, event_id)?;
@@ -502,6 +478,7 @@ fn suppress_reason_code(decision: &PolicyDecision) -> Option<EventOutcomeReasonC
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 事务内组装:参数全部必要,分组反而添层
 fn enqueue_jobs(
     tx: &rusqlite::Transaction<'_>,
     local_offset: chrono::FixedOffset,
@@ -510,6 +487,7 @@ fn enqueue_jobs(
     targets: &[TargetConfig],
     rule_version: &str,
     decision: &PolicyDecision,
+    global_template: Option<&str>,
 ) -> Result<(), AppError> {
     let redactor = Redactor::compile(&resolved.config.privacy.extra_redaction_patterns)?;
     // 0 is the metadata-only default: an empty body whose metadata ships as
@@ -518,34 +496,35 @@ fn enqueue_jobs(
     let max_chars = resolved.config.privacy.max_body_chars as usize;
     // Build a stub envelope for template context from the rule + event id.
     let envelope = load_envelope_for_template(tx, event_id)?;
-    let mut document = {
+    let document = {
         let context = build_template_context(
             &envelope,
             &resolved.config.privacy.allowed_sensitive_fields,
             local_offset,
         );
-        let template = resolved
-            .config
-            .targets
+        // 统一格式(用户裁决 2026-08-27):默认走 canonical——标题 = 中文
+        // 事件标签,五项英文键 facts 恒在,正文 = 摘要(有则显示)。自定义
+        // 模板(规则级渠道模板 → 全局设置模板)整体替换正文;其正文已含
+        // 全部信息,故 facts 抑制防重复。任何单模板渲染失败都回落
+        // canonical,通知绝不因模板缺字段而丢弃。
+        let custom_template = targets
             .first()
-            .and_then(|t| t.template.clone())
-            .unwrap_or_else(|| DEFAULT_TEMPLATE_ZH.to_owned());
-        // Render the per-target document. The default template references
-        // event.summary, which is only authorized when a public summary field is
-        // present; for events without one (e.g. metadata-only Stop), fall back to
-        // a minimal template so we never drop a notification solely because the
-        // template asked for a field this event doesn't have.
-        render_document(&template, &context, &redactor, max_chars)
-            .or_else(|_| render_document(METADATA_ONLY_TEMPLATE, &context, &redactor, max_chars))
-            .or_else(|_| minimal_document(&envelope, local_offset))?
+            .and_then(|t| t.template.as_deref())
+            .filter(|t| !t.trim().is_empty())
+            .or(global_template)
+            .filter(|t| !t.trim().is_empty());
+        match custom_template {
+            Some(template) => {
+                let mut doc = render_document(template, &context, &redactor, max_chars)
+                    .unwrap_or_else(|_| canonical_document(&context, &redactor, max_chars));
+                if !doc.body.is_empty() {
+                    doc.facts.clear();
+                }
+                doc
+            }
+            None => canonical_document(&context, &redactor, max_chars),
+        }
     };
-    // A rendered template body already carries the full human-readable content
-    // (agent/project/hook/status/time in the user's locale). Keeping the
-    // auto-generated English fact list on top of it duplicated every line in
-    // the delivered message, so facts ship only with the body-less fallback.
-    if !document.body.is_empty() {
-        document.facts.clear();
-    }
 
     let now = Utc::now();
     let ttl_seconds = resolved.config.delivery.ttl_seconds.max(1) as i64;

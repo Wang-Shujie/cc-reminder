@@ -153,6 +153,47 @@ pub fn render_document(
     })
 }
 
+/// 统一默认文档(用户裁决 2026-08-27):标题 = 中文事件标签,五项英文键
+/// facts 恒在,正文 = 摘要(有则红字化并按 max_body_chars 截断,无则空)。
+/// 所有事件、真实投递与测试发送共用同一形态;自定义模板(全局/规则级)
+/// 仍可整体替换正文并抑制 facts(见 pipeline 的选择链)。
+pub fn canonical_document(
+    context: &TemplateContext,
+    redactor: &Redactor,
+    max_chars: usize,
+) -> NotificationDocument {
+    let event_name = context.value("event.name");
+    let label = context.value("event.label");
+    let title = if label.is_empty() { event_name } else { label };
+    let agent = match (context.value("agent.name"), context.value("agent.version")) {
+        ("", version) => version.to_owned(),
+        (name, "") => name.to_owned(),
+        (name, version) => format!("{name} {version}"),
+    };
+    let facts = [
+        ("Agent", agent),
+        ("Project", context.value("project.name").to_owned()),
+        ("Hook", event_name.to_owned()),
+        ("Status", context.value("event.status").to_owned()),
+        ("Time", context.value("event.occurred_at").to_owned()),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.into(), redactor.redact(&value)))
+    .collect();
+    let body = redactor
+        .redact(context.value("event.summary"))
+        .chars()
+        .take(max_chars)
+        .collect();
+    NotificationDocument {
+        title: redactor.redact(title),
+        severity: context.severity,
+        facts,
+        body,
+        footer: None,
+    }
+}
+
 impl TemplateContext {
     fn value(&self, path: &str) -> &str {
         self.values.get(path).map_or("", String::as_str)

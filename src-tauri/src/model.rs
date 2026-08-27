@@ -356,6 +356,11 @@ pub struct AppSettings {
     /// report; `#[serde(default)]` keeps older persisted JSON loadable.
     #[serde(default)]
     pub local_offset_seconds: i32,
+    /// 全局通知正文模板(用户裁决 2026-08-27:统一格式且可编辑)。`None` =
+    /// 内建统一默认(标题/五项 facts/摘要正文)。变量语法同规则级模板;
+    /// 每条规则的渠道级模板仍可覆盖此值。
+    #[serde(default)]
+    pub notification_template: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -371,6 +376,7 @@ impl Default for AppSettings {
             debug_until: None,
             onboarding_completed: false,
             local_offset_seconds: 0,
+            notification_template: None,
         }
     }
 }
