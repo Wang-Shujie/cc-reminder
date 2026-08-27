@@ -7,12 +7,13 @@
   </head>
   <body>
     <!--
-    DIRECTION CONTRACT — CC Reminder v2.1 wayfinding redesign (seed 61debde9)
-    THESIS: 界面是一套机场/高铁导向系统——旅客 3 秒知道在哪、状态如何、往哪走;拒绝品类默认的卡片堆砌与彩色徽章雨。
-    OWN-WORLD: 纸白/深灰双底 + 单一导引蓝 + ISO 黄黑斜纹警戒带 + 离散字号阶 + 直角细线;抽掉内容仍可辨认。
-    STORY: 用户扫一眼状态横幅即知全局,异常行黄黑带抓眼,蓝色箭头引到修复页,键盘 1-4 直达四目的地。
-    FIRST VIEWPORT: 工作台 = 大字状态横幅在上,四块等宽指标牌居中,行式时刻牌事件流铺满下部,失败行左缘黄黑带。
-    FORM: 导视标识系统(wayfinding signage),用户 safer 档选定,2026-08-26。
+    DIRECTION CONTRACT — CC Reminder v3 native-mac redesign (canon action, user-pinned 2026-08-27)
+    THESIS: 一台安静的 macOS 原生设置应用——半透明侧栏 + 圆角分组卡片承载一切信息;拒绝上一世界(机场导向牌)的直角比喻、黄黑警戒带与两阶字号法。
+    OWN-WORLD: 苹果系统蓝唯一主动色 + SF 系统字族 + vibrancy 侧栏 / 白卡分组 / 胶囊徽章 / 内嵌输入框 / iOS 开关;圆角阶 {6,10,12,pill};阴影有偏移有柔度。视觉零装饰(无渐变无发光),动效取自 uiverse 微交互语法。
+    STORY: 打开即三问——正常吗(状态点脉冲+计数)、何时通知谁(规则表卡)、发到哪(渠道卡);键盘全可达与 axe 硬门禁不动摇。
+    FIRST VIEWPORT: 工作台 = 216px vibrancy 导航柱 + 52px 状态条,四张等宽指标卡横排(hover 悬浮抬升),通知记录面板撑满余量,工具栏恒定仅记录体滚动;失败行整行红色薄染。
+    SIGNATURE MOTION: 抽屉 sheet 滑入(cubic-bezier(.25,1,.5,1) 240ms)+ iOS 开关弹簧拨动(cubic-bezier(.34,1.56,.64,1));按下 scale .96 回弹全局通用。
+    FORM: 品类标准(macOS System Settings 工艺基准)正面直做——用户拍板三连:System Settings 基准 + 只取 uiverse 动效不取装饰 + 苹果系统蓝;brief-pinned 方向胜过骰子,未跑 concept-seed(canon exit)。
     FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
     -->
     <div id="root"></div>

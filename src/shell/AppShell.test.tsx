@@ -182,20 +182,17 @@ test("960 x 640 fixture: rail, header, content stay structurally separate", asyn
     expect(header!.contains(content!)).toBe(false);
     // Fixed rail width / header height / minimum window come from CSS
     // (jsdom performs no layout, so the geometry lives in the stylesheet).
-    expect(appCss).toContain("grid-template-columns: 184px 1fr");
-    expect(appCss).toMatch(/grid-template-rows:\s*48px 1fr/);
+    expect(appCss).toContain("grid-template-columns: 216px 1fr");
+    expect(appCss).toMatch(/grid-template-rows:\s*52px 1fr/);
     expect(appCss).toMatch(/min-width:\s*960px/);
     expect(appCss).toMatch(/min-height:\s*640px/);
-    // Quiet aesthetic: no viewport-scaled fonts, letter spacing pinned to 0,
-    // radii capped at 4px (wayfinding: right angles), guide-blue-only accents.
+    // Native-mac aesthetic: no viewport-scaled fonts, corner language only
+    // via the token scale (--r-sm/md/lg/pill — raw px radii are drift), and
+    // motion always provides a reduced-motion escape hatch.
     expect(appCss).not.toMatch(/\d+vmin|\d+vw/);
-    expect(appCss).toContain("letter-spacing: 0");
-    for (const radius of appCss.matchAll(/border-radius:\s*([^;]+);/g)) {
-      const values = radius[1]?.match(/\d+/g) ?? [];
-      for (const v of values) {
-        expect(Number(v)).toBeLessThanOrEqual(4);
-      }
-    }
+    expect(appCss).not.toMatch(/border-radius:\s*\d+px/);
+    expect(appCss).toContain("--r-pill: 999px");
+    expect(appCss).toMatch(/prefers-reduced-motion:\s*reduce/);
   } finally {
     window.innerWidth = 1024;
     window.innerHeight = 768;

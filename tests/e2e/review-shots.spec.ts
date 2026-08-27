@@ -1,59 +1,74 @@
-// Opt-in finish-review capture (wayfinding redesign). NOT part of pnpm verify.
+// Opt-in finish-review capture (native-mac redesign). NOT part of pnpm verify.
 // Run: CC_REMINDER_REVIEW=1 pnpm test:e2e tests/e2e/review-shots.spec.ts
-// Captures the four destinations at 960×640 and 1280×800 into
-// .impeccable/review/ for the finish reviewer.
-import { test } from "@playwright/test";
+// Captures light AND dark passes over all five destinations at 960×640 plus
+// the open rules drawer sheet, into .impeccable/review/ for the reviewer.
+import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
-const SHOTS: [string, number, number][] = [
-  ["workbench", 960, 640],
-  ["rules", 960, 640],
-  ["integrations", 960, 640],
-  ["settings", 960, 640],
-  ["workbench-1280", 1280, 800],
-  ["rules-1280", 1280, 800],
+const PAGES: [string, string, (page: Page) => Promise<unknown>][] = [
+  ["工作台", "workbench", () => Promise.resolve()],
+  ["通知规则", "rules", (page) => page.getByRole("row", { name: /Stop/ }).waitFor()],
+  ["项目", "projects", (page) => page.getByRole("cell", { name: "演示项目" }).waitFor()],
+  [
+    "集成",
+    "integrations",
+    (page) => page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
+  ],
+  ["设置", "settings", (page) => page.locator("#settings-event-days").waitFor()],
 ];
 
-test("capture finish-review screenshots", async ({ page }) => {
+async function snap(
+  page: Page,
+  outDir: string,
+  name: string,
+): Promise<void> {
+  await page.screenshot({
+    path: path.join(outDir, `${name}.png`),
+    animations: "disabled",
+    caret: "hide",
+    scale: "css",
+  });
+}
+
+test("capture native-mac redesign screenshots", async ({ page }) => {
   test.skip(process.env.CC_REMINDER_REVIEW !== "1", "opt-in");
 
   const outDir = path.join(process.cwd(), ".impeccable", "review");
   fs.mkdirSync(outDir, { recursive: true });
+  await page.setViewportSize({ width: 960, height: 640 });
 
-  for (const [name, width, height] of SHOTS) {
-    await page.setViewportSize({ width, height });
-    await page.goto("/");
-    // The previous shot's nav click persists last-page; wait for ANY settled
-    // page (nav present), then navigate to the shot's destination explicitly.
-    await page.getByRole("navigation").waitFor();
-    const label =
-      name === "workbench" || name === "workbench-1280"
-        ? "工作台"
-        : name.startsWith("rules")
-          ? "通知规则"
-          : name.startsWith("integrations")
-            ? "集成"
-            : "设置";
+  // Light pass (fresh profile defaults to the configured light theme).
+  await page.goto("/");
+  await page.getByRole("navigation").waitFor();
+  for (const [label, name, settle] of PAGES) {
     await page.getByRole("button", { name: label }).click();
-    await page.evaluate(() => {
-      (document.documentElement.style as CSSStyleDeclaration & { zoom: string }).zoom = "1";
-    });
-    const settle: Record<string, () => Promise<unknown>> = {
-      workbench: () => Promise.resolve(),
-      "workbench-1280": () => Promise.resolve(),
-      rules: () => page.getByRole("row", { name: /Stop/ }).waitFor(),
-      "rules-1280": () => page.getByRole("row", { name: /Stop/ }).waitFor(),
-      integrations: () => page.getByRole("row", { name: /Claude Code/ }).first().waitFor(),
-      settings: () => page.locator("#settings-event-days").waitFor(),
-    };
-    await settle[name]!();
-    // Full viewport: the rail and status banner ARE the redesign under review.
-    await page.screenshot({
-      path: path.join(outDir, `${name}.png`),
-      animations: "disabled",
-      caret: "hide",
-      scale: "css",
-    });
+    await settle(page);
+    await snap(page, outDir, `light-${name}`);
+  }
+
+  // Drawer sheet open (the signature motion surface).
+  await page.getByRole("button", { name: "通知规则" }).click();
+  const stopRow = page.getByRole("row", { name: /Stop/ });
+  await stopRow.waitFor();
+  await stopRow.click();
+  await expect(page.getByRole("complementary", { name: "Stop" })).toBeVisible();
+  await snap(page, outDir, "light-drawer");
+  await page
+    .getByRole("complementary", { name: "Stop" })
+    .getByRole("button", { name: "关闭" })
+    .click();
+
+  // Dark pass: applied through the real settings flow so persistence runs.
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.locator("#settings-event-days").waitFor();
+  await page.getByRole("radio", { name: "深色" }).check();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator("html[data-theme=dark]")).toHaveCount(1);
+
+  for (const [label, name, settle] of PAGES) {
+    await page.getByRole("button", { name: label }).click();
+    await settle(page);
+    await snap(page, outDir, `dark-${name}`);
   }
 });
