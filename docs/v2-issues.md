@@ -51,3 +51,11 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 
 - **终极根因**(活体 sample 定罪):每次重编译二进制 ad-hoc 签名变化,钥匙串条目 ACL 对新二进制弹「允许访问?」;应用启动早期无窗口,弹窗不可见,主线程在 `SecKeychainFindGenericPassword → securityd` 上无限 mach_msg。此前两轮的 WAL 竞态与托盘 UB 都是**真实但非当前主因**的并发缺陷(均已修复加固)。三层表现同源:卡在钥匙串 → IPC/日志/托盘全无 → helper 中性退出 → 全灭零痕。
 - **修复(de50f64)**:钥匙串读取看门狗(5/20/60/120s 分级把卡点写进应用日志,指明恢复路径);**用户侧一次性** `security set-key-partition-list -S apple:, -k <登录密码>` 消除每构建弹窗。执行后实测:启动秒过钥匙串、探针秒落库、文档为统一新格式。
+
+## 实机事件记录(2026-08-27 第四轮:Claude Code 侧 hooks 配置被清空)
+
+- **现象**:Codex 全链路通,Claude Code 零触发零日志,测试发送正常——失败被隔离到 Claude Code → helper 一环。
+- **铁证**:`~/.claude/settings.json`(mtime 13:12:22)hooks 四个事件键全部为**空数组**(对比上午取证:均带完整 cc-reminder-hook 命令)。Claude Code 读到空配置 → 什么都不执行 → 静默无痕。应用侧健康(13:18 直接 helper 探针标记 last_seen)。
+- **写入者判定**:13:12 时段应用主线程正卡在钥匙串(无 UI 可操作),唯一活跃的 settings 写入方是 Claude Code 自身(文件含 model/effortLevel/switchModelsOnFlag 等其专属键,当晚会话内有多次 /model 切换)——其设置持久化把一份**空的 hooks 内存态**落了盘。空态来源最可能是上午多次卸载/修复流转中被快照,确切时机无法从磁盘证据逐字定罪。
+- **修复**:恢复四条 hook 命令(备份后精确重写);全新 claude -p 会话即时落库验证。
+- **经验**:该类失败在应用之外,应用只能检测与修复——集成页/概览的 drift 检测(配置指纹 vs 已安装行)应能标出;用户侧若 hooks 再次消失,重开集成页点「修复」即可。另:hooks 被清空期间启动的会话持有空快照,恢复配置后需重启会话。
