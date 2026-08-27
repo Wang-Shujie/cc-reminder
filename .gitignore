@@ -9,3 +9,4 @@ src-tauri/gen/
 test-results/
 playwright-report/
 .pnpm-store/
+.impeccable/
