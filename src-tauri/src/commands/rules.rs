@@ -717,6 +717,24 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_never_deploys_or_requires_the_helper() {
+        // v2-issues: Uninstall 被 lifecycle 豁免 helper 在场校验,commands 层
+        // 也不得部署/要求 helper——占位 manifest 的开发环境卸载不应报
+        // helper_unavailable,release 环境卸载不得顺带写盘签名 helper。
+        let state = test_state();
+        let input = crate::commands::agents::ApplyHookActionInput {
+            agent: crate::commands::agents::AgentKindInput::ClaudeCode,
+            action: crate::commands::agents::HookActionInput::Uninstall,
+            expected_health_revision: 0,
+            confirm_compatible_version: true,
+        };
+        if let Err(err) = crate::commands::agents::apply_hook_action_impl(&state, input) {
+            assert_ne!(err.code, "configuration.helper_unavailable");
+            assert_ne!(err.code, "update.helper_not_installed");
+        }
+    }
+
+    #[test]
     fn unverified_install_without_confirmation_is_rejected() {
         let state = test_state();
         let input = crate::commands::agents::ApplyHookActionInput {

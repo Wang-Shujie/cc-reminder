@@ -16,6 +16,7 @@ pub mod projects;
 pub mod rules;
 pub mod security;
 pub mod storage;
+pub mod tray;
 pub mod worker;
 
 use std::sync::Arc;
@@ -154,8 +155,9 @@ pub fn run() {
         .expect("error while building CC Reminder")
         .run(|app, event| {
             // Every exit route lands here (close-to-exit window, Cmd-Q / menu
-            // quit, updater relaunch): run the graceful Task-14 shutdown once,
-            // right before the process goes away.
+            // quit; an updater-triggered relaunch would land here too once the
+            // updater ships): run the graceful Task-14 shutdown once, right
+            // before the process goes away.
             if let tauri::RunEvent::Exit = event {
                 shutdown_core(app);
             }
@@ -306,13 +308,21 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     // RunEvent::Exit) cancels all three together.
     let cancel = CancellationToken::new();
 
+    // Shared bounded channel for revision-only core:// events. Producers: the
+    // delivery worker (below), the IPC ingress loop (history-changed), and
+    // command bodies via CoreState.core_events; the single consumer is the
+    // forwarder task spawned further down.
+    let (core_event_sink, mut core_event_receiver) =
+        tokio::sync::mpsc::channel::<worker::CoreEvent>(64);
+
     // 6. Start IPC: drives process_live, replies Accepted only after durable
     //    commit, rejects unrecognized helpers without establishing trust.
     //    The accept loop selects on the same cancel token so an exiting app
-    //    stops admitting hook traffic; requests already received still get
-    //    their durable reply before the loop breaks.
+    //    stops admitting new hook traffic; a request already taken off the
+    //    channel finishes its commit-and-reply before the loop breaks.
     let pipeline_for_ipc = pipeline.clone();
     let ipc_diagnostics = diagnostics.clone();
+    let ipc_events = core_event_sink.clone();
     let mut server =
         ipc::server::IpcServer::bind(paths.endpoint()).map_err(std::io::Error::other)?;
     let ipc_cancel = cancel.clone();
@@ -328,7 +338,15 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             let reply = match pipeline_for_ipc.process_live(request).await {
                 Ok(outcome) => {
                     let event_id = match outcome {
-                        pipeline::LiveOutcome::Processed { event_id } => event_id,
+                        pipeline::LiveOutcome::Processed { event_id } => {
+                            // v2-issues: 事件落库即推送 history-changed,
+                            // 通知记录订阅端即时刷新(重复事件无历史变化)。
+                            crate::worker::emit(
+                                &ipc_events,
+                                crate::worker::CoreEvent::HistoryChanged,
+                            );
+                            event_id
+                        }
                         pipeline::LiveOutcome::Duplicate { event_id } => event_id,
                     };
                     IngressResponse::Accepted { event_id }
@@ -360,11 +378,6 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         lease_duration: chrono::Duration::seconds(30),
         tick_interval: std::time::Duration::from_secs(2),
     };
-    // Shared bounded channel for revision-only core:// events. Producers: the
-    // delivery worker (below) and command bodies via CoreState.core_events;
-    // the single consumer is the forwarder task spawned right after.
-    let (core_event_sink, mut core_event_receiver) =
-        tokio::sync::mpsc::channel::<worker::CoreEvent>(64);
     let worker_events = core_event_sink.clone();
     let worker = DeliveryWorker::new(worker_config, worker_events);
 
@@ -387,6 +400,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             let topic = event.core_topic();
             let revision = revisions.entry(topic).and_modify(|r| *r += 1).or_insert(1);
             let _ = forwarder_app.emit(topic, serde_json::json!({ "revision": revision }));
+            // 健康变化同步托盘菜单的健康条目(重建,轻量)。
+            if matches!(event, crate::worker::CoreEvent::HealthChanged { .. }) {
+                crate::tray::refresh_health(&forwarder_app);
+            }
         }
     });
     let worker_cancel = cancel.clone();
@@ -410,6 +427,20 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         retention_diagnostics,
         std::time::Duration::from_secs(24 * 60 * 60),
         retention_cancel,
+    ));
+
+    // v2-issues(计划行 2482):每 6 小时后台重检 Agent,健康状态跟上
+    // 升级/卸载等外部变化,并广播 health-changed 让界面刷新。
+    let redetect_integrations = integrations.clone();
+    let redetect_diagnostics = diagnostics.clone();
+    let redetect_events = core_event_sink.clone();
+    let redetect_cancel = cancel.clone();
+    tauri::async_runtime::spawn(agents::redetect_loop(
+        redetect_integrations,
+        redetect_diagnostics,
+        redetect_events,
+        std::time::Duration::from_secs(6 * 60 * 60),
+        redetect_cancel,
     ));
 
     // Manage the shared state for commands, and stash the worker cancel token
@@ -460,6 +491,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         });
     }
     app.manage(state);
+
+    // v2-issues(设计 §18.3):原生托盘菜单——打开/健康/暂停/恢复/退出。
+    // 在 state manage 之后安装,动作经 try_state 走同一命令 impl。
+    tray::install(app);
 
     Ok(())
 }

@@ -234,7 +234,10 @@ fn persist_reported_offset(
     let mut settings = config.get_settings()?;
     if settings.local_offset_seconds != seconds {
         settings.local_offset_seconds = seconds;
-        config.save_settings(&settings)?;
+        // v2-issues: 启动路径必须"只读可活"。offset 持久化是 best-effort——
+        // 写失败(如只读存储)只意味着下次启动的静默小时仍用旧时区,
+        // 绝不能让 bootstrap 报错把用户挡在永久加载屏外。
+        let _ = config.save_settings(&settings);
     }
     Ok(())
 }
@@ -364,3 +367,48 @@ pub async fn get_health_snapshot(state: State<'_, CoreState>) -> Result<HealthSn
 // We deliberately do NOT glob-re-export them here: the command names collide
 // with the inner `*_impl` body names if re-exported together, and
 // `generate_handler!` requires literal paths anyway.
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reported_offset_persistence_is_best_effort() {
+        // v2-issues: 只读存储不得把 bootstrap 挡在永久加载屏——offset 写失败
+        // 必须被吞掉(仅影响下次启动的静默小时时区)。
+        use crate::storage::config::ConfigRepository;
+        use crate::storage::db::Database;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("com.ccreminder.app");
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("cc-reminder.sqlite3");
+        let db = Database::open(&db_path).unwrap();
+        let config = ConfigRepository::new(db.clone());
+
+        // WAL 模式下写入发生在 -wal/-shm 边车文件:三者全部只读,
+        // 强制 save_settings 失败。
+        let files = [
+            db_path.clone(),
+            dir.join("cc-reminder.sqlite3-wal"),
+            dir.join("cc-reminder.sqlite3-shm"),
+        ];
+        for path in &files {
+            if path.exists() {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444)).unwrap();
+            }
+        }
+        let mut settings = config.get_settings().unwrap();
+        settings.local_offset_seconds = 12345;
+        let save_failed = config.save_settings(&settings).is_err();
+        for path in &files {
+            if path.exists() {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+        }
+        drop(config);
+        drop(db);
+        drop(root);
+        // 环境前提不成立(边车写仍成功)时该测试失去意义,显式失败暴露。
+        assert!(save_failed, "read-only setup failed to block the save");
+    }
+}

@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import {
   TestApp,
   backendNeedingCodexTrust,
+  claudeRulesFixtures,
+  codexRulesFixtures,
   onboardingBackend,
   type FakeBackend,
 } from "../test/TestApp";
@@ -206,4 +208,33 @@ test("ding_talk channels expose signing secret and keyword prefix and save them"
   expect(
     await screen.findByRole("heading", { name: "添加渠道" }),
   ).toBeVisible();
+});
+
+test("使用默认规则 binds the saved channel to every enabled default rule", async () => {
+  const user = userEvent.setup();
+  // Fake 的 rules 默认为空;真机默认目录有启用规则——播种夹具复现实况。
+  const backend = onboardingBackend({
+    rules: [...claudeRulesFixtures(), ...codexRulesFixtures()],
+  });
+  render(<TestApp backend={backend} />);
+  await completeDetectAndInstall(user);
+  await screen.findByRole("heading", { name: "添加渠道" });
+  await user.type(screen.getByLabelText("渠道名称"), "工程群");
+  await user.type(
+    screen.getByLabelText("Webhook 地址"),
+    "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc123",
+  );
+  await user.click(screen.getByRole("button", { name: "保存渠道" }));
+  await screen.findByRole("heading", { name: "选择默认规则" });
+  await user.click(screen.getByRole("button", { name: "使用默认规则" }));
+  expect(await screen.findByRole("heading", { name: "发送测试" })).toBeVisible();
+  // v2-issues: 引导后事件必须有处可投——所有启用且无目标的默认规则
+  // 都绑定到刚保存的渠道(fresh 流程中唯一渠道)。
+  const calls = vi.mocked(backend.saveGlobalRule).mock.calls;
+  expect(calls.length).toBeGreaterThan(0);
+  const boundIds = new Set(
+    calls.flatMap((call) => call[0].config.targets.map((target) => target.channel_id)),
+  );
+  expect(boundIds.size).toBe(1);
+  expect(calls[0]![0].config.targets.length).toBeGreaterThan(0);
 });

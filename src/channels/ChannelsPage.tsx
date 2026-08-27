@@ -15,6 +15,7 @@ import type {
   LocaleCode,
 } from "../lib/contracts";
 import { dictionary } from "../lib/i18n";
+import { ChannelGuide } from "./ChannelGuide";
 
 interface FormState {
   name: string;
@@ -291,6 +292,11 @@ export function ChannelsPage({
               );
             })}
           </ul>
+          {/* v2-issues: 失败速查直接列在测试发送结果旁。 */}
+          <p className="muted field-hint">
+            {t.troubleshootTitle}
+            {t.troubleshootBody}
+          </p>
         </section>
       )}
 
@@ -305,6 +311,11 @@ export function ChannelsPage({
         }}
       >
         <h2>{editing !== null ? t.replaceCredentialAction : t.addChannelAction}</h2>
+        {/* v2-issues:分步指引随平台切换(添加模式),与 operations.md §5 同源。 */}
+        <ChannelGuide
+          locale={locale}
+          kind={editing === null ? form.kind : editing.kind}
+        />
         {editing !== null && (
           <>
             <p>
@@ -360,6 +371,7 @@ export function ChannelsPage({
                 setForm({ ...form, signingSecret: event.target.value })
               }
             />
+            <p className="muted field-hint">{t.secretHint}</p>
             {editing === null && (
               <>
                 <label htmlFor="channel-prefix">{t.keywordPrefixField}</label>
@@ -370,6 +382,7 @@ export function ChannelsPage({
                     setForm({ ...form, keywordPrefix: event.target.value })
                   }
                 />
+                <p className="muted field-hint">{t.keywordHint}</p>
               </>
             )}
           </>

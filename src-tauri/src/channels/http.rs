@@ -46,18 +46,28 @@ pub(crate) fn build_client(config: ChannelConfig) -> Client {
 /// never want to buffer an arbitrary blob, and the platform contracts are all
 /// small JSON objects.
 pub(crate) async fn read_capped(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<(StatusCode, Vec<u8>), DeliveryError> {
     let status = response.status();
-    let bytes = response.bytes().await.map_err(network_error)?;
-    if bytes.len() > max_bytes {
+    // Stream chunk-by-chunk and stop at the cap: never buffer an arbitrary
+    // blob before deciding it is too large (v2-issues timing fix).
+    let mut body: Vec<u8> = Vec::with_capacity(1024);
+    let mut exceeded = false;
+    while let Some(chunk) = response.chunk().await.map_err(network_error)? {
+        if body.len() + chunk.len() > max_bytes {
+            exceeded = true;
+            break;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if exceeded {
         return Err(format_error(
             "response body exceeded 64 KiB cap",
             Some(status.as_u16()),
         ));
     }
-    Ok((status, bytes.to_vec()))
+    Ok((status, body))
 }
 
 /// Map a reqwest failure onto `DeliveryErrorKind`. The overall request timeout

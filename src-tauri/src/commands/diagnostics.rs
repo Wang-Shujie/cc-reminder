@@ -279,13 +279,19 @@ pub(crate) fn clear_history_impl(
             "v1 supports only the preserve-active-work form",
         ));
     }
-    crate::storage::retention::clear_history(
+    let cleared = crate::storage::retention::clear_history(
         &crate::storage::db::Database::open(std::path::Path::new(state.queue.database_path()))
             .map_err(|_| {
                 configuration_error("diagnostics.unavailable", "database could not be opened")
             })?,
         chrono::Utc::now(),
-    )
+    )?;
+    // v2-issues: 清空历史后推送 history-changed,订阅端刷新而非停留在
+    // 已被清除的列表上。清了 0 行则不打扰。
+    if cleared > 0 {
+        crate::worker::emit(&state.core_events, crate::worker::CoreEvent::HistoryChanged);
+    }
+    Ok(cleared)
 }
 
 pub(crate) fn set_debug_logging_impl(

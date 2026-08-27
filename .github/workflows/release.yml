@@ -205,7 +205,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build --target universal-apple-darwin
+        run: pnpm tauri build --target universal-apple-darwin --config '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook"]}}'
 
       # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
       # Sidecars record "<sha256>  <basename>" so they stay valid wherever the
@@ -361,7 +361,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ env.WINDOWS_CERT_THUMBPRINT }}
         shell: bash
-        run: pnpm tauri build
+        run: pnpm tauri build --config '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook.exe"]}}'
 
       # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
       - name: Generate SHA-256 sidecars for every Windows artifact
@@ -500,7 +500,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles appimage deb
+        run: pnpm tauri build --bundles appimage deb --config '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook"]}}'
 
       # --- 5. Checksums + verify-package gate -------------------------------
       # Sidecars record "<sha256>  <basename>" (standard sha256sum -c layout),

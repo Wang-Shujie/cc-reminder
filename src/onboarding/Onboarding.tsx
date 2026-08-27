@@ -15,6 +15,7 @@ import type {
 } from "../lib/contracts";
 import { dictionary } from "../lib/i18n";
 import { errorOf, type PageError } from "../lib/errors";
+import { ChannelGuide } from "../channels/ChannelGuide";
 import { AppShell } from "../shell/AppShell";
 
 type Step = "detect" | "install" | "channel" | "defaults" | "test";
@@ -157,6 +158,38 @@ export function Onboarding({
     } catch (e: unknown) {
       setError(errorOf(e));
     }
+  }
+
+  /** v2-issues: 默认步骤把已保存渠道写入所有"启用且无目标"的默认规则,
+   *  否则引导完成后事件被捕获但无处投递(收不到通知)。 */
+  async function applyDefaults(): Promise<void> {
+    if (channels.length > 0) {
+      setError(null);
+      try {
+        for (const agent of ["claude-code", "codex"] as const) {
+          const rows = await backend.listHookRules({ agent, project_id: null });
+          for (const row of rows) {
+            if (row.enabled && row.config.targets.length === 0) {
+              await backend.saveGlobalRule({
+                agent,
+                source_event: row.source_event,
+                config: {
+                  ...row.config,
+                  targets: channels.map((channel) => ({
+                    channel_id: channel.id,
+                    template: null,
+                  })),
+                },
+              });
+            }
+          }
+        }
+      } catch (e: unknown) {
+        setError(errorOf(e));
+        return;
+      }
+    }
+    setStep("test");
   }
 
   async function sendTest(): Promise<void> {
@@ -302,6 +335,8 @@ export function Onboarding({
               void saveChannel();
             }}
           >
+            {/* v2-issues:分步指引随平台切换,与 docs/operations.md §5 同源。 */}
+            <ChannelGuide locale={locale} kind={kind} />
             <label htmlFor="ob-channel-name">{t.channelName}</label>
             <input
               id="ob-channel-name"
@@ -333,12 +368,14 @@ export function Onboarding({
                   value={signingSecret}
                   onChange={(event) => setSigningSecret(event.target.value)}
                 />
+                <p className="muted field-hint">{t.secretHint}</p>
                 <label htmlFor="ob-channel-prefix">{t.keywordPrefixField}</label>
                 <input
                   id="ob-channel-prefix"
                   value={keywordPrefix}
                   onChange={(event) => setKeywordPrefix(event.target.value)}
                 />
+                <p className="muted field-hint">{t.keywordHint}</p>
               </>
             )}
             {errorLine}
@@ -370,7 +407,7 @@ export function Onboarding({
             >
               {t.onboardingBack}
             </button>
-            <button type="button" className="primary cc-focusable" onClick={() => setStep("test")}>
+            <button type="button" className="primary cc-focusable" onClick={() => { void applyDefaults(); }}>
               {t.useDefaults}
             </button>
           </div>

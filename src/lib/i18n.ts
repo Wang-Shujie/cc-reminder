@@ -19,7 +19,6 @@ export interface Dictionary {
   pendingJobs: string;
   failedJobs: string;
   loading: string;
-  pagePlaceholder: string;
   navLabel: string;
   tabSources: string;
   tabDestinations: string;
@@ -180,6 +179,13 @@ export interface Dictionary {
   trustNotice: string;
   // Channels page (Task 18)
   addChannelAction: string;
+  guideToggle: string;
+  guideDingTalk: string;
+  guideWeCom: string;
+  secretHint: string;
+  keywordHint: string;
+  troubleshootTitle: string;
+  troubleshootBody: string;
   replaceCredentialAction: string;
   deleteChannelAction: string;
   deleteChannelConfirmTitle: string;
@@ -340,7 +346,6 @@ const zhCn: Dictionary = {
   pendingJobs: "待发送",
   failedJobs: "失败任务",
   loading: "加载中…",
-  pagePlaceholder: "此页面将在后续版本中提供。",
   navLabel: "主导航",
   tabSources: "通知来源",
   tabDestinations: "通知去向",
@@ -500,6 +505,16 @@ const zhCn: Dictionary = {
   trustNotice: "Codex 的 Hook 需要在官方界面确认：请运行以下命令后重新检测。",
   // Channels page (Task 18)
   addChannelAction: "添加渠道",
+  guideToggle: "如何获取 Webhook?",
+  guideDingTalk:
+    "钉钉:群设置 → 智能群助手 → 添加「自定义」机器人;安全设置选「加签」或「自定义关键词」。选加签:把 SEC 开头的密钥填到下方「签名密钥」;选关键词:把关键词填到下方「关键词前缀」(测试与真实通知都会携带)。复制机器人的 Webhook 地址,回来粘贴。",
+  guideWeCom:
+    "企业微信:群右键 → 添加群机器人 → 复制 Webhook 地址,回来粘贴即可,无需其它设置。",
+  secretHint: "对应钉钉安全设置的「加签」密钥(SEC 开头),完整复制,可留空。",
+  keywordHint: "对应钉钉安全设置的「自定义关键词」;所有通知都会以它为前缀。",
+  troubleshootTitle: "常见失败速查:",
+  troubleshootBody:
+    "关键词不符(钉钉 errcode 310000)→ 核对关键词前缀;加签错误 → 重新完整复制 SEC 密钥(勿截断);token 失效 → 群内机器人已被删,重新添加并「替换凭据」。",
   replaceCredentialAction: "替换凭据",
   deleteChannelAction: "删除渠道",
   deleteChannelConfirmTitle: "确认删除渠道",
@@ -659,7 +674,6 @@ const en: Dictionary = {
   pendingJobs: "Pending",
   failedJobs: "Failed jobs",
   loading: "Loading…",
-  pagePlaceholder: "This page arrives in a later release.",
   navLabel: "Navigation",
   tabSources: "Sources",
   tabDestinations: "Destinations",
@@ -826,6 +840,18 @@ const en: Dictionary = {
     "Codex hooks need confirmation in the official UI: run the command below, then re-check.",
   // Channels page (Task 18)
   addChannelAction: "Add channel",
+  guideToggle: "How do I get a Webhook?",
+  guideDingTalk:
+    "DingTalk: Group Settings → Smart group assistant → add a Custom bot; pick Signed or Custom keyword under Security. Signed: paste the SEC-prefixed secret into Signing secret below. Custom keyword: paste it into Keyword prefix (every notification carries it). Copy the bot's Webhook URL back here.",
+  guideWeCom:
+    "WeCom: right-click the group → Add group bot → copy the Webhook URL and paste it here. Nothing else is needed.",
+  secretHint:
+    "The DingTalk signed-security secret (SEC-prefixed); copy it whole. Optional.",
+  keywordHint:
+    "The DingTalk custom keyword; every notification is prefixed with it.",
+  troubleshootTitle: "Common failures:",
+  troubleshootBody:
+    "Keyword mismatch (DingTalk errcode 310000) → check the keyword prefix; sign errors → recopy the SEC secret without truncation; dead token → the bot was deleted, re-add it and Replace credentials.",
   replaceCredentialAction: "Replace credential",
   deleteChannelAction: "Delete channel",
   deleteChannelConfirmTitle: "Delete this channel?",

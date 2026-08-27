@@ -792,7 +792,7 @@ export class BrowserTestBackend implements Backend {
   }
 }
 
-/** Entry point used by src/main.tsx behind the compile-time test flag. */
+/** Entry point used by src/App.tsx behind the compile-time test flag. */
 export function createBrowserTestBackend(): Backend {
   window.localStorage.setItem("cc-reminder-e2e", "browser-test-backend");
   return new BrowserTestBackend();

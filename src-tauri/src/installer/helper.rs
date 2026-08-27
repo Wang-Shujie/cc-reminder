@@ -219,6 +219,26 @@ impl HelperInstaller {
         }
     }
 
+    /// Uninstall-only stand-in (v2-issues): satisfies HookEnvironment's type
+    /// when the bundled helper cannot even be loaded (dev placeholder manifest,
+    /// broken bundle). Uninstall never deploys, verifies, or fingerprints
+    /// through the helper — lifecycle removal works from owned-entry
+    /// fingerprints — so an inert placeholder is sound. `stable_path` still
+    /// resolves to the real stable location for the selection type.
+    pub fn undeployed_placeholder(bin_dir: PathBuf) -> Self {
+        Self {
+            bin_dir,
+            entry: HelperManifestEntry {
+                target_triple: String::new(),
+                helper_version: Version::new(0, 0, 0),
+                filename: String::new(),
+                length: 0,
+                sha256: String::new(),
+            },
+            bytes: Vec::new(),
+        }
+    }
+
     pub fn stable_path(&self) -> PathBuf {
         self.bin_dir.join(stable_filename())
     }
@@ -371,9 +391,9 @@ fn write_version_sidecar(bin_dir: &Path, version: &Version) -> Result<(), AppErr
 }
 
 fn publish_rename(temp: &Path, target: &Path) -> std::io::Result<()> {
-    // ponytail: Windows durability (MoveFileExW/replace) is left to the platform
-    // owner; same-filesystem rename is atomic on the Unix path under test.
-    fs::rename(temp, target)
+    // v2-issues: 统一走 atomic.rs 的耐久重命名(Windows MoveFileExW
+    // WRITE_THROUGH;test-support 失败缝合流经同一路径)。
+    crate::installer::atomic::publish_rename(temp, target)
 }
 
 #[cfg(unix)]

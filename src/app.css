@@ -1049,3 +1049,20 @@ body {
 .settings-channel-add {
   grid-column: 1 / -1;
 }
+
+/* 渠道指引(v2-issues):顶 2px 强线分层,牌底衬托,正文按原样折行。 */
+.channel-guide {
+  margin: 8px 0 16px;
+  padding: 10px 12px;
+  border-top: 2px solid var(--line-strong);
+  background: var(--slab);
+}
+
+.channel-guide-body {
+  margin: 8px 0 0;
+  white-space: pre-line;
+}
+
+.field-hint {
+  margin: -8px 0 12px;
+}
