@@ -41,7 +41,7 @@ CC Reminder 通过 Claude Code 与 Codex 的生命周期 Hook 捕获事件,在�
 ## Brand Commitments
 
 - 名称:CC Reminder。
-- **视觉基调:简约/商务**(用户 2026-08-26 steer 并经 safer 档确认);2026-08-26 选定视觉世界「导视标识系统」(wayfinding signage)。
+- **视觉基调:简约/商务**;视觉世界沿革:v2「导视标识系统」(2026-08-26)→ **v3「native-mac / macOS 系统设置工艺基准」(用户 2026-08-27 拍板,替换 v2 世界)**。常备偏好承诺:桌面原生设置类应用的克制质感;动效语法取开源组件库(uiverse.io,MIT)微交互——弹簧开关、悬浮抬升、按下回弹;视觉装饰零渐变零发光;主动色 = 苹果系统蓝家族(两主题各自达 WCAG AA);明/暗双主题皆为真身。
 - 无标志/插画资产。
 
 ## Evidence on Hand
