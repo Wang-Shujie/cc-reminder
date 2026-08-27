@@ -166,6 +166,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  grid-column: 1 / -1;
   padding: 0 16px;
   border-bottom: 1px solid var(--line-hair);
   background: var(--bg-sidebar);
@@ -604,13 +605,10 @@ input[type="checkbox"]:not(.check-row input):not(.weekday input):checked::after 
   transform: scale(1);
 }
 
-/* 单选:圆环 + 中心点缩放浮现。 */
-.check-row input[type="radio"],
-.weekday input[type="radio"],
-fieldset input[type="radio"],
-.settings-section input[type="radio"],
-label > input[type="radio"] {
+/* 单选:圆环 + 绝对居中圆点缩放浮现(margin 定心在 200% 缩放下会溢出)。 */
+input[type="radio"] {
   appearance: none;
+  position: relative;
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -619,38 +617,28 @@ label > input[type="radio"] {
   border-radius: var(--r-pill);
   background: var(--field-bg);
   cursor: pointer;
+  vertical-align: middle;
   transition: border-color 140ms var(--ease-out);
 }
 
-.check-row input[type="radio"]::after,
-.weekday input[type="radio"]::after,
-fieldset input[type="radio"]::after,
-.settings-section input[type="radio"]::after,
-label > input[type="radio"]::after {
+input[type="radio"]::after {
   content: "";
-  display: block;
+  position: absolute;
+  left: calc(50% - 4px);
+  top: calc(50% - 4px);
   width: 8px;
   height: 8px;
-  margin: 2.5px auto;
   border-radius: var(--r-pill);
   background: var(--accent-fill);
   transform: scale(0);
   transition: transform 220ms var(--ease-spring);
 }
 
-.check-row input[type="radio"]:checked,
-.weekday input[type="radio"]:checked,
-fieldset input[type="radio"]:checked,
-.settings-section input[type="radio"]:checked,
-label > input[type="radio"]:checked {
+input[type="radio"]:checked {
   border-color: var(--accent-fill);
 }
 
-.check-row input[type="radio"]:checked::after,
-.weekday input[type="radio"]:checked::after,
-fieldset input[type="radio"]:checked::after,
-.settings-section input[type="radio"]:checked::after,
-label > input[type="radio"]:checked::after {
+input[type="radio"]:checked::after {
   transform: scale(1);
 }
 

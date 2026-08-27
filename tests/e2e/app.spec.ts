@@ -112,6 +112,11 @@ async function assertDesktopLayout(page: Page): Promise<void> {
 }
 
 async function expectNoSeriousAxeViolations(page: Page, where: string): Promise<void> {
+  // Entrance animations (sheet fade/slide, dot pulse) sample as半透明 mid-flight
+  // states and legitimately fail color-contrast while running. The world
+  // already guarantees a fully static UI under reduced motion, so evaluate
+  // accessibility against that deterministic rendition.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   const results = await new AxeBuilder({ page }).analyze();
   const blocking = results.violations.filter(
     (violation) => violation.impact === "serious" || violation.impact === "critical",
