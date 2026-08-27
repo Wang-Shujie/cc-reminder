@@ -10,193 +10,32 @@
 // - Preview reflects the SAVED rule: it is debounced 250 ms, stale responses
 //   are dropped by a monotonic request id, and unsaved text edits deliberately
 //   do not trigger refetches; only backend-redacted documents are rendered.
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { RotateCcw, Send, X } from "lucide-react";
+//
+// 架构提案 §4:本文件只保留抽屉壳(草稿/提交/重同步/错误与继承状态),
+// 六个分区与预览-测试分区在 ./drawer/ 下各自成组件,JSX 与行为原样移出。
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { X } from "lucide-react";
 
 import { useBackend } from "../lib/backend";
 import type {
   AgentKindCode,
-  ChannelId,
   ChannelSummary,
   HookRuleRow,
   LocaleCode,
-  NotificationDocument,
   PatchFieldCode,
   QuietHours,
   RuleConfig,
-  SeverityCode,
 } from "../lib/contracts";
 import { dictionary } from "../lib/i18n";
 import type { RulesScope } from "./HookRulesPage";
-
-const PREVIEW_DEBOUNCE_MS = 250;
-const MAX_PATTERN_CHARS = 512;
-
-interface SegmentOption<T> {
-  value: T;
-  label: string;
-  disabled?: boolean;
-  /** Screen-reader + hover explanation; keeps the accessible NAME untouched. */
-  tooltip?: string;
-}
-
-function Segmented<T extends string>({
-  label,
-  options,
-  current,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  options: SegmentOption<T>[];
-  current: T;
-  disabled?: boolean;
-  onChange: (value: T) => void;
-}): ReactNode {
-  const descPrefix = useId();
-  return (
-    <div className="seg" role="radiogroup" aria-label={label}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={option.value === current}
-          disabled={disabled || option.disabled}
-          aria-label={option.label}
-          aria-describedby={option.tooltip ? `${descPrefix}-${option.value}` : undefined}
-          title={option.tooltip}
-          className={`cc-focusable seg-item${option.value === current ? " seg-active" : ""}`}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-      {options
-        .filter((option) => option.tooltip)
-        .map((option) => (
-          <span key={option.value} id={`${descPrefix}-${option.value}`} className="sr-only">
-            {option.tooltip}
-          </span>
-        ))}
-    </div>
-  );
-}
-
-/** Bounded numeric input that commits ONCE on blur (or Enter) instead of per
- *  keystroke, so partial input like "3" never reaches the backend mid-typing.
- *  The typed text stays local until commit; an empty or unparseable edit
- *  reverts to the current value without saving. */
-function NumberField({
-  id,
-  label,
-  value,
-  min,
-  max,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  disabled: boolean;
-  onChange: (value: number) => void;
-}): ReactNode {
-  const [text, setText] = useState(() => String(value));
-  useEffect(() => {
-    setText(String(value));
-  }, [value]);
-  function commit(): void {
-    if (text.trim() === "") {
-      setText(String(value));
-      return;
-    }
-    const parsed = Number(text);
-    if (Number.isNaN(parsed)) {
-      setText(String(value));
-      return;
-    }
-    const next = Math.max(min, Math.min(max, Math.trunc(parsed)));
-    if (next !== value) {
-      onChange(next);
-    } else {
-      setText(String(value));
-    }
-  }
-  return (
-    <div>
-      <label htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type="number"
-        min={min}
-        max={max}
-        value={text}
-        disabled={disabled}
-        onChange={(event) => setText(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-/** Quiet-hours time input; commits only a complete HH:MM value on blur. */
-function TimeField({
-  id,
-  label,
-  value,
-  disabled,
-  onCommit,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  disabled: boolean;
-  onCommit: (value: string) => void;
-}): ReactNode {
-  const [text, setText] = useState(value);
-  useEffect(() => {
-    setText(value);
-  }, [value]);
-  return (
-    <div>
-      <label htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type="time"
-        value={text}
-        disabled={disabled}
-        onChange={(event) => setText(event.target.value)}
-        onBlur={() => {
-          // Partial ("22:0") or cleared values are reverted, never saved —
-          // the backend rejects them and would raise spurious alerts.
-          if (/^\d{2}:\d{2}$/.test(text)) {
-            if (text !== value) {
-              onCommit(text);
-            }
-          } else {
-            setText(value);
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-const WEEKDAY_LABELS_ZH = ["一", "二", "三", "四", "五", "六", "日"];
-const WEEKDAY_LABELS_EN = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+import { DrawerSection } from "./drawer/DrawerSection";
+import { SectionDelivery } from "./drawer/SectionDelivery";
+import { SectionEnabled } from "./drawer/SectionEnabled";
+import { SectionFilters } from "./drawer/SectionFilters";
+import { SectionPreview } from "./drawer/SectionPreview";
+import { SectionPrivacy } from "./drawer/SectionPrivacy";
+import { SectionQuietHours } from "./drawer/SectionQuietHours";
+import { SectionTargets } from "./drawer/SectionTargets";
 
 export function HookRuleDrawer({
   locale,
@@ -236,15 +75,10 @@ export function HookRuleDrawer({
     rule.config.privacy.extra_redaction_patterns.join(", "),
   );
   const [error, setError] = useState<string | null>(null);
-  const [sentOk, setSentOk] = useState(false);
-  const [sendDialogOpen, setSendDialogOpen] = useState(false);
-  const [sendChannelId, setSendChannelId] = useState<ChannelId | "">(
-    () => channels[0]?.id ?? "",
-  );
-  const [previewDoc, setPreviewDoc] = useState<NotificationDocument | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   /** Field whose override was last removed; surfaces one 继承全局 status. */
   const [resetFieldCode, setResetFieldCode] = useState<PatchFieldCode | null>(null);
+  /** 每次重同步 +1:让预览/回执分区复位到新规则视图(原语义)。 */
+  const [syncTick, setSyncTick] = useState(0);
 
   // Resync from the parent's fresh row (see the draft comment above).
   useEffect(() => {
@@ -262,42 +96,8 @@ export function HookRuleDrawer({
     // by the very reset that triggers this resync, and the drawer key already
     // remounts (fresh state) whenever agent/event/project change.
     setError(null);
-    setSentOk(false);
-    setPreviewDoc(null);
-    setPreviewError(null);
-    setSendChannelId(channels[0]?.id ?? "");
+    setSyncTick((tick) => tick + 1);
   }, [rule]);
-
-  // Debounced redacted preview: monotonic request id drops stale responses.
-  const requestSeq = useRef(0);
-  useEffect(() => {
-    const id = ++requestSeq.current;
-    const timer = setTimeout(() => {
-      backend
-        .previewNotification({
-          agent,
-          source_event: rule.source_event,
-          project_id: projectId,
-        })
-        .then((doc) => {
-          if (requestSeq.current === id) {
-            setPreviewDoc(doc);
-            setPreviewError(null);
-          }
-        })
-        .catch((e: unknown) => {
-          if (requestSeq.current === id) {
-            setPreviewDoc(null);
-            setPreviewError(e instanceof Error ? e.message : String(e));
-          }
-        });
-    }, PREVIEW_DEBOUNCE_MS);
-    return () => {
-      clearTimeout(timer);
-    };
-  // Deps deliberately exclude templateText/patternText: the preview shows the
-  // SAVED config (已保存配置的预览), so typing must not imply a refetch.
-  }, [backend, agent, rule.source_event, projectId]);
 
   function overridden(field: PatchFieldCode): boolean {
     return rule.patched_fields.includes(field);
@@ -368,28 +168,20 @@ export function HookRuleDrawer({
     quiet_hours: t.sectionQuietHours,
   };
 
-  function sectionHead(title: string, field: PatchFieldCode): ReactNode {
-    const resetLabel = `${t.resetInheritedPrefix}${title}${t.resetInheritedSuffix}`;
+  function section(field: PatchFieldCode, children: ReactNode): ReactNode {
     return (
-      <div className="drawer-section-head">
-        <h3>{title}</h3>
-        {isProject && overridden(field) && (
-          <>
-            <span className="tag tag-overridden">{t.sourceOverridden}</span>
-            <button
-              type="button"
-              className="icon-btn cc-focusable"
-              aria-label={resetLabel}
-              title={resetLabel}
-              onClick={() => {
-                void resetField(field);
-              }}
-            >
-              <RotateCcw size={14} aria-hidden="true" />
-            </button>
-          </>
-        )}
-      </div>
+      <DrawerSection
+        title={sectionTitles[field]}
+        isProject={isProject}
+        overridden={overridden(field)}
+        overriddenTagLabel={t.sourceOverridden}
+        resetLabel={`${t.resetInheritedPrefix}${sectionTitles[field]}${t.resetInheritedSuffix}`}
+        onReset={() => {
+          void resetField(field);
+        }}
+      >
+        {children}
+      </DrawerSection>
     );
   }
 
@@ -399,10 +191,7 @@ export function HookRuleDrawer({
     });
   }
 
-  const quiet = draft.quiet_hours;
-  const editable = rule.available;
-  const aggregateDisabled = rule.source_event === "PermissionRequest";
-  const weekdayLabels = locale === "en" ? WEEKDAY_LABELS_EN : WEEKDAY_LABELS_ZH;
+  const sectionCtx = { t, draft, editable: rule.available, mutate };
 
   return (
     <aside ref={asideRef} className="drawer" aria-label={rule.source_event}>
@@ -428,59 +217,21 @@ export function HookRuleDrawer({
         </p>
       )}
 
-      <section className="drawer-section">
-        {sectionHead(t.sectionEnabled, "enabled")}
-        <label className="check-row">
-          <input
-            type="checkbox"
-            role="switch"
-            aria-label={t.enableNotify}
-            checked={draft.enabled}
-            disabled={!editable}
-            onChange={(event) =>
-              mutate("enabled", (d) => {
-                d.enabled = event.target.checked;
-              })
-            }
-          />
-          <span>{t.enableNotify}</span>
-        </label>
-      </section>
+      {section("enabled", <SectionEnabled {...sectionCtx} />)}
 
-      <section className="drawer-section">
-        {sectionHead(t.sectionTargets, "targets")}
-        {channels.map((channel) => {
-          const checked = draft.targets.some((target) => target.channel_id === channel.id);
-          return (
-            <label key={channel.id} className="check-row">
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={!editable}
-                onChange={(event) =>
-                  mutate("targets", (d) => {
-                    d.targets = event.target.checked
-                      ? [...d.targets, { channel_id: channel.id, template: null }]
-                      : d.targets.filter((target) => target.channel_id !== channel.id);
-                  })
-                }
-              />
-              <span>{channel.name}</span>
-            </label>
-          );
-        })}
-        <label htmlFor="drawer-template">{t.channelTemplate}</label>
-        <textarea
-          id="drawer-template"
-          value={templateText}
-          disabled={!editable}
-          onChange={(event) => {
+      {section(
+        "targets",
+        <SectionTargets
+          {...sectionCtx}
+          channels={channels}
+          templateText={templateText}
+          onTemplateChange={(text) => {
             dirtyRef.current = true;
-            setTemplateText(event.target.value);
+            setTemplateText(text);
           }}
-          onBlur={() => {
+          onTemplateBlur={() => {
             const first = draft.targets[0];
-            if (!editable || !first || (first.template ?? "") === templateText) {
+            if (!rule.available || !first || (first.template ?? "") === templateText) {
               return;
             }
             mutate("targets", (d) => {
@@ -490,121 +241,27 @@ export function HookRuleDrawer({
               }
             });
           }}
-        />
-      </section>
+        />,
+      )}
 
-      <section className="drawer-section">
-        {sectionHead(t.sectionFilters, "filters")}
-        {(
-          [
-            ["tool_names", t.filterTools, ["Read", "Edit", "Write", "Bash"]],
-            ["event_subtypes", t.filterSubtypes, ["matcher", "timeout"]],
-            [
-              "permission_modes",
-              t.filterModes,
-              ["default", "acceptEdits", "plan", "bypassPermissions"],
-            ],
-            ["models", t.filterModels, ["opus", "sonnet", "haiku"]],
-            ["statuses", t.filterStatuses, ["success", "error"]],
-          ] as const
-        ).map(([key, label, presets]) => {
-          const selected = draft.filters[key];
-          const options = Array.from(new Set([...presets, ...selected]));
-          return (
-            <div key={key}>
-              <label htmlFor={`filter-${key}`}>{label}</label>
-              <select
-                id={`filter-${key}`}
-                multiple
-                size={Math.min(4, options.length)}
-                value={selected}
-                disabled={!editable}
-                aria-label={label}
-                onChange={(event) => {
-                  const chosen = Array.from(event.target.selectedOptions).map((o) => o.value);
-                  mutate("filters", (d) => {
-                    d.filters[key] = chosen;
-                  });
-                }}
-              >
-                {options.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </div>
-          );
-        })}
-      </section>
+      {section("filters", <SectionFilters {...sectionCtx} />)}
 
-      <section className="drawer-section">
-        {sectionHead(t.sectionPrivacy, "privacy")}
-        <fieldset>
-          <legend>{t.allowedFields}</legend>
-          {rule.input_fields.map((field) => (
-            <label key={field.name} className="check-row">
-              <input
-                type="checkbox"
-                checked={draft.privacy.allowed_sensitive_fields.includes(field.name)}
-                disabled={!editable}
-                onChange={(event) =>
-                  mutate("privacy", (d) => {
-                    d.privacy.allowed_sensitive_fields = event.target.checked
-                      ? [...d.privacy.allowed_sensitive_fields, field.name]
-                      : d.privacy.allowed_sensitive_fields.filter((name) => name !== field.name);
-                  })
-                }
-              />
-              <span>{field.name}</span>
-            </label>
-          ))}
-        </fieldset>
-        <NumberField
-          id="drawer-max-body"
-          label={t.maxBodyChars}
-          min={0}
-          max={4000}
-          value={draft.privacy.max_body_chars}
-          disabled={!editable}
-          onChange={(v) =>
-            mutate("privacy", (d) => {
-              d.privacy.max_body_chars = v;
-            })
-          }
-        />
-        <div>
-          <span className="field-label">{t.summaryMode}</span>
-          <Segmented
-            label={t.summaryMode}
-            current={draft.privacy.summary_mode}
-            disabled={!editable}
-            options={[
-              { value: "metadata_only", label: t.metadataOnly },
-              { value: "native_summary", label: t.nativeSummary },
-            ]}
-            onChange={(value) =>
-              mutate("privacy", (d) => {
-                d.privacy.summary_mode = value;
-              })
-            }
-          />
-        </div>
-        <label htmlFor="drawer-patterns">{t.extraPatterns}</label>
-        <input
-          id="drawer-patterns"
-          value={patternText}
-          disabled={!editable}
-          onChange={(event) => {
+      {section(
+        "privacy",
+        <SectionPrivacy
+          {...sectionCtx}
+          ruleInputFields={rule.input_fields}
+          patternText={patternText}
+          onPatternChange={(text) => {
             dirtyRef.current = true;
-            setPatternText(event.target.value);
+            setPatternText(text);
           }}
-          onBlur={() => {
+          onPatternBlur={() => {
             const patterns = patternText
               .split(",")
               .map((p) => p.trim())
               .filter((p) => p !== "");
-            if (patterns.some((p) => p.length > MAX_PATTERN_CHARS)) {
+            if (patterns.some((p) => p.length > 512)) {
               setError(t.patternTooLong);
               return;
             }
@@ -616,315 +273,41 @@ export function HookRuleDrawer({
               d.privacy.extra_redaction_patterns = patterns;
             });
           }}
-        />
-      </section>
+        />,
+      )}
 
-      <section className="drawer-section">
-        {sectionHead(t.sectionDelivery, "delivery")}
-        <div>
-          <span className="field-label">{t.deliveryMode}</span>
-          <Segmented
-            label={t.deliveryMode}
-            current={draft.delivery.mode.mode}
-            disabled={!editable}
-            options={[
-              { value: "immediate", label: t.immediate },
-              {
-                value: "aggregate",
-                label: t.aggregate,
-                disabled: aggregateDisabled,
-                tooltip: aggregateDisabled ? t.aggregateDisabledTooltip : undefined,
-              },
-            ]}
-            onChange={(value) =>
-              mutate("delivery", (d) => {
-                d.delivery.mode =
-                  value === "immediate"
-                    ? { mode: "immediate" }
-                    : {
-                        mode: "aggregate",
-                        window_seconds:
-                          d.delivery.mode.mode === "aggregate" ? d.delivery.mode.window_seconds : 60,
-                      };
-              })
-            }
-          />
-        </div>
-        {draft.delivery.mode.mode === "aggregate" && (
-          <NumberField
-            id="drawer-aggregate-window"
-            label={t.aggregateWindow}
-            min={10}
-            max={3600}
-            value={
-              draft.delivery.mode.mode === "aggregate" ? draft.delivery.mode.window_seconds : 60
-            }
-            disabled={!editable}
-            onChange={(v) =>
-              mutate("delivery", (d) => {
-                if (d.delivery.mode.mode === "aggregate") {
-                  d.delivery.mode.window_seconds = v;
-                }
-              })
-            }
-          />
-        )}
-        <NumberField
-          id="drawer-cooldown"
-          label={t.cooldown}
-          min={0}
-          max={86_400}
-          value={draft.delivery.cooldown_seconds}
-          disabled={!editable}
-          onChange={(v) =>
-            mutate("delivery", (d) => {
-              d.delivery.cooldown_seconds = v;
-            })
-          }
-        />
-        <NumberField
-          id="drawer-window-cap"
-          label={t.windowCap}
-          min={1}
-          max={100}
-          value={draft.delivery.max_per_window}
-          disabled={!editable}
-          onChange={(v) =>
-            mutate("delivery", (d) => {
-              d.delivery.max_per_window = v;
-            })
-          }
-        />
-        <NumberField
-          id="drawer-stat-window"
-          label={t.statWindow}
-          min={1}
-          max={86_400}
-          value={draft.delivery.window_seconds}
-          disabled={!editable}
-          onChange={(v) =>
-            mutate("delivery", (d) => {
-              d.delivery.window_seconds = v;
-            })
-          }
-        />
-        <NumberField
-          id="drawer-ttl"
-          label={t.ttl}
-          min={1}
-          max={86_400}
-          value={draft.delivery.ttl_seconds}
-          disabled={!editable}
-          onChange={(v) =>
-            mutate("delivery", (d) => {
-              d.delivery.ttl_seconds = v;
-            })
-          }
-        />
-        <NumberField
-          id="drawer-max-attempts"
-          label={t.maxAttempts}
-          min={1}
-          max={10}
-          value={draft.delivery.max_attempts}
-          disabled={!editable}
-          onChange={(v) =>
-            mutate("delivery", (d) => {
-              d.delivery.max_attempts = v;
-            })
-          }
-        />
-        <div>
-          <span className="field-label">{t.quietBehavior}</span>
-          <Segmented
-            label={t.quietBehavior}
-            current={draft.delivery.quiet_behavior}
-            disabled={!editable}
-            options={[
-              { value: "suppress", label: t.suppress },
-              { value: "defer", label: t.defer },
-            ]}
-            onChange={(value) =>
-              mutate("delivery", (d) => {
-                d.delivery.quiet_behavior = value;
-              })
-            }
-          />
-        </div>
-      </section>
+      {section(
+        "delivery",
+        <SectionDelivery
+          {...sectionCtx}
+          aggregateDisabled={rule.source_event === "PermissionRequest"}
+        />,
+      )}
 
-      <section className="drawer-section">
-        {sectionHead(t.sectionQuietHours, "quiet_hours")}
-        <label className="check-row">
-          <input
-            type="checkbox"
-            role="switch"
-            aria-label={t.quietEnable}
-            checked={quiet !== null}
-            disabled={!editable}
-            onChange={(event) => {
-              commitQuietHours(
-                event.target.checked
-                  ? (quiet ?? {
-                      start_local: "22:00",
-                      end_local: "08:00",
-                      weekdays: [1, 2, 3, 4, 5],
-                      bypass_at_or_above: null,
-                    })
-                  : null,
-              );
-            }}
-          />
-          <span>{t.quietEnable}</span>
-        </label>
-        {quiet !== null && (
-          <>
-            <TimeField
-              id="drawer-quiet-start"
-              label={t.quietStart}
-              value={quiet.start_local}
-              disabled={!editable}
-              onCommit={(value) => commitQuietHours({ ...quiet, start_local: value })}
-            />
-            <TimeField
-              id="drawer-quiet-end"
-              label={t.quietEnd}
-              value={quiet.end_local}
-              disabled={!editable}
-              onCommit={(value) => commitQuietHours({ ...quiet, end_local: value })}
-            />
-            <fieldset>
-              <legend>{t.quietWeekdays}</legend>
-              {weekdayLabels.map((dayLabel, index) => {
-                const weekday = index + 1;
-                return (
-                  <label key={weekday} className="weekday">
-                    <input
-                      type="checkbox"
-                      checked={quiet.weekdays.includes(weekday)}
-                      disabled={!editable}
-                      onChange={(event) =>
-                        commitQuietHours({
-                          ...quiet,
-                          weekdays: event.target.checked
-                            ? [...quiet.weekdays, weekday].sort((a, b) => a - b)
-                            : quiet.weekdays.filter((day) => day !== weekday),
-                        })
-                      }
-                    />
-                    <span>{dayLabel}</span>
-                  </label>
-                );
-              })}
-            </fieldset>
-            <label htmlFor="drawer-bypass">{t.bypassSeverity}</label>
-            <select
-              id="drawer-bypass"
-              value={quiet.bypass_at_or_above ?? ""}
-              disabled={!editable}
-              onChange={(event) => {
-                const value = event.target.value;
-                commitQuietHours({
-                  ...quiet,
-                  bypass_at_or_above: (value === "" ? null : value) as SeverityCode | null,
-                });
-              }}
-            >
-              <option value="">{t.bypassNone}</option>
-              <option value="info">info</option>
-              <option value="warning">warning</option>
-              <option value="error">error</option>
-              <option value="critical">critical</option>
-            </select>
-          </>
-        )}
-      </section>
+      {section(
+        "quiet_hours",
+        <SectionQuietHours
+          t={t}
+          quiet={draft.quiet_hours}
+          editable={rule.available}
+          locale={locale}
+          onQuietChange={commitQuietHours}
+        />,
+      )}
 
       <section className="drawer-section">
         <h3>{t.previewTitle}</h3>
-        {previewError !== null && <p role="alert">{previewError}</p>}
-        {previewDoc !== null && (
-          <div className="preview-doc">
-            <p className="preview-title">{previewDoc.title}</p>
-            <ul>
-              {previewDoc.facts.map(([name, value]) => (
-                <li key={name}>
-                  {name}: {value}
-                </li>
-              ))}
-            </ul>
-            <pre>{previewDoc.body}</pre>
-            {previewDoc.footer !== null && <p className="muted">{previewDoc.footer}</p>}
-          </div>
-        )}
-        {sentOk && <p className="muted">{t.sentOk}</p>}
-        <button
-          type="button"
-          className="cc-focusable"
-          disabled={!editable || channels.length === 0}
-          onClick={() => setSendDialogOpen(true)}
-        >
-          <Send size={14} aria-hidden="true" /> {t.sendTestAction}
-        </button>
+        <SectionPreview
+          t={t}
+          agent={agent}
+          sourceEvent={rule.source_event}
+          projectId={projectId}
+          editable={rule.available}
+          channels={channels}
+          resetTick={syncTick}
+          onError={setError}
+        />
       </section>
-
-      {sendDialogOpen && sendChannelId !== "" && (
-        <div className="dialog-overlay">
-          <div
-            role="dialog"
-            aria-label={`${t.sendConfirmTitle}「${
-              channels.find((c) => c.id === sendChannelId)?.name ?? ""
-            }」`}
-            className="dialog"
-          >
-            <h2>
-              {t.sendConfirmTitle}「{channels.find((c) => c.id === sendChannelId)?.name ?? ""}」
-            </h2>
-            {channels.map((channel) => (
-              <label key={channel.id} className="check-row">
-                <input
-                  type="radio"
-                  name="send-test-channel"
-                  checked={sendChannelId === channel.id}
-                  onChange={() => setSendChannelId(channel.id)}
-                />
-                <span>{channel.name}</span>
-              </label>
-            ))}
-            <div className="row-end">
-              <button
-                type="button"
-                className="cc-focusable"
-                onClick={() => setSendDialogOpen(false)}
-              >
-                {t.cancel}
-              </button>
-              <button
-                type="button"
-                className="primary cc-focusable"
-                onClick={() => {
-                  backend
-                    .sendRuleTest({
-                      agent,
-                      source_event: rule.source_event,
-                      channel_id: sendChannelId as ChannelId,
-                    })
-                    .then(() => {
-                      setSendDialogOpen(false);
-                      setSentOk(true);
-                    })
-                    .catch((e: unknown) => {
-                      setSendDialogOpen(false);
-                      setError(e instanceof Error ? e.message : String(e));
-                    });
-                }}
-              >
-                {t.confirmSend}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }
