@@ -42,12 +42,15 @@ export function ChannelsPage({
   locale = "zh_cn",
   backend: injected,
   variant = "full",
+  showHeading = true,
 }: {
   locale?: LocaleCode;
   backend?: Backend;
   /** full = 表格+表单(默认);manage = 仅表格与凭据替换(集成页);
    *  add = 仅添加表单(设置页,用户裁决的拆分)。 */
   variant?: "full" | "manage" | "add";
+  /** 集成页内嵌时隐藏自身标题(区块标题「通知去向」已承担层级)。 */
+  showHeading?: boolean;
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
@@ -177,7 +180,7 @@ export function ChannelsPage({
 
   return (
     <section aria-label={t.navChannels}>
-      {showTable && <h2>{t.navChannels}</h2>}
+      {showTable && showHeading && <h2>{t.navChannels}</h2>}
 
       {showAddEntry && (
         <div className="rules-toolbar">

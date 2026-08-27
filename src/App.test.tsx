@@ -12,7 +12,12 @@ test("renders the app shell at the saved page when bootstrap is complete", async
   // v1 的 "channels" 读时迁移到 v2 的 "integrations"。
   localStorage.setItem("cc-reminder:last-page", "channels");
   render(<TestApp backend={configuredBackend()} />);
-  expect(await screen.findByRole("heading", { name: "Agent 集成" })).toBeVisible();
+  // 落点以导航当前项断言(集成页内嵌标题已隐藏)。
+  await screen.findByRole("heading", { name: "通知来源" });
+  expect(screen.getByRole("button", { name: "集成" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   localStorage.removeItem("cc-reminder:last-page");
 });
 

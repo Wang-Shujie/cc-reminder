@@ -24,10 +24,10 @@ export function IntegrationsPage({
   return (
     <section aria-label={t.navIntegrations}>
       <h2>{t.tabSources}</h2>
-      <AgentsPage locale={locale} backend={injected} />
+      <AgentsPage locale={locale} backend={injected} showHeading={false} />
 
       <h2 className="integrations-gap">{t.tabDestinations}</h2>
-      <ChannelsPage locale={locale} backend={injected} variant="manage" />
+      <ChannelsPage locale={locale} backend={injected} variant="manage" showHeading={false} />
       <button
         type="button"
         className="cc-focusable link-arrow"

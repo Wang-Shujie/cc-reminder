@@ -512,7 +512,7 @@ const zhCn: Dictionary = {
   templateLabel: "通知模板",
   templateHelp:
     "留空使用统一默认格式(标题 + 字段列表 + 摘要)。自定义变量:{{agent.name}} {{agent.version}} {{event.label}} {{event.name}} {{event.status}} {{project.name}} {{event.summary}} {{event.occurred_at}}",
-  templatePlaceholder: "[{{agent.name}}] {{event.label}}\n项目:{{project.name}}\n状态:{{event.status}}\n摘要:{{event.summary}}\n时间:{{event.occurred_at}}",
+  templatePlaceholder: "例:[{{agent.name}}] {{event.label}}(留空 = 统一默认)",
   templateReset: "恢复默认",
   guideToggle: "如何获取 Webhook?",
   guideDingTalk:
@@ -852,7 +852,7 @@ const en: Dictionary = {
   templateLabel: "Notification template",
   templateHelp:
     "Empty = the unified default (title + field list + summary). Variables: {{agent.name}} {{agent.version}} {{event.label}} {{event.name}} {{event.status}} {{project.name}} {{event.summary}} {{event.occurred_at}}",
-  templatePlaceholder: "[{{agent.name}}] {{event.label}}\nProject: {{project.name}}\nStatus: {{event.status}}\nSummary: {{event.summary}}\nTime: {{event.occurred_at}}",
+  templatePlaceholder: "e.g. [{{agent.name}}] {{event.label}} (empty = unified default)",
   templateReset: "Reset to default",
   guideToggle: "How do I get a Webhook?",
   guideDingTalk:

@@ -10,6 +10,7 @@ import {
   testChannelSummary,
   type FakeBackend,
 } from "../../test/TestApp";
+import type { Backend } from "../../lib/backend";
 import { HistoryPage } from "./HistoryPage";
 
 import type {
@@ -367,4 +368,32 @@ test("the drawer ignores a late response for a previously opened event", async (
   });
   expect(dialog).toHaveTextContent("快速详情");
   expect(dialog).not.toHaveTextContent("[REDACTED]");
+});
+
+test("queue-changed refreshes the visible rows in place (结果列实时性)", async () => {
+  // 用户反馈:投递状态迁移后「结果」列不更新,只有重载表格才变。
+  const backend = historyBackend([stopFailure()]);
+  render(<HistoryPage backend={backend} />);
+  await screen.findByRole("table");
+  let overriddenCalls = 0;
+
+  // 投递完成:同一事件的结果从 failed 迁移到 succeeded(worker 侧状态迁移,
+  // 以 queue-changed 广播)。listHistory 为只读属性,经 Object.assign 覆盖。
+  Object.assign(backend, {
+    listHistory: async (_input?: ListHistoryInput): Promise<HistoryPageDto> => {
+      overriddenCalls += 1;
+      return {
+        items: [{ ...stopFailure(), delivery_status: "succeeded" }],
+        next_offset: null,
+      };
+    },
+  });
+  act(() => {
+    backend.emit("core://queue-changed", { revision: 9 });
+  });
+
+  // 原位刷新:行内容更新(failed → 已成功)。
+  await waitFor(() => expect(overriddenCalls).toBeGreaterThan(0));
+  await waitFor(() => expect(screen.getAllByText("已成功").length).toBeGreaterThan(0));
+  expect(screen.getByRole("status")).toHaveTextContent("通知历史已更新。(#9)");
 });

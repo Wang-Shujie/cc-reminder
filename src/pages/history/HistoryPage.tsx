@@ -13,6 +13,7 @@ import { X } from "lucide-react";
 import { usePageBackend, type Backend } from "../../lib/backend";
 import { errorOf, type PageError } from "../../lib/errors";
 import type {
+  CoreEventName,
   DeliveryStatusCode,
   HistoryItem,
   ListHistoryInput,
@@ -175,6 +176,37 @@ export function HistoryPage({
     [backend, filters],
   );
 
+  /// 原位刷新:按当前已加载行数重取,分页位置与「加载更多」链不变。
+  /// 投递状态(结果列)由 worker 在每次发送完成后以 queue-changed 推送,
+  /// 本方法是其与 history-changed 共用的刷新入口。
+  const refreshVisible = useCallback(
+    async (): Promise<boolean> => {
+      const seq = ++seqRef.current;
+      const count = items === null || items.length === 0 ? PAGE_SIZE : items.length;
+      try {
+        const page = await backend.listHistory({
+          ...filterInput(filters),
+          offset: 0,
+          limit: count,
+        });
+        if (seq !== seqRef.current) {
+          return false;
+        }
+        setItems(page.items);
+        setNextOffset(page.next_offset);
+        setLoadError(null);
+        return true;
+      } catch (e: unknown) {
+        if (seq !== seqRef.current) {
+          return false;
+        }
+        setLoadError(errorOf(e));
+        return false;
+      }
+    },
+    [backend, filters, items],
+  );
+
   useEffect(() => {
     void load(0, false);
   }, [load]);
@@ -198,21 +230,31 @@ export function HistoryPage({
     };
   }, [backend]);
 
-  // Background refresh on core pushes: refetch page one politely.
+  // Background refresh on core pushes: history-changed = 新事件/清空;
+  // queue-changed = 投递状态迁移(发送完成/失败/重试排队)——「结果」列
+  // 的实时性来源(用户反馈:此前仅在重载表格后才更新)。
   useEffect(() => {
-    const subscription = backend.subscribe("core://history-changed", (revision: number) => {
-      load(0, false)
-        .then((applied) => {
-          if (applied) {
-            setBgNotice(`${t.historyUpdated}(#${revision})`);
-          }
-        })
-        .catch(() => {});
-    });
+    const topics: CoreEventName[] = [
+      "core://history-changed",
+      "core://queue-changed",
+    ];
+    const subscriptions = topics.map((topic) =>
+      backend.subscribe(topic, (revision: number) => {
+        refreshVisible()
+          .then((applied) => {
+            if (applied) {
+              setBgNotice(`${t.historyUpdated}(#${revision})`);
+            }
+          })
+          .catch(() => {});
+      }),
+    );
     return () => {
-      subscription.then((unlisten) => unlisten()).catch(() => {});
+      for (const subscription of subscriptions) {
+        subscription.then((unlisten) => unlisten()).catch(() => {});
+      }
     };
-  }, [backend, load, t.historyUpdated]);
+  }, [backend, refreshVisible, t.historyUpdated]);
 
   // Focus moves into the drawer once it opens. The request id is checked on
   // resolution so switching drawers discards the previous event's response.

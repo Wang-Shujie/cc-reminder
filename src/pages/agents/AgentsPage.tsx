@@ -81,9 +81,12 @@ interface Busy {
 export function AgentsPage({
   locale = "zh_cn",
   backend: injected,
+  showHeading = true,
 }: {
   locale?: LocaleCode;
   backend?: Backend;
+  /** 集成页内嵌时隐藏自身标题(区块标题「通知来源」已承担层级)。 */
+  showHeading?: boolean;
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
@@ -208,7 +211,7 @@ export function AgentsPage({
 
   return (
     <section aria-label={t.navAgents}>
-      <h2>{t.navAgents}</h2>
+      {showHeading && <h2>{t.navAgents}</h2>}
 
       <div className="rules-toolbar">
         <div className="rules-toolbar-controls">

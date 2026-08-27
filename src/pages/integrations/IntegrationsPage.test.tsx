@@ -17,8 +17,10 @@ test("destinations keep the full channel table; add jumps to settings", async ()
     </BackendProvider>,
   );
   expect(await screen.findByRole("heading", { name: "通知来源" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Agent 集成" })).toBeVisible();
+  // 双标题修复(用户裁决):内嵌页自身标题隐藏,仅区块标题承担层级。
+  expect(screen.queryByRole("heading", { name: "Agent 集成" })).toBeNull();
   expect(screen.getByRole("heading", { name: "通知去向" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "渠道" })).toBeNull();
   // 图1形态:完整渠道统计表(名称/凭据/状态/上次成功/操作)。
   expect(await screen.findByRole("cell", { name: "值班群" })).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "上次成功" })).toBeVisible();
