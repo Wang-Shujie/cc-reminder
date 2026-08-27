@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Unlink } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
+import { useCoreQuery } from "../lib/useCoreQuery";
 import { errorOf, type PageError } from "../lib/errors";
 import type {
   AgentKindCode,
@@ -50,57 +51,54 @@ export function ProjectsPage({
   const t = dictionary(locale);
   const pickFolder = dialog ?? nativeFolderPicker;
 
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [agentFilter, setAgentFilter] = useState<"all" | AgentKindCode>("all");
   const [modal, setModal] = useState<AddModalState | null>(null);
   const [choice, setChoice] = useState<WorktreeModeCode>("alias");
   const [nameDraft, setNameDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<PageError | null>(null);
-  /** Initial load of the PRIMARY list (list_projects) failed. */
-  const [loadFailed, setLoadFailed] = useState(false);
   const [confirmRemovePath, setConfirmRemovePath] = useState<{
     path_id: string;
     path: string;
   } | null>(null);
 
-  /** Per-project override rows fetched for BOTH agents so the Agent column
-   *  shows who overrides while the count follows the selected agent. */
-  const [overrides, setOverrides] = useState<
-    Record<string, Partial<Record<AgentKindCode, number>>>
-  >({});
-
-  const refresh = useCallback(async (): Promise<void> => {
-    const list = await backend.listProjects();
-    setProjects(list);
-    const scopes: ListHookRulesInput[] = list.flatMap((project) =>
-      AGENTS.map((agent) => ({ agent, project_id: project.id })),
-    );
-    const ruleLists = await Promise.all(
-      scopes.map((scope) => backend.listHookRules(scope).catch(() => [])),
-    );
-    const next: typeof overrides = {};
-    scopes.forEach((scope, index) => {
-      const count = (ruleLists[index] ?? []).filter(
-        (row) => row.patched_fields.length > 0,
-      ).length;
-      next[scope.project_id as string] = {
-        ...next[scope.project_id as string],
-        [scope.agent]: count,
-      };
-    });
-    setOverrides(next);
-  }, [backend]);
-
-  useEffect(() => {
-    refresh()
-      .then(() => setLoadFailed(false))
-      .catch(() => {
-        // Surface the failure instead of silently showing an empty list.
-        setProjects([]);
-        setLoadFailed(true);
+  /** 统一请求层(架构提案 §1):列表 + 双 Agent 覆盖计数一次取回;
+   *  规则保存触发的 health-changed 令覆盖计数自动保持新鲜。失败语义
+   *  保持"空表 + 显式告警"。 */
+  const projectsQuery = useCoreQuery(
+    async (b) => {
+      const list = await b.listProjects();
+      const scopes: ListHookRulesInput[] = list.flatMap((project) =>
+        AGENTS.map((agent) => ({ agent, project_id: project.id })),
+      );
+      const ruleLists = await Promise.all(
+        scopes.map((scope) => b.listHookRules(scope).catch(() => [])),
+      );
+      const overrides: Record<
+        string,
+        Partial<Record<AgentKindCode, number>>
+      > = {};
+      scopes.forEach((scope, index) => {
+        const count = (ruleLists[index] ?? []).filter(
+          (row) => row.patched_fields.length > 0,
+        ).length;
+        overrides[scope.project_id as string] = {
+          ...overrides[scope.project_id as string],
+          [scope.agent]: count,
+        };
       });
-  }, [refresh]);
+      return { list, overrides };
+    },
+    [],
+    ["core://health-changed"],
+    backend,
+  );
+  const projects: ProjectSummary[] | null = projectsQuery.failed
+    ? []
+    : (projectsQuery.data?.list ?? null);
+  const overrides = projectsQuery.data?.overrides ?? {};
+  const loadFailed = projectsQuery.failed;
+  const refresh = projectsQuery.refresh;
 
   async function addProject(): Promise<void> {
     setError(null);
