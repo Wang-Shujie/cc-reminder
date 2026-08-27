@@ -2,10 +2,11 @@
 // credential-replace mode — never a card inside a card). Saved credentials are
 // never placed into an input or any DOM node: the read model carries only
 // `credential_present`, and the Webhook input always starts empty.
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../lib/backend";
+import { useCoreQuery } from "../lib/useCoreQuery";
 import { errorOf, type PageError } from "../lib/errors";
 import type {
   ChannelId,
@@ -50,7 +51,19 @@ export function ChannelsPage({
 }): ReactNode {
   const backend = usePageBackend(injected);
   const t = dictionary(locale);
-  const [channels, setChannels] = useState<ChannelSummary[] | null>(null);
+  // 统一请求层(架构提案 §1):渠道表随 health-changed(渠道暂停/恢复)
+  // 自动刷新;失败语义保持"空表 + 显式告警"。
+  const channelsQuery = useCoreQuery(
+    (b) => b.listChannels(),
+    [],
+    ["core://health-changed"],
+    backend,
+  );
+  const channels: ChannelSummary[] | null = channelsQuery.failed
+    ? []
+    : channelsQuery.data;
+  const loadFailed = channelsQuery.failed;
+  const refresh = channelsQuery.refresh;
   const [editingId, setEditingId] = useState<ChannelId | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -61,27 +74,11 @@ export function ChannelsPage({
   const [testConfirm, setTestConfirm] = useState<ChannelSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<ChannelSummary | null>(null);
   const [error, setError] = useState<PageError | null>(null);
-  /** Initial load of the PRIMARY list (list_channels) failed. */
-  const [loadFailed, setLoadFailed] = useState(false);
   const [receipts, setReceipts] = useState<
     Record<string, DeliveryReceiptDto & { at: Date }>
   >({});
 
   const editing = editingId === null ? null : (channels ?? []).find((c) => c.id === editingId) ?? null;
-
-  const refresh = useCallback(async (): Promise<void> => {
-    setChannels(await backend.listChannels());
-  }, [backend]);
-
-  useEffect(() => {
-    refresh()
-      .then(() => setLoadFailed(false))
-      .catch(() => {
-        // Surface the failure instead of silently showing an empty list.
-        setChannels([]);
-        setLoadFailed(true);
-      });
-  }, [refresh]);
 
   function startAdd(): void {
     setEditingId(null);
