@@ -560,6 +560,33 @@ export function SettingsPage({
           locale={locale}
         />
       </div>
+
+      {/* 诊断/清空:网格末行宽位,右对齐,不再悬浮于版式之外。 */}
+      <div className="settings-footer">
+        {exportStatus !== null && (
+          <p role="status" className="muted">
+            {exportStatus}
+          </p>
+        )}
+        <button
+          type="button"
+          className="cc-focusable"
+          onClick={() => {
+            void exportDiagnostics();
+          }}
+        >
+          {t.exportDiagnostics}
+        </button>
+        <button
+          type="button"
+          className="cc-focusable"
+          onClick={() => {
+            setClearConfirmOpen(true);
+          }}
+        >
+          {t.clearHistory}
+        </button>
+      </div>
       </div>
 
       {installConfirmOpen && (
@@ -596,31 +623,6 @@ export function SettingsPage({
         </div>
       )}
 
-      <div className="row-end">
-        {exportStatus !== null && (
-          <p role="status" className="muted">
-            {exportStatus}
-          </p>
-        )}
-        <button
-          type="button"
-          className="cc-focusable"
-          onClick={() => {
-            void exportDiagnostics();
-          }}
-        >
-          {t.exportDiagnostics}
-        </button>
-        <button
-          type="button"
-          className="cc-focusable"
-          onClick={() => {
-            setClearConfirmOpen(true);
-          }}
-        >
-          {t.clearHistory}
-        </button>
-      </div>
       {clearConfirmOpen && (
         <div className="dialog-overlay" role="presentation">
           <div className="dialog" role="dialog" aria-modal="true" aria-label={t.clearHistory}>
