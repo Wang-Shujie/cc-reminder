@@ -42,7 +42,10 @@
 - **输入域**:实底白场细描边 r-sm;聚焦=accent 描边+3px 25% 光环晕开;search 独立胶囊(focus-within 生效于容器);select 自绘 chevron,**[multiple]/[size] 交还原生形态**(抽屉多选列表是 select 的原生形态而非下拉,实测教训)。
 - **表格卡**:border-separate+r-md 角单元格裁圆;th sticky+毛玻璃;background 由 td content+padding 决定高度(**固定 height 会钳死换行 flex 内容越界绘制**,实测教训);hazard 失败行 = err-dot 9% 整行薄染 + 入场一次性 wash-in 淡染(黄黑警戒带已废除)。
 - **徽章**:pill 淡票 hairline;inherited 变透明次级墨。
-- **工作台**:metric-strip auto-fit 网格白卡(hover 抬升 translateY(-1px)),"上次成功"通栏 caption 行收尾;log-pane 仅布局容器,history-body 内部滚动。
+- **工作台**:metric-strip auto-fit 网格白卡(minmax 125px——五卡在 960 最小窗宽单行;hover 抬升 translateY(-1px)),"上次成功"通栏 caption 行收尾;log-pane 仅布局容器,history-body 内部滚动。
+- **规则页表格壳**:.table-scroll 独立滚动圆角卡吃掉工具栏以下余量,吸顶表头只允许在专属滚动壳内(主滚动区 padding 带会让越顶行露在吸顶行上方——实机截图 bug 的根因)。
+- **历史页**:预设胶囊 + 行内筛选(Agent 渠道下拉 + Hook 从规则目录级联下拉)+ 居中翻页三件套(上一页/页码/下一页,后端游标无总数故只报当前页序号)。
+- **设置页(2026-08-27 用户裁决)**:全部模块只有两种宽度——窄卡占一列,宽卡横跨两列且两端与两张窄卡对齐;行内等高,间隙统一 16px;通知模板占宽位,诊断/清空动作收进网格末行宽位。
 - **抽屉 sheet**:fixed 右侧 400px 白面 md 大影,sheet-in 240ms ease-out-quart(translateX 36→0+fade);头部 sticky 毛玻璃。
 - **对话框**:34% 黑罩+blur(6px);卡片 r-lg pop-in 240ms spring(scale .92→1);overlay fade 200ms。
 - **空态**:回归安静 muted 文本(v2 的刻度线装饰已废)。
