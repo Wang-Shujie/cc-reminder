@@ -292,6 +292,8 @@ export interface Dictionary {
   unmatchedProject: string;
   // Settings page (Task 19)
   sectionStartup: string;
+  sectionLanguageTheme: string;
+  sectionDebugUpdate: string;
   autostartLabel: string;
   closeToTrayLabel: string;
   languageLabel: string;
@@ -629,6 +631,8 @@ const zhCn: Dictionary = {
   unmatchedProject: "未匹配项目",
   // Settings page (Task 19)
   sectionStartup: "启动与窗口",
+  sectionLanguageTheme: "语言与主题",
+  sectionDebugUpdate: "调试与更新",
   autostartLabel: "开机启动",
   closeToTrayLabel: "关闭时最小化到托盘",
   languageLabel: "语言",
@@ -977,6 +981,8 @@ const en: Dictionary = {
   unmatchedProject: "Unmatched project",
   // Settings page (Task 19)
   sectionStartup: "Startup and window",
+  sectionLanguageTheme: "Language & theme",
+  sectionDebugUpdate: "Debugging & updates",
   autostartLabel: "Launch at login",
   closeToTrayLabel: "Close to tray",
   languageLabel: "Language",

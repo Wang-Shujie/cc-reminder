@@ -415,10 +415,12 @@ export function SettingsPage({
         </label>
       </div>
 
-      {/* Language */}
+      {/* 语言 + 主题合并(2026-08-28 用户裁决):一张卡,字段标签各自可读。 */}
       <div className="settings-section">
-        <h2>{t.languageLabel}</h2>
-        <label htmlFor="settings-language">{t.languageLabel}</label>
+        <h2>{t.sectionLanguageTheme}</h2>
+        <label className="field-label" htmlFor="settings-language">
+          {t.languageLabel}
+        </label>
         <select
           id="settings-language"
           value={uiLocale}
@@ -434,35 +436,35 @@ export function SettingsPage({
         {/* The applied locale comes from bootstrap; a changed one needs a
             restart, so say so instead of silently doing nothing. */}
         {hydrated && uiLocale !== locale && <p className="muted">{t.localeRestartHint}</p>}
-      </div>
-
-      {/* Theme */}
-      <div className="settings-section" role="radiogroup" aria-label={t.themeLabel}>
-        <h2>{t.themeLabel}</h2>
-        {(["system", "light", "dark"] as const).map((code) => (
-          <label key={code} className="check-row">
-            <input
-              type="radio"
-              name="settings-theme"
-              aria-label={
-                code === "system" ? t.themeSystem : code === "light" ? t.themeLight : t.themeDark
-              }
-              checked={theme === code}
-              disabled={!hydrated}
-              onChange={() => {
-                applyTheme(code);
-                scheduleSave(true, { theme: code });
-              }}
-            />
-            <span>
-              {code === "system"
-                ? t.themeSystem
-                : code === "light"
-                  ? t.themeLight
-                  : t.themeDark}
-            </span>
-          </label>
-        ))}
+        <div role="radiogroup" aria-label={t.themeLabel}>
+          <span className="field-label">{t.themeLabel}</span>
+          <div>
+            {(["system", "light", "dark"] as const).map((code) => (
+              <label key={code} className="check-row">
+                <input
+                  type="radio"
+                  name="settings-theme"
+                  aria-label={
+                    code === "system" ? t.themeSystem : code === "light" ? t.themeLight : t.themeDark
+                  }
+                  checked={theme === code}
+                  disabled={!hydrated}
+                  onChange={() => {
+                    applyTheme(code);
+                    scheduleSave(true, { theme: code });
+                  }}
+                />
+                <span>
+                  {code === "system"
+                    ? t.themeSystem
+                    : code === "light"
+                      ? t.themeLight
+                      : t.themeDark}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Retention */}
@@ -505,6 +507,26 @@ export function SettingsPage({
         />
         {/* 自动保存:无保存按钮(2026-08-28);Enter 立即存一次。 */}
       </form>
+
+      {/* Credential store disclosure(条件卡,排在调试与更新前以成对填满网格) */}
+      {storeIssues.length > 0 && (
+        <div className="settings-section">
+          <h2>{t.credentialStoreSection}</h2>
+          <ul className="issue-list">
+            {storeIssues.map((issue) => (
+              <li key={`${issue.issue_code}:${issue.message}`}>
+                <span>{issue.message}</span>
+                {issue.suggested_action !== null && (
+                  <span className="muted">{issue.suggested_action}</span>
+                )}
+                {issue.suggested_command !== null && (
+                  <code className="inline-code">{issue.suggested_command}</code>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Notification pause */}
       <div className="settings-section">
@@ -560,11 +582,12 @@ export function SettingsPage({
         </div>
       </div>
 
-      {/* Debug logging: a bounded window (off / 15 / 60 minutes) applied
-          immediately via its own command, like notification pause. */}
+      {/* 调试 + 更新合并(2026-08-28 用户裁决):一张卡两块功能。 */}
       <div className="settings-section">
-        <h2>{t.debugSection}</h2>
-        <label htmlFor="settings-debug">{t.debugLoggingLabel}</label>
+        <h2>{t.sectionDebugUpdate}</h2>
+        <label className="field-label" htmlFor="settings-debug">
+          {t.debugLoggingLabel}
+        </label>
         <select
           id="settings-debug"
           value={debugMinutes}
@@ -577,11 +600,29 @@ export function SettingsPage({
           <option value={15}>{t.debug15m}</option>
           <option value={60}>{t.debug60m}</option>
         </select>
-      </div>
-
-      {/* Updates */}
-      <div className="settings-section">
-        <h2>{t.updatesSection}</h2>
+        <div className="agent-actions">
+          <button
+            type="button"
+            ref={installTriggerRef}
+            className="cc-focusable"
+            disabled={checking || installing}
+            onClick={() => {
+              void checkUpdates();
+            }}
+          >
+            {checking ? t.checkingUpdates : t.checkUpdates}
+          </button>{" "}
+          {updateResult !== null && updateResult.available && updateResult.installable && (
+            <button
+              type="button"
+              className="cc-focusable"
+              disabled={checking || installing}
+              onClick={() => setInstallConfirmOpen(true)}
+            >
+              {t.installUpdateAction}
+            </button>
+          )}
+        </div>
         {updateResult !== null &&
           (updateResult.available ? (
             <p>
@@ -599,48 +640,7 @@ export function SettingsPage({
             {t.updateInstalled}
           </p>
         )}
-        <button
-          type="button"
-          ref={installTriggerRef}
-          className="cc-focusable"
-          disabled={checking || installing}
-          onClick={() => {
-            void checkUpdates();
-          }}
-        >
-          {checking ? t.checkingUpdates : t.checkUpdates}
-        </button>{" "}
-        {updateResult !== null && updateResult.available && updateResult.installable && (
-          <button
-            type="button"
-            className="cc-focusable"
-            disabled={checking || installing}
-            onClick={() => setInstallConfirmOpen(true)}
-          >
-            {t.installUpdateAction}
-          </button>
-        )}
       </div>
-
-      {/* Credential store disclosure */}
-      {storeIssues.length > 0 && (
-        <div className="settings-section">
-          <h2>{t.credentialStoreSection}</h2>
-          <ul className="issue-list">
-            {storeIssues.map((issue) => (
-              <li key={`${issue.issue_code}:${issue.message}`}>
-                <span>{issue.message}</span>
-                {issue.suggested_action !== null && (
-                  <span className="muted">{issue.suggested_action}</span>
-                )}
-                {issue.suggested_command !== null && (
-                  <code className="inline-code">{issue.suggested_command}</code>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {/* 通知模板(用户裁决 2026-08-27):全局正文模板,留空 = 统一默认。 */}
       <div className="settings-channel-add">
