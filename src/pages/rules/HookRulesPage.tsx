@@ -214,7 +214,7 @@ export function HookRulesPage({
         : [];
 
   return (
-    <section aria-label={t.navHooks}>
+    <section aria-label={t.navHooks} className="rules-page">
       <h2>{t.navHooks}</h2>
 
       {actionError !== null && <p role="alert">{actionError}</p>}
@@ -366,6 +366,9 @@ export function HookRulesPage({
         </div>
       </div>
 
+      {/* 表头吸附在自己的滚动壳内:主滚动区的 padding 带会让越顶行
+          露在吸顶表头上方(实机截图 bug),独立滚动盒从根上消除。 */}
+      <div className="table-scroll">
       <table className="rules-table">
         <thead>
           <tr>
@@ -433,6 +436,7 @@ export function HookRulesPage({
           })}
         </tbody>
       </table>
+      </div>
       {rows !== null && filtered.length === 0 && <p className="muted">{t.emptyRules}</p>}
 
       {drawerRow !== null && (

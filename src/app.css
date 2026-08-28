@@ -909,17 +909,47 @@ input[type="radio"]:checked::after {
 }
 
 .rules-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg-card) 86%, transparent);
-  backdrop-filter: blur(16px) saturate(160%);
+  background: var(--bg-card);
   text-align: left;
   color: var(--ink);
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* 吸顶表头只在专属滚动壳内启用:主内容区的 padding 带会让滚过的行
+   露在吸顶行上方(scrollport 剪裁不含 padding)——实机截图的间隙 bug。 */
+.history-body .rules-table th,
+.table-scroll .rules-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* 规则页:表格壳吃掉工具栏以下的全部余量,页面本体不再滚动。 */
+.rules-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.table-scroll {
+  flex: 1;
+  min-height: 160px;
+  margin-top: 4px;
+  overflow-y: auto;
+  border-radius: var(--r-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-xs);
+  scrollbar-gutter: stable;
+}
+
+.table-scroll > .rules-table {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
 }
 
 /* 卡片表面的四角裁剪:border-separate 下由角落单元格承担圆角。 */
