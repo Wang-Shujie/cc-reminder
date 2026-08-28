@@ -32,6 +32,51 @@ pub struct FieldCipher {
     key: Zeroizing<[u8; KEY_BYTES]>,
 }
 
+/// Shared handle to a [`FieldCipher`] that may not be loaded YET.
+///
+/// v2-issues(启动慢根因):钥匙串读取(可能因 ACL 授权弹窗阻塞数十秒,而弹窗
+/// 在窗口创建前不可见)曾卡在同步启动路径上,窗口要等它完成才出现。现在
+/// manage 状态时给一个空包装,后台线程加载后 `set`;命令层 `get` 未就绪时
+/// 拿到 typed `configuration.core_starting` 错误,而不是阻塞整个启动。
+#[derive(Clone, Default)]
+pub struct LazyFieldCipher {
+    inner: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<FieldCipher>>>,
+}
+
+impl LazyFieldCipher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Wrap an already-loaded cipher (tests, and any boot path that obtained
+    /// the key up front).
+    pub fn ready(cipher: std::sync::Arc<FieldCipher>) -> Self {
+        let slot = Self::default();
+        let _ = slot.inner.set(cipher);
+        slot
+    }
+
+    /// Publish the loaded cipher. Later calls win nothing — first set stays.
+    pub fn set(&self, cipher: FieldCipher) {
+        let _ = self.inner.set(std::sync::Arc::new(cipher));
+    }
+
+    /// Take the loaded cipher, or a typed "core is starting" error the
+    /// frontend can surface. Never blocks.
+    pub fn get(&self) -> Result<std::sync::Arc<FieldCipher>, AppError> {
+        self.inner.get().cloned().ok_or(AppError {
+            domain: ErrorDomain::Configuration,
+            code: "configuration.core_starting".to_owned(),
+            message: "core is still starting, retry shortly".to_owned(),
+            suggested_action: None,
+        })
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.inner.get().is_some()
+    }
+}
+
 impl FieldCipher {
     pub fn load_or_create() -> Result<Self, AppError> {
         Self::load_or_create_with_store(&CredentialStore::system())

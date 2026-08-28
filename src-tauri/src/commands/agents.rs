@@ -301,7 +301,7 @@ fn build_hook_environment(
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     Ok(crate::installer::lifecycle::HookEnvironment {
         repository: state.storage.integrations.clone(),
-        cipher: Some((*state.cipher).clone()),
+        cipher: Some((*state.cipher.get()?).clone()),
         helper,
         home,
         codex_home: None,

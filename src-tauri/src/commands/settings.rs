@@ -257,7 +257,7 @@ mod tests {
         let queue = QueueRepository::new(database.clone());
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = CredentialStore::memory_for_test();
-        let cipher = Arc::new(FieldCipher::from_key([7u8; 32]));
+        let cipher = crate::security::crypto::LazyFieldCipher::ready(Arc::new(FieldCipher::from_key([7u8; 32])));
         let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
             &database_path.parent().unwrap().join("logs"),
             1024 * 1024,

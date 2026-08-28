@@ -31,7 +31,6 @@ use crate::error::{AppError, ErrorDomain};
 use crate::health::HealthSnapshot;
 use crate::model::ChannelRecord;
 use crate::security::credentials::CredentialStore;
-use crate::security::crypto::FieldCipher;
 use crate::storage::config::ConfigRepository;
 use crate::storage::events::EventRepository;
 use crate::storage::integrations::IntegrationRepository;
@@ -88,7 +87,7 @@ pub struct RuntimeHandles {
 pub struct CoreState {
     pub storage: StorageHandles,
     pub credentials: CredentialStore,
-    pub cipher: std::sync::Arc<FieldCipher>,
+    pub cipher: crate::security::crypto::LazyFieldCipher,
     /// Shared diagnostics logger (Task 20 fix round 1): the same instance the
     /// startup wiring and the retention ticker write through, so exports see
     /// the runtime log files and debug windows are process-wide.
@@ -106,7 +105,7 @@ impl CoreState {
         queue: QueueRepository,
         integrations: IntegrationRepository,
         credentials: CredentialStore,
-        cipher: std::sync::Arc<FieldCipher>,
+        cipher: crate::security::crypto::LazyFieldCipher,
         diagnostics: std::sync::Arc<crate::diagnostics::Diagnostics>,
     ) -> Self {
         // Default event sink: a sender whose receiver is dropped immediately,
@@ -538,7 +537,7 @@ mod tests {
             QueueRepository::new(database.clone()),
             integrations.clone(),
             CredentialStore::memory_for_test(),
-            std::sync::Arc::new(FieldCipher::from_key([4u8; 32])),
+            crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(FieldCipher::from_key([4u8; 32]))),
             std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
                 &root.path().join("logs"),
                 1024 * 1024,

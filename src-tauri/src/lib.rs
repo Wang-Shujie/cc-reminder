@@ -31,7 +31,7 @@ use crate::ipc::IngressResponse;
 use crate::model::AgentKind;
 use crate::pipeline::EventPipeline;
 use crate::security::credentials::CredentialStore;
-use crate::security::crypto::{CorrelationKey, FieldCipher};
+use crate::security::crypto::CorrelationKey;
 use crate::storage::config::ConfigRepository;
 use crate::storage::db::Database;
 use crate::storage::events::EventRepository;
@@ -256,9 +256,20 @@ fn shutdown_core(app: &tauri::AppHandle) {
     }
 }
 
-/// Task-14 Step-6 startup ordering:
-///   migrate → ensure_global_rules → drain spool → recover stale processing
-///   ingress → bounded recovery batch → start IPC → start worker.
+/// Startup ordering, v2-issues split:
+///   SYNC (before the window exists — must stay fast): migrate →
+///   ensure_global_rules → recover stale processing rows → manage state →
+///   tray. The WebView appears here, so the keychain ACL dialog (invisible
+///   and unclickable before any window existed) is now visible.
+///   BACKGROUND (spawned task): keychain cipher load → spool drain →
+///   recovery batch → IPC bind → worker/forwarder/retention/redetect.
+///
+/// v2-issues(启动慢根因):钥匙串读取(重编译后签名变化触发 ACL 授权弹窗,
+/// 而弹窗在窗口出现前不可见,曾实测阻塞 5–120s+)曾卡在同步启动路径上,
+/// 窗口被拖到全部初始化完成之后。现在 setup() 只做本地 SQLite 快操作就
+/// 返回;重活全部进后台任务,其中钥匙串加载放在 blocking 池。加载完成前
+/// 需要加密的命令拿到 typed `configuration.core_starting` 错误;IPC 未绑定
+/// 期间 hook 流量由 helper 落盘,后台初始化尾部 drain 补收。
 ///
 /// IPC loop invokes `EventPipeline::process_live` and replies `Accepted` ONLY
 /// after the durable commit; an unrecognized helper rejects (no trust).
@@ -283,24 +294,20 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     ];
     config.ensure_global_rules(&catalogs)?;
 
-    // 3. Drain spool to ingress (best-effort).
-    if let Ok(spool) = storage::spool::Spool::new(paths.spool.clone()) {
-        let _ = spool.drain(500);
-    }
-
-    // Build the repos + cipher the pipeline/worker/commands share.
+    // Build the repos the commands share. The cipher is deliberately LAZY:
+    // the keychain read happens in the background task below.
     let events = EventRepository::new(database.clone());
     let queue = QueueRepository::new(database.clone());
     let integrations = IntegrationRepository::new(database.clone());
     let credentials = CredentialStore::system();
-    let cipher = Arc::new(FieldCipher::load_or_create_logged(&diagnostics)?);
+    let cipher = crate::security::crypto::LazyFieldCipher::new();
 
-    // 4. Recover stale `processing` ingress rows: flip them back to pending so
+    // 3. Recover stale `processing` ingress rows: flip them back to pending so
     //    the recovery batch reprocesses them. Idempotent — rows that already
     //    committed their event are deduped by the pipeline's idempotency key.
     recover_stale_ingress(&events);
 
-    // 5. Bounded recovery batch via the pipeline.
+    // Inputs the background pipeline needs; all cheap local reads.
     let correlation_key = CorrelationKey::load_or_create(&paths.data_dir)?;
     let key_bytes = *correlation_key.expose_for_hmac();
     let projects = load_project_registrations(&config);
@@ -310,23 +317,6 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             .map(|settings| settings.local_offset_seconds)
             .unwrap_or(0),
     );
-    let pipeline = EventPipeline::new(
-        database.clone(),
-        cipher.clone(),
-        key_bytes,
-        if cfg!(windows) {
-            crate::projects::PathPlatform::Windows
-        } else {
-            crate::projects::PathPlatform::Unix
-        },
-        projects,
-        local_offset,
-    );
-    // Run recovery once synchronously before serving live traffic.
-    let pipeline_for_recovery = pipeline.clone();
-    let _ = tauri::async_runtime::block_on(
-        async move { pipeline_for_recovery.recover_ingress().await },
-    );
 
     // One cancel signal drives every background loop (IPC accept, delivery
     // worker, retention): Task-14 graceful shutdown (`shutdown_core`, from
@@ -334,28 +324,17 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let cancel = CancellationToken::new();
 
     // Shared bounded channel for revision-only core:// events. Producers: the
-    // delivery worker (below), the IPC ingress loop (history-changed), and
-    // command bodies via CoreState.core_events; the single consumer is the
-    // forwarder task spawned further down.
+    // delivery worker, the IPC ingress loop (history-changed), and command
+    // bodies via CoreState.core_events; the single consumer is the forwarder
+    // task spawned by the background init below. Producers that emit before
+    // the forwarder exists just fill the buffer (capacity 64) — revisions
+    // self-heal on the next refetch.
     let (core_event_sink, mut core_event_receiver) =
         tokio::sync::mpsc::channel::<worker::CoreEvent>(64);
 
-    // 6. Start IPC: drives process_live, replies Accepted only after durable
-    //    commit, rejects unrecognized helpers without establishing trust.
-    //    The accept loop selects on the same cancel token so an exiting app
-    //    stops admitting new hook traffic; a request already taken off the
-    //    channel finishes its commit-and-reply before the loop breaks.
-    // v2-issues:拒绝计数器与 CoreState 共享(manage 前写回 runtime)。
-    let rejected_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let pipeline_for_ipc = pipeline.clone();
-    let ipc_diagnostics = diagnostics.clone();
-    let ipc_events = core_event_sink.clone();
-    // v2-issues:拒绝计数与 health-changed 广播——hook 触发失败(helper 不被
-    // 信任/handler panic)必须可见,否则界面在事实故障下仍显示健康。
-    let ipc_rejected = rejected_counter.clone();
     // v2-issues(实机教训):panic 钩子把每个 panic 落进应用日志——tokio
     // 任务静默死亡(如 IPC 环)曾让 hook 全灭而无任何痕迹。stderr 对
-    // launchd 应用不可见,这里是我们唯一的现场。
+    // launchd 应用不可见,这里是我们唯一的现场。同步段设置,先于任何 spawn。
     {
         let panic_diagnostics = diagnostics.clone();
         std::panic::set_hook(Box::new(move |info| {
@@ -372,182 +351,32 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             panic_diagnostics.info("panic", &format!("task panicked at {location}: {message}"));
         }));
     }
-    let mut server =
-        ipc::server::IpcServer::bind(paths.endpoint()).map_err(std::io::Error::other)?;
-    let ipc_cancel = cancel.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            let received = tokio::select! {
-                _ = ipc_cancel.cancelled() => None,
-                next = server.receiver.recv() => next,
-            };
-            let Some((request, response)) = received else {
-                break;
-            };
-            // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
-            // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
-            let reply = match std::panic::AssertUnwindSafe(pipeline_for_ipc.process_live(request))
-                .catch_unwind()
-                .await
-            {
-                // 正常路径:Processed 推 history-changed;Duplicate 不推。
-                Ok(Ok(pipeline::LiveOutcome::Processed { event_id })) => {
-                    // v2-issues: 事件落库即推送 history-changed,
-                    // 通知记录订阅端即时刷新(重复事件无历史变化)。
-                    crate::worker::emit(&ipc_events, crate::worker::CoreEvent::HistoryChanged);
-                    IngressResponse::Accepted { event_id }
-                }
-                Ok(Ok(pipeline::LiveOutcome::Duplicate { event_id })) => {
-                    IngressResponse::Accepted { event_id }
-                }
-                Ok(Err(_)) => {
-                    // Redacted one-liner through the Diagnostics chokepoint;
-                    // never the request contents.
-                    ipc_diagnostics.info("ipc", "ingress request rejected");
-                    ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    crate::worker::emit(
-                        &ipc_events,
-                        crate::worker::CoreEvent::HealthChanged { channel_id: None },
-                    );
-                    IngressResponse::Rejected {
-                        // The hook contract requires a neutral outcome + exit 0; the
-                        // rejection code is diagnostic only. An unrecognized helper
-                        // surfaces as `unrecognized` so the hook does not retry.
-                        error_code: "unrecognized".to_owned(),
-                    }
-                }
-                // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
-                // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
-                Err(payload) => {
-                    // futures_util 的 catch_unwind:Err 即 panic 载荷本体。
-                    let message = payload
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                        .unwrap_or_else(|| "<non-string panic payload>".to_owned());
-                    ipc_diagnostics.info(
-                        "ipc",
-                        &format!("ingress handler panicked: {message}; loop survived"),
-                    );
-                    ipc_diagnostics.info("ipc", "ingress request rejected");
-                    ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    crate::worker::emit(
-                        &ipc_events,
-                        crate::worker::CoreEvent::HealthChanged { channel_id: None },
-                    );
-                    IngressResponse::Rejected {
-                        error_code: "unrecognized".to_owned(),
-                    }
-                }
-            };
-            let _ = response.send(reply).await;
-        }
-    });
 
-    // 7. Start the worker with the real sender bridge.
-    let sender_factory = Arc::new(worker::ProductionSenderFactory::new(credentials.clone()));
-    let worker_config = WorkerConfig {
-        database: database.clone(),
-        credentials: credentials.clone(),
-        sender_factory,
-        max_concurrent_sends: 4,
-        max_batch: 8,
-        lease_duration: chrono::Duration::seconds(30),
-        tick_interval: std::time::Duration::from_secs(2),
-    };
-    let worker_events = core_event_sink.clone();
-    let worker = DeliveryWorker::new(worker_config, worker_events);
-
-    // 7b. `core://` forwarder: the single consumer of the bounded event
-    //     channel shared by the delivery worker and the command surface.
-    //     Each CoreEvent becomes a revision-only payload on its topic
-    //     (`worker::CoreEvent::core_topic`), matching what
-    //     `src/lib/backend.tsx` subscribe listeners expect — they refetch on
-    //     any revision bump and never trust payload details. The channel is
-    //     bounded (64): when the WebView is slow the producer drops the
-    //     NEWEST notification (see `worker::emit`) because revisions
-    //     self-heal on the next tick/refetch. The task ends when every sender
-    //     drops (worker cancelled + app state gone).
-    let forwarder_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        use tauri::Emitter;
-        let mut revisions: std::collections::HashMap<&'static str, u64> =
-            std::collections::HashMap::new();
-        while let Some(event) = core_event_receiver.recv().await {
-            let topic = event.core_topic();
-            let revision = revisions.entry(topic).and_modify(|r| *r += 1).or_insert(1);
-            let _ = forwarder_app.emit(topic, serde_json::json!({ "revision": revision }));
-            // 健康变化同步托盘菜单的健康条目(重建,轻量)。
-            if matches!(event, crate::worker::CoreEvent::HealthChanged { .. }) {
-                crate::tray::refresh_health(&forwarder_app);
-            }
-        }
-    });
-    let worker_cancel = cancel.clone();
-    // Keep the join handle: RunEvent::Exit waits (≤10s) on it so an in-flight
-    // send pass finishes instead of being killed mid-write.
-    let worker_task = tauri::async_runtime::spawn(async move {
-        let _ = worker.run(worker_cancel).await;
-    });
-
-    // 8. Retention (Task 20 Step 5): one pass immediately after startup, then
-    //    every 24 hours. Spawned — never blocks setup; failures are logged
-    //    through Diagnostics and tolerated; shutdown rides the same cancel
-    //    token as the worker. This is production-only startup work: it lives
-    //    behind `run()`, which `cargo test` never invokes.
-    let retention_service =
-        storage::retention::RetentionService::new(database.clone(), paths.logs.clone());
-    let retention_diagnostics = diagnostics.clone();
-    let retention_cancel = cancel.clone();
-    tauri::async_runtime::spawn(storage::retention::run_forever(
-        retention_service,
-        retention_diagnostics,
-        std::time::Duration::from_secs(24 * 60 * 60),
-        retention_cancel,
-    ));
-
-    // v2-issues(计划行 2482):每 6 小时后台重检 Agent,健康状态跟上
-    // 升级/卸载等外部变化,并广播 health-changed 让界面刷新。
-    let redetect_integrations = integrations.clone();
-    let redetect_diagnostics = diagnostics.clone();
-    let redetect_events = core_event_sink.clone();
-    let redetect_cancel = cancel.clone();
-    tauri::async_runtime::spawn(agents::redetect_loop(
-        redetect_integrations,
-        redetect_diagnostics,
-        redetect_events,
-        std::time::Duration::from_secs(6 * 60 * 60),
-        redetect_cancel,
-    ));
-
-    // Manage the shared state for commands, and stash the worker cancel token
-    // + join handle so RunEvent::Exit can perform the Task-14 graceful
-    // shutdown (≤10s wait for active sends).
+    // 4. Manage the shared state for commands NOW so the window can appear
+    //    immediately. The worker join handle is stashed by the background init
+    //    once the worker is actually spawned; RunEvent::Exit reads it.
+    let rejected_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut state = CoreState::new(
         config,
         events,
         queue,
-        integrations,
-        credentials,
-        cipher,
-        diagnostics,
+        integrations.clone(),
+        credentials.clone(),
+        cipher.clone(),
+        diagnostics.clone(),
     );
     {
         let mut guard = state.runtime.cancel_token.lock().unwrap();
-        *guard = Some(cancel);
-    }
-    {
-        let mut guard = state.runtime.worker_task.lock().unwrap();
-        *guard = Some(worker_task);
+        *guard = Some(cancel.clone());
     }
     {
         // Commands push revision notifications onto the same channel the
-        // worker uses; the forwarder task above is their only consumer.
-        state.runtime.core_events = core_event_sink;
+        // worker uses; the forwarder task is their only consumer.
+        state.runtime.core_events = core_event_sink.clone();
     }
     {
-        // v2-issues:IPC 拒绝计数器与命令层共享同一个 Arc(见上方第 6 步)。
-        state.runtime.rejected_ingress = rejected_counter;
+        // v2-issues:IPC 拒绝计数器与命令层共享同一个 Arc。
+        state.runtime.rejected_ingress = rejected_counter.clone();
     }
     {
         // Production root for the bundled signed helper (manifest + bytes).
@@ -576,6 +405,228 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     // v2-issues(设计 §18.3):原生托盘菜单——打开/健康/暂停/恢复/退出。
     // 在 state manage 之后安装,动作经 try_state 走同一命令 impl。
     tray::install(app);
+
+    // 5. Background init (v2-issues): everything that used to block the window
+    //    behind the keychain. Failures degrade visibly (typed command errors,
+    //    diagnostics log) instead of a blank startup that never finishes.
+    let bg_diagnostics = diagnostics.clone();
+    let bg_app = app.clone();
+    let bg_cancel = cancel.clone();
+    let bg_spool = paths.spool.clone();
+    let bg_endpoint = paths.endpoint();
+    let bg_logs = paths.logs.clone();
+    let bg_state_for_worker = app.state::<CoreState>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        // 5a. Keychain cipher load on the blocking pool — the potentially
+        //     minutes-long step (ACL dialog). `load_or_create_logged` carries
+        //     the watchdog that makes a hidden dialog visible in the log.
+        let load_diagnostics = bg_diagnostics.clone();
+        let loaded = tauri::async_runtime::spawn_blocking(move || {
+            crate::security::crypto::FieldCipher::load_or_create_logged(&load_diagnostics)
+        })
+        .await;
+        match loaded {
+            Ok(Ok(cipher_value)) => cipher.set(cipher_value),
+            Ok(Err(err)) => {
+                bg_diagnostics.info(
+                    "keychain",
+                    &format!("data key load failed; encrypted commands will error: {err}"),
+                );
+                return;
+            }
+            Err(_) => {
+                bg_diagnostics.info("keychain", "cipher loader task failed");
+                return;
+            }
+        }
+        let Ok(cipher_arc) = cipher.get() else {
+            return;
+        };
+
+        let pipeline = EventPipeline::new(
+            database.clone(),
+            cipher_arc,
+            key_bytes,
+            if cfg!(windows) {
+                crate::projects::PathPlatform::Windows
+            } else {
+                crate::projects::PathPlatform::Unix
+            },
+            projects,
+            local_offset,
+        );
+
+        // 5b. Drain spool to ingress (best-effort). This also sweeps up hook
+        //     traffic that arrived while the IPC socket was not yet bound.
+        if let Ok(spool) = storage::spool::Spool::new(bg_spool) {
+            let _ = spool.drain(500);
+        }
+        // Run the bounded recovery batch once before serving live traffic.
+        if let Err(err) = pipeline.recover_ingress().await {
+            bg_diagnostics.info("storage", &format!("ingress recovery failed: {err}"));
+        }
+
+        // 5c. IPC: drives process_live, replies Accepted only after durable
+        //     commit, rejects unrecognized helpers without establishing trust.
+        //     The accept loop selects on the same cancel token so an exiting
+        //     app stops admitting new hook traffic; a request already taken off
+        //     the channel finishes its commit-and-reply before the loop breaks.
+        let Ok(mut server) = ipc::server::IpcServer::bind(bg_endpoint) else {
+            bg_diagnostics.info("ipc", "ipc endpoint bind failed; hook ingress is down");
+            return;
+        };
+        let pipeline_for_ipc = pipeline.clone();
+        let ipc_diagnostics = bg_diagnostics.clone();
+        let ipc_events = core_event_sink.clone();
+        let ipc_rejected = rejected_counter.clone();
+        let ipc_cancel = bg_cancel.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let received = tokio::select! {
+                    _ = ipc_cancel.cancelled() => None,
+                    next = server.receiver.recv() => next,
+                };
+                let Some((request, response)) = received else {
+                    break;
+                };
+                // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
+                // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
+                let reply = match std::panic::AssertUnwindSafe(pipeline_for_ipc.process_live(request))
+                    .catch_unwind()
+                    .await
+                {
+                    // 正常路径:Processed 推 history-changed;Duplicate 不推。
+                    Ok(Ok(pipeline::LiveOutcome::Processed { event_id })) => {
+                        // v2-issues: 事件落库即推送 history-changed,
+                        // 通知记录订阅端即时刷新(重复事件无历史变化)。
+                        crate::worker::emit(&ipc_events, crate::worker::CoreEvent::HistoryChanged);
+                        IngressResponse::Accepted { event_id }
+                    }
+                    Ok(Ok(pipeline::LiveOutcome::Duplicate { event_id })) => {
+                        IngressResponse::Accepted { event_id }
+                    }
+                    Ok(Err(_)) => {
+                        // Redacted one-liner through the Diagnostics chokepoint;
+                        // never the request contents.
+                        ipc_diagnostics.info("ipc", "ingress request rejected");
+                        ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        crate::worker::emit(
+                            &ipc_events,
+                            crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                        );
+                        IngressResponse::Rejected {
+                            // The hook contract requires a neutral outcome + exit 0; the
+                            // rejection code is diagnostic only. An unrecognized helper
+                            // surfaces as `unrecognized` so the hook does not retry.
+                            error_code: "unrecognized".to_owned(),
+                        }
+                    }
+                    // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
+                    // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
+                    Err(payload) => {
+                        // futures_util 的 catch_unwind:Err 即 panic 载荷本体。
+                        let message = payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                            .unwrap_or_else(|| "<non-string panic payload>".to_owned());
+                        ipc_diagnostics.info(
+                            "ipc",
+                            &format!("ingress handler panicked: {message}; loop survived"),
+                        );
+                        ipc_diagnostics.info("ipc", "ingress request rejected");
+                        ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        crate::worker::emit(
+                            &ipc_events,
+                            crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                        );
+                        IngressResponse::Rejected {
+                            error_code: "unrecognized".to_owned(),
+                        }
+                    }
+                };
+                let _ = response.send(reply).await;
+            }
+        });
+
+        // 5d. Delivery worker with the real sender bridge. Keep the join
+        //     handle: RunEvent::Exit waits (≤10s) on it so an in-flight send
+        //     pass finishes instead of being killed mid-write.
+        let sender_factory = Arc::new(worker::ProductionSenderFactory::new(credentials.clone()));
+        let worker_config = WorkerConfig {
+            database: database.clone(),
+            credentials: credentials.clone(),
+            sender_factory,
+            max_concurrent_sends: 4,
+            max_batch: 8,
+            lease_duration: chrono::Duration::seconds(30),
+            tick_interval: std::time::Duration::from_secs(2),
+        };
+        let worker_events = core_event_sink.clone();
+        let worker = DeliveryWorker::new(worker_config, worker_events);
+        let worker_cancel = bg_cancel.clone();
+        let worker_task = tauri::async_runtime::spawn(async move {
+            let _ = worker.run(worker_cancel).await;
+        });
+        {
+            let mut guard = bg_state_for_worker.runtime.worker_task.lock().unwrap();
+            *guard = Some(worker_task);
+        }
+
+        // 5e. `core://` forwarder: the single consumer of the bounded event
+        //     channel shared by the delivery worker and the command surface.
+        //     Each CoreEvent becomes a revision-only payload on its topic
+        //     (`worker::CoreEvent::core_topic`), matching what
+        //     `src/lib/backend.tsx` subscribe listeners expect — they refetch
+        //     on any revision bump and never trust payload details. The
+        //     channel is bounded (64): when the WebView is slow the producer
+        //     drops the NEWEST notification (see `worker::emit`) because
+        //     revisions self-heal on the next tick/refetch.
+        let forwarder_app = bg_app.clone();
+        tauri::async_runtime::spawn(async move {
+            use tauri::Emitter;
+            let mut revisions: std::collections::HashMap<&'static str, u64> =
+                std::collections::HashMap::new();
+            while let Some(event) = core_event_receiver.recv().await {
+                let topic = event.core_topic();
+                let revision = revisions.entry(topic).and_modify(|r| *r += 1).or_insert(1);
+                let _ = forwarder_app.emit(topic, serde_json::json!({ "revision": revision }));
+                // 健康变化同步托盘菜单的健康条目(重建,轻量)。
+                if matches!(event, crate::worker::CoreEvent::HealthChanged { .. }) {
+                    crate::tray::refresh_health(&forwarder_app);
+                }
+            }
+        });
+
+        // 5f. Retention (Task 20 Step 5): one pass immediately after startup,
+        //     then every 24 hours. Failures are logged through Diagnostics and
+        //     tolerated; shutdown rides the same cancel token as the worker.
+        let retention_service =
+            storage::retention::RetentionService::new(database.clone(), bg_logs);
+        let retention_diagnostics = bg_diagnostics.clone();
+        let retention_cancel = bg_cancel.clone();
+        tauri::async_runtime::spawn(storage::retention::run_forever(
+            retention_service,
+            retention_diagnostics,
+            std::time::Duration::from_secs(24 * 60 * 60),
+            retention_cancel,
+        ));
+
+        // 5g. v2-issues(计划行 2482):每 6 小时后台重检 Agent,健康状态跟上
+        //     升级/卸载等外部变化,并广播 health-changed 让界面刷新。
+        let redetect_integrations = integrations.clone();
+        let redetect_diagnostics = bg_diagnostics.clone();
+        let redetect_events = core_event_sink.clone();
+        let redetect_cancel = bg_cancel.clone();
+        tauri::async_runtime::spawn(agents::redetect_loop(
+            redetect_integrations,
+            redetect_diagnostics,
+            redetect_events,
+            std::time::Duration::from_secs(6 * 60 * 60),
+            redetect_cancel,
+        ));
+        bg_diagnostics.info("startup", "background init complete");
+    });
 
     Ok(())
 }

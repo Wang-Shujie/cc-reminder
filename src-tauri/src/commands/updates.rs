@@ -104,7 +104,7 @@ mod tests {
         let queue = QueueRepository::new(database.clone());
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = CredentialStore::memory_for_test();
-        let cipher = std::sync::Arc::new(FieldCipher::from_key([6u8; 32]));
+        let cipher = crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(FieldCipher::from_key([6u8; 32])));
         let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
             &database_path.parent().unwrap().join("logs"),
             1024 * 1024,
