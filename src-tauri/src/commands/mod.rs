@@ -78,6 +78,10 @@ pub struct RuntimeHandles {
     /// tests and whenever resolution fails. The bundled-helper loader joins
     /// ONLY fixed relative paths under it — never caller-supplied input.
     pub resources_dir: Option<std::path::PathBuf>,
+    /// Count of hook ingress requests REJECTED this session (unrecognized
+    /// helper / handler panic). v2-issues:hook 触发失败曾对健康完全不可见
+    /// (快照硬编码 rejected_count=0);IPC 环在拒绝时自增,投影读取。
+    pub rejected_ingress: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -126,6 +130,7 @@ impl CoreState {
                 autostart_control: std::sync::Arc::new(|_| Ok(())),
                 core_events,
                 resources_dir: None,
+                rejected_ingress: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             },
         }
     }
@@ -264,7 +269,7 @@ pub(crate) fn health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppEr
 }
 
 fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> {
-    use crate::health::{HealthInputs, project_health};
+    use crate::health::{HealthInputs, HealthIssue, HealthLevel, project_health};
 
     let stats = state.storage.queue.queue_stats()?;
     let channels = state.storage.config.list_channels()?;
@@ -280,7 +285,79 @@ fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> 
         })
         .collect();
 
+    // v2-issues:agents 与 hook 安装健康此前完全没进快照(硬编码省略),
+    // agent 卸载/升级、hook 漂移/未信任、ingress 被拒都表现为「健康」。
+    // 数据全部已落库(detect/redetect 维护 agent_installations,安装事务
+    // 维护 hook_installations)——纯读库投影,零子进程成本。
+    let mut agent_states = Vec::new();
+    let mut issues: Vec<HealthIssue> = Vec::new();
+    for agent in [crate::model::AgentKind::ClaudeCode, crate::model::AgentKind::Codex] {
+        if let Ok(record) = state.storage.integrations.agent(agent) {
+            let level = installation_health_level(record.health_status);
+            agent_states.push(crate::health::AgentIntegrationHealth {
+                agent,
+                installed: record.health_status == crate::model::InstallationHealth::Healthy,
+                version: record.version.as_ref().map(ToString::to_string),
+                health: level,
+                summary: installation_summary(record.health_status),
+            });
+        }
+        let agent_label = agent_kind_label(agent);
+        let hooks = state.storage.integrations.list_hooks(agent).unwrap_or_default();
+        let mut broken = 0u32;
+        let mut repair = 0u32;
+        let mut untrusted = 0u32;
+        for hook in &hooks {
+            match hook.health_status {
+                crate::model::InstallationHealth::Error => broken += 1,
+                crate::model::InstallationHealth::NeedsRepair => repair += 1,
+                _ => {}
+            }
+            if hook.trust_status == crate::model::TrustStatus::NeedsUserConfirmation {
+                untrusted += 1;
+            }
+        }
+        if broken > 0 {
+            issues.push(issue(
+                "hook.failed",
+                HealthLevel::Error,
+                &format!("{agent_label} 有 {broken} 条 Hook 配置已失效(被外部修改或删除)"),
+                "在「集成」页重新安装 Hook",
+            ));
+        }
+        if repair > 0 {
+            issues.push(issue(
+                "hook.needs_repair",
+                HealthLevel::Warning,
+                &format!("{agent_label} 有 {repair} 条 Hook 配置漂移,需要修复"),
+                "在「集成」页修复 Hook",
+            ));
+        }
+        if untrusted > 0 {
+            issues.push(issue(
+                "hook.needs_trust",
+                HealthLevel::Warning,
+                &format!("{agent_label} 有 {untrusted} 条 Hook 尚未经过一次真实触发确认"),
+                "在对应 Agent 中真实触发一次 Hook",
+            ));
+        }
+    }
+
+    let rejected = state
+        .runtime
+        .rejected_ingress
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if rejected > 0 {
+        issues.push(issue(
+            "ingress.rejected",
+            HealthLevel::Warning,
+            &format!("本次运行已拒绝 {rejected} 次 Hook 请求(helper 不被信任或内部错误)"),
+            "在「集成」页重新安装 Hook 后重启应用",
+        ));
+    }
+
     let inputs = HealthInputs {
+        agents: agent_states,
         channels: channel_states,
         pending_jobs: stats.pending,
         retry_jobs: stats.retry_wait,
@@ -288,11 +365,55 @@ fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> 
         expired_jobs: stats.expired,
         succeeded_jobs: stats.succeeded,
         spool_count: 0,
-        rejected_count: 0,
+        rejected_count: rejected,
         last_success_at: last_success(&channels),
-        ..HealthInputs::default()
+        issues,
     };
     Ok(project_health(&inputs))
+}
+
+/// Persisted agent-installation health → shared health level. `Unknown` (never
+/// detected) stays Ok so a fresh install without onboarding is not an alarm.
+fn installation_health_level(
+    health: crate::model::InstallationHealth,
+) -> crate::health::HealthLevel {
+    match health {
+        crate::model::InstallationHealth::Healthy => crate::health::HealthLevel::Ok,
+        crate::model::InstallationHealth::Unknown => crate::health::HealthLevel::Ok,
+        crate::model::InstallationHealth::NeedsRepair => crate::health::HealthLevel::Warning,
+        crate::model::InstallationHealth::Error => crate::health::HealthLevel::Error,
+    }
+}
+
+fn installation_summary(health: crate::model::InstallationHealth) -> String {
+    match health {
+        crate::model::InstallationHealth::Healthy => "healthy".into(),
+        crate::model::InstallationHealth::Unknown => "unknown".into(),
+        crate::model::InstallationHealth::NeedsRepair => "needs_repair".into(),
+        crate::model::InstallationHealth::Error => "error".into(),
+    }
+}
+
+fn agent_kind_label(agent: crate::model::AgentKind) -> &'static str {
+    match agent {
+        crate::model::AgentKind::ClaudeCode => "Claude Code",
+        crate::model::AgentKind::Codex => "Codex",
+    }
+}
+
+fn issue(
+    issue_code: &str,
+    level: crate::health::HealthLevel,
+    message: &str,
+    suggested_action: &str,
+) -> crate::health::HealthIssue {
+    crate::health::HealthIssue {
+        issue_code: issue_code.to_owned(),
+        level,
+        message: message.to_owned(),
+        suggested_command: None,
+        suggested_action: Some(suggested_action.to_owned()),
+    }
 }
 
 fn last_success(channels: &[ChannelRecord]) -> Option<chrono::DateTime<Utc>> {
@@ -387,6 +508,124 @@ pub async fn get_health_snapshot(state: State<'_, CoreState>) -> Result<HealthSn
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agent_hook_and_rejected_health_reach_the_snapshot() {
+        // v2-issues:agents/hook 漂移/ingress 拒绝此前完全进不了快照,
+        // 事实故障下界面仍显示健康。三者必须各自抬级并产出 issue。
+        use crate::model::{
+            AgentInstallationRecord, AgentKind, HookInstallationRecord, InstallationHealth,
+            TrustStatus,
+        };
+        use crate::security::credentials::CredentialStore;
+        use crate::security::crypto::FieldCipher;
+        use crate::storage::config::ConfigRepository;
+        use crate::storage::db::Database;
+        use crate::storage::events::EventRepository;
+        use crate::storage::integrations::IntegrationRepository;
+        use crate::storage::queue::QueueRepository;
+        use tempfile::tempdir;
+
+        use super::{CoreState, health_snapshot};
+
+        let root = tempdir().unwrap();
+        let database_path = root.path().join("com.ccreminder.app/cc-reminder.sqlite3");
+        std::fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let database = Database::open(&database_path).unwrap();
+        let integrations = IntegrationRepository::new(database.clone());
+        let state = CoreState::new(
+            ConfigRepository::new(database.clone()),
+            EventRepository::new(database.clone()),
+            QueueRepository::new(database.clone()),
+            integrations.clone(),
+            CredentialStore::memory_for_test(),
+            std::sync::Arc::new(FieldCipher::from_key([4u8; 32])),
+            std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
+                &root.path().join("logs"),
+                1024 * 1024,
+                3,
+            )),
+        );
+
+        // Claude Code: agent healthy, but one hook drifted (needs repair) and
+        // one untrusted. Codex: agent itself needs repair.
+        integrations
+            .upsert_agent(&AgentInstallationRecord {
+                agent: AgentKind::ClaudeCode,
+                executable_path: None,
+                version: Some(semver::Version::new(2, 1, 218)),
+                capability_verification: crate::events::catalog::CatalogVerification::Exact,
+                health_status: InstallationHealth::Healthy,
+                last_checked_at: chrono::Utc::now(),
+            })
+            .unwrap();
+        integrations
+            .upsert_agent(&AgentInstallationRecord {
+                agent: AgentKind::Codex,
+                executable_path: None,
+                version: Some(semver::Version::new(0, 145, 0)),
+                capability_verification: crate::events::catalog::CatalogVerification::Exact,
+                health_status: InstallationHealth::NeedsRepair,
+                last_checked_at: chrono::Utc::now(),
+            })
+            .unwrap();
+        integrations
+            .replace_hooks(
+                AgentKind::ClaudeCode,
+                &[
+                    hook_record(
+                        "PreToolUse",
+                        InstallationHealth::NeedsRepair,
+                        TrustStatus::ObservedWorking,
+                    ),
+                    hook_record(
+                        "Stop",
+                        InstallationHealth::Healthy,
+                        TrustStatus::NeedsUserConfirmation,
+                    ),
+                ],
+            )
+            .unwrap();
+
+        state
+            .runtime
+            .rejected_ingress
+            .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+
+        let snapshot = health_snapshot(&state).unwrap();
+        let codes: Vec<_> = snapshot.issues.iter().map(|i| i.issue_code.as_str()).collect();
+        assert!(codes.contains(&"hook.needs_repair"), "codes: {codes:?}");
+        assert!(codes.contains(&"hook.needs_trust"), "codes: {codes:?}");
+        assert!(codes.contains(&"ingress.rejected"), "codes: {codes:?}");
+        assert_eq!(snapshot.rejected_count, 2);
+        let codex = snapshot
+            .agents
+            .iter()
+            .find(|a| a.agent == AgentKind::Codex)
+            .expect("codex installation reaches the snapshot");
+        assert_eq!(codex.health, crate::health::HealthLevel::Warning);
+        // Codex NeedsRepair + hook drift + rejections ⇒ at least Warning.
+        assert_eq!(snapshot.overall, crate::health::HealthLevel::Warning);
+    }
+
+    /// Minimal hook row for `replace_hooks` in tests.
+    fn hook_record(
+        source_event: &str,
+        health: crate::model::InstallationHealth,
+        trust: crate::model::TrustStatus,
+    ) -> crate::model::HookInstallationRecord {
+        crate::model::HookInstallationRecord {
+            agent: crate::model::AgentKind::ClaudeCode,
+            source_event: source_event.to_owned(),
+            command_fingerprint: "fp".into(),
+            definition_fingerprint: "df".into(),
+            helper_version: "0.0.0".into(),
+            config_hash: "hash".into(),
+            trust_status: trust,
+            health_status: health,
+            last_seen_at: None,
+        }
+    }
+
     #[test]
     fn reported_offset_persistence_is_best_effort() {
         // v2-issues: 只读存储不得把 bootstrap 挡在永久加载屏——offset 写失败

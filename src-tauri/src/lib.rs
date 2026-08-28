@@ -345,9 +345,14 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     //    The accept loop selects on the same cancel token so an exiting app
     //    stops admitting new hook traffic; a request already taken off the
     //    channel finishes its commit-and-reply before the loop breaks.
+    // v2-issues:拒绝计数器与 CoreState 共享(manage 前写回 runtime)。
+    let rejected_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let pipeline_for_ipc = pipeline.clone();
     let ipc_diagnostics = diagnostics.clone();
     let ipc_events = core_event_sink.clone();
+    // v2-issues:拒绝计数与 health-changed 广播——hook 触发失败(helper 不被
+    // 信任/handler panic)必须可见,否则界面在事实故障下仍显示健康。
+    let ipc_rejected = rejected_counter.clone();
     // v2-issues(实机教训):panic 钩子把每个 panic 落进应用日志——tokio
     // 任务静默死亡(如 IPC 环)曾让 hook 全灭而无任何痕迹。stderr 对
     // launchd 应用不可见,这里是我们唯一的现场。
@@ -399,6 +404,11 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                     // Redacted one-liner through the Diagnostics chokepoint;
                     // never the request contents.
                     ipc_diagnostics.info("ipc", "ingress request rejected");
+                    ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    crate::worker::emit(
+                        &ipc_events,
+                        crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                    );
                     IngressResponse::Rejected {
                         // The hook contract requires a neutral outcome + exit 0; the
                         // rejection code is diagnostic only. An unrecognized helper
@@ -420,6 +430,11 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                         &format!("ingress handler panicked: {message}; loop survived"),
                     );
                     ipc_diagnostics.info("ipc", "ingress request rejected");
+                    ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    crate::worker::emit(
+                        &ipc_events,
+                        crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                    );
                     IngressResponse::Rejected {
                         error_code: "unrecognized".to_owned(),
                     }
@@ -529,6 +544,10 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         // Commands push revision notifications onto the same channel the
         // worker uses; the forwarder task above is their only consumer.
         state.runtime.core_events = core_event_sink;
+    }
+    {
+        // v2-issues:IPC 拒绝计数器与命令层共享同一个 Arc(见上方第 6 步)。
+        state.runtime.rejected_ingress = rejected_counter;
     }
     {
         // Production root for the bundled signed helper (manifest + bytes).

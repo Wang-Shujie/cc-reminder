@@ -144,6 +144,11 @@ pub fn project_health(inputs: &HealthInputs) -> HealthSnapshot {
     if inputs.failed_jobs > 0 {
         overall = overall.worst(HealthLevel::Error);
     }
+    // v2-issues:expired(重试耗尽被放弃)与 failed 同为事实失败,不再只
+    // 计数不抬级——用户实感「已经失败却显示健康」正源于这类 omission。
+    if inputs.expired_jobs > 0 {
+        overall = overall.worst(HealthLevel::Error);
+    }
     if inputs.retry_jobs > 0 || inputs.rejected_count > 0 {
         overall = overall.worst(HealthLevel::Warning);
     }
@@ -253,6 +258,16 @@ mod tests {
             ..HealthInputs::default()
         };
         assert_eq!(project_health(&inputs).overall, HealthLevel::Warning);
+    }
+
+    #[test]
+    fn expired_jobs_are_failed_deliveries_and_raise_to_error() {
+        // v2-issues:expired = 重试耗尽被放弃 = 事实失败,必须抬级。
+        let inputs = HealthInputs {
+            expired_jobs: 1,
+            ..HealthInputs::default()
+        };
+        assert_eq!(project_health(&inputs).overall, HealthLevel::Error);
     }
 
     #[test]
