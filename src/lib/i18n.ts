@@ -519,7 +519,7 @@ const zhCn: Dictionary = {
   ehNeedsTrust: "待确认",
   ehAwaitingFirstRun: "等待首次触发",
   trustDoneAwaiting: "Codex 官方确认已完成。显示「等待首次触发」的事件将在其真实发生时自动激活——无需任何操作，也不影响期间的通知投递。",
-  ehAgentUpgradeRequired: "需要升级 Agent",
+  ehAgentUpgradeRequired: "版本未验证(需重装此条目)",
   trustNotice: "Codex 的 Hook 需要在官方界面确认：请运行以下命令后重新检测。",
   // Channels page (Task 18)
   addChannelAction: "添加渠道",
@@ -872,7 +872,7 @@ const en: Dictionary = {
   ehAwaitingFirstRun: "Awaiting first run",
   trustDoneAwaiting:
     "Codex official confirmation is complete. Entries showing “Awaiting first run” activate automatically the first time the event really happens — no action needed, and notifications are not blocked in the meantime.",
-  ehAgentUpgradeRequired: "Agent upgrade required",
+  ehAgentUpgradeRequired: "Unverified version (reinstall needed)",
   trustNotice:
     "Codex hooks need confirmation in the official UI: run the command below, then re-check.",
   // Channels page (Task 18)

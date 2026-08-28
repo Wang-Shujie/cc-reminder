@@ -416,9 +416,11 @@ fn entry_health(
     agent: AgentKind,
     agent_upgrade_required: bool,
 ) -> EntryHealth {
-    if agent_upgrade_required {
-        return EntryHealth::AgentUpgradeRequired;
-    }
+    // v2-issues:agent_upgrade_required 曾在这里短路,把已装且实际健康的条目
+    // 全部盖成"需要升级 Agent"——目录(0.145.0)落后于新版 Agent(0.149.x)
+    // 时永远如此,Agent明明是最新却被要求"升级"。条目级健康反映事实;目录
+    // 未验证由检测摘要与聚合级别表达。(该参数保留给 install 缺失分支使用。)
+    let _ = agent_upgrade_required;
     let Some(row) = row else {
         // Installed on disk but no recorded row: definition is untracked.
         return EntryHealth::Drifted;
@@ -456,8 +458,10 @@ fn aggregate_health(
             EntryHealth::Missing
             | EntryHealth::Drifted
             | EntryHealth::HelperMismatch
-            | EntryHealth::NeedsTrust => HealthAggregate::NeedsRepair,
-            EntryHealth::AgentUpgradeRequired => HealthAggregate::Error,
+            | EntryHealth::NeedsTrust
+            // v2-issues:目录未验证(agent 新于目录)属于"待办"而非"异常",
+            // 与其余修复类同级——曾因 Error 聚合把通路中的新版 Agent 标红。
+            | EntryHealth::AgentUpgradeRequired => HealthAggregate::NeedsRepair,
         };
         worst = max_aggregate(worst, severity);
     }
@@ -547,4 +551,44 @@ fn forced_drift_enabled() -> bool {
 #[cfg(not(feature = "test-support"))]
 fn forced_drift_enabled() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::entry_health;
+    use crate::model::{AgentKind, HookInstallationRecord, InstallationHealth, TrustStatus};
+    use chrono::Utc;
+
+    fn row(trust: TrustStatus) -> HookInstallationRecord {
+        HookInstallationRecord {
+            agent: AgentKind::Codex,
+            source_event: "Stop".into(),
+            command_fingerprint: "cmd".into(),
+            definition_fingerprint: "def".into(),
+            helper_version: "2.0.0".into(),
+            config_hash: "hash".into(),
+            trust_status: trust,
+            health_status: InstallationHealth::Healthy,
+            last_seen_at: Some(Utc::now()),
+        }
+    }
+
+    #[test]
+    fn unverified_catalog_no_longer_masks_real_entry_health() {
+        // v2-issues:agent_upgrade_required 曾在第一行短路,把已装且实际
+        // observed_working 的条目(真实 case:Codex 0.149.1 vs 目录 0.145.0,
+        // Stop 已通过真实触发确认)全部盖成 AgentUpgradeRequired。条目级
+        // 健康必须反映事实;目录未验证由聚合与检测摘要表达。
+        let observed = row(TrustStatus::ObservedWorking);
+        assert_eq!(
+            entry_health(Some(&observed), "cmd", "def", AgentKind::Codex, true),
+            super::EntryHealth::Healthy
+        );
+
+        let pending = row(TrustStatus::NeedsUserConfirmation);
+        assert_eq!(
+            entry_health(Some(&pending), "cmd", "def", AgentKind::Codex, true),
+            super::EntryHealth::NeedsTrust
+        );
+    }
 }
