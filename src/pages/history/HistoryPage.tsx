@@ -7,12 +7,13 @@
 // working directories appear solely as their fingerprint hash — a resolved
 // path never reaches this component through the contract, and no field that
 // could carry one is ever rendered.
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
 
 import { usePageBackend, type Backend } from "../../lib/backend";
 import { errorOf, type PageError } from "../../lib/errors";
 import type {
+  AgentKindCode,
   CoreEventName,
   DeliveryStatusCode,
   HistoryItem,
@@ -27,6 +28,7 @@ interface Filters {
   occurred_from: string;
   occurred_until: string;
   project_id: string;
+  source: string;
   source_event: string;
   channel_id: string;
   delivery_status: string;
@@ -36,6 +38,7 @@ const EMPTY_FILTERS: Filters = {
   occurred_from: "",
   occurred_until: "",
   project_id: "",
+  source: "",
   source_event: "",
   channel_id: "",
   delivery_status: "",
@@ -48,6 +51,7 @@ function filterInput(f: Filters): ListHistoryInput {
     occurred_from: f.occurred_from === "" ? null : `${f.occurred_from}T00:00:00Z`,
     occurred_until: f.occurred_until === "" ? null : `${f.occurred_until}T23:59:59Z`,
     project_id: f.project_id === "" ? null : f.project_id,
+    source: f.source === "" ? null : (f.source as AgentKindCode),
     source_event: f.source_event === "" ? null : f.source_event,
     channel_id: f.channel_id === "" ? null : f.channel_id,
     delivery_status:
@@ -89,19 +93,27 @@ export function HistoryPage({
       : null;
 
   function applyPreset(code: PresetCode): void {
-    setFilters({
-      ...filters,
+    updateFilter({
       delivery_status: code === "all" ? "" : presetStatus[code],
       occurred_from: "",
       occurred_until: "",
     });
   }
-  /** Free-text Hook filter commits on Enter; the draft stays local meanwhile. */
-  const [hookDraft, setHookDraft] = useState("");
   const [items, setItems] = useState<HistoryItem[] | null>(null);
-  const [nextOffset, setNextOffset] = useState<number | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  /** 翻页状态(用户裁决 2026-08-27):pageIndex 从 0 计;hasNext 由后端
+   *  next_offset 是否为 null 推得(后端不回总数,页码显示当前页序号)。 */
+  const [pageIndex, setPageIndex] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
   const [loadError, setLoadError] = useState<PageError | null>(null);
+  /** Hook 下拉选项目录:按 agent 分组的 source_event 集合。 */
+  const [hookCatalog, setHookCatalog] = useState<Partial<Record<AgentKindCode, string[]>>>({});
+  const hookOptions = useMemo(() => {
+    const lists =
+      filters.source === ""
+        ? Object.values(hookCatalog)
+        : [hookCatalog[filters.source as AgentKindCode] ?? []];
+    return [...new Set(lists.flat())].sort();
+  }, [hookCatalog, filters.source]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [channels, setChannels] = useState<{ id: string; name: string }[]>([]);
   /** Open detail drawer; item fills in asynchronously from get_history_detail. */
@@ -144,31 +156,28 @@ export function HistoryPage({
   const seqRef = useRef(0);
 
   const load = useCallback(
-    async (offset: number, append: boolean): Promise<boolean> => {
+    async (targetPage: number): Promise<boolean> => {
       const seq = ++seqRef.current;
       try {
-        const page = await backend.listHistory({
+        const result = await backend.listHistory({
           ...filterInput(filters),
-          offset,
+          offset: targetPage * PAGE_SIZE,
           limit: PAGE_SIZE,
         });
         if (seq !== seqRef.current) {
           return false;
         }
-        setItems((prev) => (append && prev !== null ? [...prev, ...page.items] : page.items));
-        setNextOffset(page.next_offset);
+        setItems(result.items);
+        setHasNext(result.next_offset !== null);
         setLoadError(null);
         return true;
       } catch (e: unknown) {
-        // A superseded failure is discarded too; an append failure keeps the
-        // already-loaded rows.
+        // A superseded failure is discarded too.
         if (seq !== seqRef.current) {
           return false;
         }
-        if (!append) {
-          setItems([]);
-          setNextOffset(null);
-        }
+        setItems([]);
+        setHasNext(false);
         setLoadError(errorOf(e));
         return false;
       }
@@ -182,18 +191,17 @@ export function HistoryPage({
   const refreshVisible = useCallback(
     async (): Promise<boolean> => {
       const seq = ++seqRef.current;
-      const count = items === null || items.length === 0 ? PAGE_SIZE : items.length;
       try {
-        const page = await backend.listHistory({
+        const result = await backend.listHistory({
           ...filterInput(filters),
-          offset: 0,
-          limit: count,
+          offset: pageIndex * PAGE_SIZE,
+          limit: PAGE_SIZE,
         });
         if (seq !== seqRef.current) {
           return false;
         }
-        setItems(page.items);
-        setNextOffset(page.next_offset);
+        setItems(result.items);
+        setHasNext(result.next_offset !== null);
         setLoadError(null);
         return true;
       } catch (e: unknown) {
@@ -204,12 +212,12 @@ export function HistoryPage({
         return false;
       }
     },
-    [backend, filters, items],
+    [backend, filters, pageIndex],
   );
 
   useEffect(() => {
-    void load(0, false);
-  }, [load]);
+    void load(pageIndex);
+  }, [load, pageIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,6 +231,28 @@ export function HistoryPage({
       .listChannels()
       .then((list) => {
         if (!cancelled) setChannels(list.map((c) => ({ id: c.id, name: c.name })));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [backend]);
+
+  // Hook 选项目录来自规则目录(两个 agent 各取一次;失败时退化为"全部")。
+  useEffect(() => {
+    let cancelled = false;
+    const agents = ["claude-code", "codex"] as const;
+    Promise.all(
+      agents.map((agent) =>
+        backend
+          .listHookRules({ agent })
+          .then((rows) => [agent, [...new Set(rows.map((r) => r.source_event))]] as const),
+      ),
+    )
+      .then((entries) => {
+        if (!cancelled) {
+          setHookCatalog(Object.fromEntries(entries));
+        }
       })
       .catch(() => {});
     return () => {
@@ -286,15 +316,26 @@ export function HistoryPage({
     triggerRef.current?.focus();
   }
 
-  function commitHookFilter(): void {
-    setFilters((prev) => ({ ...prev, source_event: hookDraft.trim() }));
+  /** 任何筛选变更都回到第 1 页(翻页语义下的标准行为)。 */
+  function updateFilter(patch: Partial<Filters>): void {
+    setPageIndex(0);
+    setFilters((prev) => ({ ...prev, ...patch }));
   }
 
-  function onHookKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      commitHookFilter();
-    }
+  /** 切 Agent 时,若已选 Hook 不在新目录里则一并清空。 */
+  function setAgentFilter(value: string): void {
+    setPageIndex(0);
+    setFilters((prev) => {
+      const options =
+        value === ""
+          ? Object.values(hookCatalog).flat()
+          : (hookCatalog[value as AgentKindCode] ?? []);
+      return {
+        ...prev,
+        source: value,
+        source_event: options.includes(prev.source_event) ? prev.source_event : "",
+      };
+    });
   }
 
   async function confirmRetry(): Promise<void> {
@@ -383,7 +424,7 @@ export function HistoryPage({
             type="date"
             value={filters.occurred_from}
             onChange={(event) =>
-              setFilters({ ...filters, occurred_from: event.target.value })
+              updateFilter({ occurred_from: event.target.value })
             }
           />
         </label>
@@ -394,7 +435,7 @@ export function HistoryPage({
             type="date"
             value={filters.occurred_until}
             onChange={(event) =>
-              setFilters({ ...filters, occurred_until: event.target.value })
+              updateFilter({ occurred_until: event.target.value })
             }
           />
         </label>
@@ -404,7 +445,7 @@ export function HistoryPage({
             id="hist-project"
             value={filters.project_id}
             onChange={(event) =>
-              setFilters({ ...filters, project_id: event.target.value })
+              updateFilter({ project_id: event.target.value })
             }
           >
             <option value="">{t.filterAll}</option>
@@ -415,16 +456,32 @@ export function HistoryPage({
             ))}
           </select>
         </label>
+        <label htmlFor="hist-agent">
+          {t.colAgent}
+          <select
+            id="hist-agent"
+            value={filters.source}
+            onChange={(event) => setAgentFilter(event.target.value)}
+          >
+            <option value="">{t.filterAll}</option>
+            <option value="claude-code">{t.agentClaudeCode}</option>
+            <option value="codex">{t.agentCodex}</option>
+          </select>
+        </label>
         <label htmlFor="hist-hook">
           {t.colHook}
-          <input
+          <select
             id="hist-hook"
-            type="text"
-            autoComplete="off"
-            value={hookDraft}
-            onChange={(event) => setHookDraft(event.target.value)}
-            onKeyDown={onHookKeyDown}
-          />
+            value={filters.source_event}
+            onChange={(event) => updateFilter({ source_event: event.target.value })}
+          >
+            <option value="">{t.filterAll}</option>
+            {hookOptions.map((hook) => (
+              <option key={hook} value={hook}>
+                {hook}
+              </option>
+            ))}
+          </select>
         </label>
         <label htmlFor="hist-channel">
           {t.navChannels}
@@ -432,7 +489,7 @@ export function HistoryPage({
             id="hist-channel"
             value={filters.channel_id}
             onChange={(event) =>
-              setFilters({ ...filters, channel_id: event.target.value })
+              updateFilter({ channel_id: event.target.value })
             }
           >
             <option value="">{t.filterAll}</option>
@@ -449,7 +506,7 @@ export function HistoryPage({
             id="hist-result"
             value={filters.delivery_status}
             onChange={(event) =>
-              setFilters({ ...filters, delivery_status: event.target.value })
+              updateFilter({ delivery_status: event.target.value })
             }
           >
             <option value="">{t.filterAll}</option>
@@ -484,6 +541,7 @@ export function HistoryPage({
         <thead>
           <tr>
             <th>{t.colTime}</th>
+            <th>{t.colAgent}</th>
             <th>{t.colHook}</th>
             <th>{t.colProject}</th>
             <th>{t.navChannels}</th>
@@ -504,6 +562,7 @@ export function HistoryPage({
               onKeyDown={(event) => rowKeyDown(event, item)}
             >
               <td>{new Date(item.occurred_at).toLocaleString()}</td>
+              <td>{item.source === "codex" ? t.agentCodex : t.agentClaudeCode}</td>
               <td>{item.source_event}</td>
               <td>{item.project_display_name ?? t.unmatchedProject}</td>
               <td>{channelName(item.channel_id)}</td>
@@ -537,19 +596,26 @@ export function HistoryPage({
         <p className="muted">{t.emptyHistory}</p>
       )}
 
-      {nextOffset !== null && items !== null && items.length > 0 && (
-        <div className="row-end">
+      {/* 翻页(用户裁决 2026-08-27):上一页/页码/下一页;后端游标只给
+          next_offset,故显示当前页序号而非总页数。 */}
+      {(pageIndex > 0 || hasNext) && items !== null && items.length > 0 && (
+        <div className="pager">
           <button
             type="button"
             className="cc-focusable"
-            disabled={loadingMore}
-            onClick={() => {
-              setLoadingMore(true);
-              load(nextOffset, true)
-                .finally(() => setLoadingMore(false));
-            }}
+            disabled={pageIndex === 0}
+            onClick={() => setPageIndex(pageIndex - 1)}
           >
-            {loadingMore ? t.loading : t.loadMore}
+            {t.prevPage}
+          </button>
+          <span className="muted">{t.pageInfo.replace("{page}", String(pageIndex + 1))}</span>
+          <button
+            type="button"
+            className="cc-focusable"
+            disabled={!hasNext}
+            onClick={() => setPageIndex(pageIndex + 1)}
+          >
+            {t.nextPage}
           </button>
         </div>
       )}

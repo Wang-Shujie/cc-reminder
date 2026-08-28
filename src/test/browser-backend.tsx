@@ -690,6 +690,7 @@ export class BrowserTestBackend implements Backend {
     const filtered = this.historyState.filter((item) => {
       if (input.delivery_status && item.delivery_status !== input.delivery_status) return false;
       if (input.project_id && item.project_id !== input.project_id) return false;
+      if (input.source && item.source !== input.source) return false;
       if (input.source_event && item.source_event !== input.source_event) return false;
       if (input.channel_id && item.channel_id !== input.channel_id) return false;
       if (input.occurred_from && item.occurred_at < input.occurred_from) return false;

@@ -6,6 +6,8 @@ import userEvent from "@testing-library/user-event";
 
 import {
   PROJECT_ID,
+  claudeRulesFixtures,
+  codexRulesFixtures,
   configuredBackend,
   testChannelSummary,
   type FakeBackend,
@@ -109,6 +111,8 @@ function historyBackend(items: HistoryItem[], extra = {}): FakeBackend {
     historyItems: items,
     channels: [testChannelSummary()],
     projects: [demoProject()],
+    // Hook 下拉目录来自规则目录(两个 agent 各一份)。
+    rules: [...claudeRulesFixtures(), ...codexRulesFixtures()],
     ...extra,
   });
 }
@@ -194,16 +198,52 @@ test("time/project/Hook/channel filters reach the backend", async () => {
       expect.objectContaining({ channel_id: "ch-1" }),
     ),
   );
-  // The Hook filter is free-text committed with Enter.
-  await user.type(screen.getByLabelText("Hook"), "Stop{Enter}");
+  // Agent 渠道筛选 + Hook 下拉(2026-08-27 用户裁决:Hook 不再是自由文本)。
+  await user.selectOptions(screen.getByLabelText("Agent"), "codex");
   await waitFor(() =>
     expect(backend.listHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ source_event: "Stop" }),
+      expect.objectContaining({ source: "codex" }),
+    ),
+  );
+  await user.selectOptions(screen.getByLabelText("Hook"), "Stop");
+  await waitFor(() =>
+    expect(backend.listHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "codex", source_event: "Stop" }),
     ),
   );
 });
 
-test("pagination honors next_offset and disappears at the end", async () => {
+test("Hook options follow the selected agent and reset on agent change", async () => {
+  const backend = historyBackend([mkItem("evt-codex", { source: "codex", source_event: "SessionEnd" })]);
+  const user = userEvent.setup();
+  render(<HistoryPage backend={backend} />);
+  await screen.findByRole("table");
+
+  // 全部 agent:两份目录的并集。
+  const hookSelect = screen.getByLabelText("Hook") as HTMLSelectElement;
+  await waitFor(() => expect(hookSelect.options.length).toBeGreaterThan(2));
+  const allOptions = [...hookSelect.options].map((o) => o.value);
+  expect(allOptions).toContain("Stop");
+  expect(allOptions).toContain("SessionEnd");
+
+  // 选定 codex:只剩 codex 目录;不兼容的已选 Hook 被清空。
+  await user.selectOptions(screen.getByLabelText("Agent"), "codex");
+  await waitFor(() => {
+    const values = [...(screen.getByLabelText("Hook") as HTMLSelectElement).options].map(
+      (o) => o.value,
+    );
+    expect(values).toContain("SessionEnd");
+    expect(values).not.toContain("PreToolUse");
+  });
+  // 空筛选在 filterInput 中序列化为 null(与后端 DTO 的可空语义一致)。
+  await waitFor(() =>
+    expect(backend.listHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: "codex", source_event: null }),
+    ),
+  );
+});
+
+test("pagination pages through results with prev/next", async () => {
   const items = Array.from({ length: 12 }, (_, i) => mkItem(`evt-${i}`));
   const backend = historyBackend(items);
   const user = userEvent.setup();
@@ -216,13 +256,22 @@ test("pagination honors next_offset and disappears at the end", async () => {
   expect(backend.listHistory).toHaveBeenCalledWith(
     expect.objectContaining({ offset: 0, limit: 10 }),
   );
+  expect(screen.getByText("第 1 页")).toBeVisible();
+  expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
 
-  await user.click(screen.getByRole("button", { name: "加载更多" }));
-  await waitFor(() => expect(screen.getAllByRole("row").length - 1).toBe(12));
+  await user.click(screen.getByRole("button", { name: "下一页" }));
+  await waitFor(() => expect(screen.getAllByRole("row").length - 1).toBe(2));
   expect(backend.listHistory).toHaveBeenCalledWith(
     expect.objectContaining({ offset: 10, limit: 10 }),
   );
-  expect(screen.queryByRole("button", { name: "加载更多" })).not.toBeInTheDocument();
+  expect(screen.getByText("第 2 页")).toBeVisible();
+  expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+
+  await user.click(screen.getByRole("button", { name: "上一页" }));
+  await waitFor(() => expect(screen.getByText("第 1 页")).toBeVisible());
+  expect(backend.listHistory).toHaveBeenLastCalledWith(
+    expect.objectContaining({ offset: 0, limit: 10 }),
+  );
 });
 
 test("detail shows attempt timeline and only the fingerprint for unmatched cwd", async () => {

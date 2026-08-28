@@ -19,6 +19,7 @@ describe("TauriBackend wire payloads", () => {
     const backend = new TauriBackend();
     await backend.listHistory({
       delivery_status: "failed",
+      source: "codex",
       source_event: "Stop",
       offset: 100,
       limit: 50,
@@ -26,7 +27,7 @@ describe("TauriBackend wire payloads", () => {
     expect(invoke).toHaveBeenCalledWith("list_history", {
       // offset/limit MUST travel only in `page`; HistoryFilterInput on the
       // Rust side rejects unknown fields.
-      filter: { delivery_status: "failed", source_event: "Stop" },
+      filter: { delivery_status: "failed", source: "codex", source_event: "Stop" },
       page: { offset: 100, limit: 50 },
     });
 

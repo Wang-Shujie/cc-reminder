@@ -272,7 +272,9 @@ export interface Dictionary {
   retryConfirmNote: string;
   confirmRetry: string;
   retryQueued: string;
-  loadMore: string;
+  prevPage: string;
+  pageInfo: string;
+  nextPage: string;
   emptyHistory: string;
   presetLabel: string;
   presetFailed: string;
@@ -607,7 +609,9 @@ const zhCn: Dictionary = {
   retryConfirmNote: "该任务将立即重新投递到原渠道。",
   confirmRetry: "确认重试",
   retryQueued: "重试已加入队列。",
-  loadMore: "加载更多",
+  prevPage: "上一页",
+  pageInfo: "第 {page} 页",
+  nextPage: "下一页",
   emptyHistory: "暂无通知历史",
   presetLabel: "快捷筛选",
   presetFailed: "失败",
@@ -953,7 +957,9 @@ const en: Dictionary = {
   retryConfirmNote: "The job will be redelivered to its original channel immediately.",
   confirmRetry: "Retry now",
   retryQueued: "Re-delivery queued.",
-  loadMore: "Load more",
+  prevPage: "Previous",
+  pageInfo: "Page {page}",
+  nextPage: "Next",
   emptyHistory: "No notification history",
   presetLabel: "Quick filters",
   presetFailed: "Failed",

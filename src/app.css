@@ -1368,6 +1368,15 @@ input[type="radio"]:checked::after {
   font-size: 13px;
 }
 
+/* 翻页行:居中三件套(上一页/页码/下一页)。 */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+
 .detail-meta dt {
   color: var(--ink-2);
 }
