@@ -25,7 +25,7 @@ function deferred(): {
   return { promise, resolve };
 }
 
-test("settings use native controls and persist exact values", async () => {
+test("settings use native controls and auto-persist exact values", async () => {
   const backend = settingsBackend();
   const user = userEvent.setup();
   render(<SettingsPage backend={backend} />);
@@ -33,9 +33,11 @@ test("settings use native controls and persist exact values", async () => {
   await user.selectOptions(screen.getByLabelText("语言"), "en");
   await user.clear(screen.getByLabelText("历史保留天数"));
   await user.type(screen.getByLabelText("历史保留天数"), "14");
-  await user.click(screen.getByRole("button", { name: "保存" }));
-  expect(backend.saveSettings).toHaveBeenCalledWith(
-    expect.objectContaining({ autostart: true, locale: "en", event_retention_days: 14 }),
+  // 自动保存(2026-08-28):数字输入防抖合并后,最后一次调用携带全量终值。
+  await waitFor(() =>
+    expect(backend.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ autostart: true, locale: "en", event_retention_days: 14 }),
+    ),
   );
 });
 
@@ -47,10 +49,9 @@ test("close-to-tray and the theme radio group persist too", async () => {
   await user.click(screen.getByRole("radio", { name: "深色" }));
   await user.clear(screen.getByLabelText("历史保留天数"));
   await user.type(screen.getByLabelText("历史保留天数"), "30");
-  await user.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() =>
-    expect(backend.saveSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ close_to_tray: false, theme: "dark" }),
+    expect(backend.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ close_to_tray: false, theme: "dark", event_retention_days: 30 }),
     ),
   );
 });
@@ -62,9 +63,10 @@ test("retention days outside 1-365 are rejected before saving", async () => {
   const days = await screen.findByLabelText("历史保留天数");
   await user.clear(days);
   await user.type(days, "366");
-  await user.click(screen.getByRole("button", { name: "保存" }));
-  expect(backend.saveSettings).not.toHaveBeenCalled();
+  // 非法值即时提示;防抖到点后 saveNow 同样拒绝——绝不触达后端。
   expect(screen.getByRole("alert")).toHaveTextContent(/1–365/);
+  await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+  expect(backend.saveSettings).not.toHaveBeenCalled();
 });
 
 test("pause uses setNotificationPause; resume clears it and shows paused_until", async () => {

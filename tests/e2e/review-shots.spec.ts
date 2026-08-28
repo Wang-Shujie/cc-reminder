@@ -71,8 +71,8 @@ test("capture native-mac redesign screenshots", async ({ page }) => {
   // Dark pass: applied through the real settings flow so persistence runs.
   await page.getByRole("button", { name: "设置" }).click();
   await page.locator("#settings-event-days").waitFor();
+  // 自动保存(2026-08-28):选暗色即生效并持久化,无保存按钮。
   await page.getByRole("radio", { name: "深色" }).check();
-  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.locator("html[data-theme=dark]")).toHaveCount(1);
 
   for (const [label, name, settle] of PAGES) {

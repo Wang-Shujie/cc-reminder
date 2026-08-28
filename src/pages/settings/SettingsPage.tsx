@@ -5,7 +5,7 @@
 // Task 20 fix round 1: the diagnostics export opens its save dialog inside
 // the core (no path crosses the bridge), and a bounded debug-logging window
 // (关闭 / 15 分钟 / 60 分钟) is reachable from here.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePageBackend, type Backend } from "../../lib/backend";
 import { ChannelsPage } from "../channels/ChannelsPage";
@@ -67,7 +67,6 @@ export function SettingsPage({
   const [debugBusy, setDebugBusy] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
 
-  const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<PageError | null>(null);
@@ -153,39 +152,120 @@ export function SettingsPage({
     };
   }, [backend]);
 
-  async function save(): Promise<void> {
-    const eventRetention = parseRetentionDays(eventDays);
-    const logRetention = parseRetentionDays(logDays);
+  // 自动保存(2026-08-28 用户裁决):整页不再有保存按钮。saveNow 永远读
+  // ref 里的最新表单值——防抖回调不会拿到过期闭包;勾选/单选/下拉即时存,
+  // 数字与模板输入防抖 600ms 合并。序号丢弃过期响应的 UI 反馈。
+  const autoFormRef = useRef({
+    autostart,
+    closeToTray,
+    uiLocale,
+    theme,
+    eventDays,
+    logDays,
+    template,
+    onboardingCompleted,
+  });
+  autoFormRef.current = {
+    autostart,
+    closeToTray,
+    uiLocale,
+    theme,
+    eventDays,
+    logDays,
+    template,
+    onboardingCompleted,
+  };
+  const saveSeqRef = useRef(0);
+  const saveTimerRef = useRef<number | null>(null);
+
+  const saveNow = useCallback(async (): Promise<void> => {
+    if (!hydrated) {
+      return;
+    }
+    const form = autoFormRef.current;
+    const eventRetention = parseRetentionDays(form.eventDays);
+    const logRetention = parseRetentionDays(form.logDays);
     if (eventRetention === null || logRetention === null) {
       setSavedOk(false);
       setValidationError(t.retentionBounds);
       return;
     }
-    setSaving(true);
-    setSavedOk(false);
     setValidationError(null);
     setActionError(null);
+    const seq = ++saveSeqRef.current;
     const input: SaveSettingsInput = {
-      autostart,
-      close_to_tray: closeToTray,
-      locale: uiLocale,
-      theme,
+      autostart: form.autostart,
+      close_to_tray: form.closeToTray,
+      locale: form.uiLocale,
+      theme: form.theme,
       event_retention_days: eventRetention,
       log_retention_days: logRetention,
-      onboarding_completed: onboardingCompleted,
-      notification_template: template.trim() === "" ? null : template,
+      onboarding_completed: form.onboardingCompleted,
+      notification_template: form.template.trim() === "" ? null : form.template,
     };
     try {
       const view = await backend.saveSettings(input);
+      if (seq !== saveSeqRef.current) {
+        return;
+      }
       persistedThemeRef.current = view.theme;
       setPausedUntil(view.paused_until);
       setOnboardingCompleted(view.onboarding_completed);
       setSavedOk(true);
     } catch (e: unknown) {
+      if (seq !== saveSeqRef.current) {
+        return;
+      }
       setActionError(errorOf(e));
-    } finally {
-      setSaving(false);
     }
+  }, [backend, hydrated, t]);
+
+  function scheduleSave(immediate: boolean, patch?: Partial<SaveSettingsInput>): void {
+    if (!hydrated) {
+      return;
+    }
+    // setState 后同步调用时组件尚未重渲染,ref 仍是旧值——调用方必须把
+    // 本次的变更作为 patch 显式并入,否则即时保存会把旧值写回(实测竞态)。
+    if (patch !== undefined) {
+      autoFormRef.current = { ...autoFormRef.current, ...patch };
+    }
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (immediate) {
+      void saveNow();
+      return;
+    }
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void saveNow();
+    }, 600);
+  }
+
+  useEffect(
+    () => () => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  /** 保留天数输入:非法值即时提示且不入队保存;合法值防抖自动保存。 */
+  function changeRetentionDays(
+    setter: (value: string) => void,
+    field: "event_retention_days" | "log_retention_days",
+  ): (value: string) => void {
+    return (value: string) => {
+      setter(value);
+      if (parseRetentionDays(value) === null) {
+        setValidationError(t.retentionBounds);
+        return;
+      }
+      setValidationError(null);
+      scheduleSave(false, { [field]: Number.parseInt(value, 10) });
+    };
   }
 
   async function pause(duration: PauseDurationCode): Promise<void> {
@@ -314,7 +394,10 @@ export function SettingsPage({
             type="checkbox"
             checked={autostart}
             disabled={!hydrated}
-            onChange={(event) => setAutostart(event.target.checked)}
+            onChange={(event) => {
+              setAutostart(event.target.checked);
+              scheduleSave(true, { autostart: event.target.checked });
+            }}
           />
           <span>{t.autostartLabel}</span>
         </label>
@@ -323,7 +406,10 @@ export function SettingsPage({
             type="checkbox"
             checked={closeToTray}
             disabled={!hydrated}
-            onChange={(event) => setCloseToTray(event.target.checked)}
+            onChange={(event) => {
+              setCloseToTray(event.target.checked);
+              scheduleSave(true, { close_to_tray: event.target.checked });
+            }}
           />
           <span>{t.closeToTrayLabel}</span>
         </label>
@@ -337,7 +423,10 @@ export function SettingsPage({
           id="settings-language"
           value={uiLocale}
           disabled={!hydrated}
-          onChange={(event) => setUiLocale(event.target.value as LocaleCode)}
+          onChange={(event) => {
+            setUiLocale(event.target.value as LocaleCode);
+            scheduleSave(true, { locale: event.target.value as LocaleCode });
+          }}
         >
           <option value="zh_cn">{t.langZh}</option>
           <option value="en">{t.langEn}</option>
@@ -360,7 +449,10 @@ export function SettingsPage({
               }
               checked={theme === code}
               disabled={!hydrated}
-              onChange={() => applyTheme(code)}
+              onChange={() => {
+                applyTheme(code);
+                scheduleSave(true, { theme: code });
+              }}
             />
             <span>
               {code === "system"
@@ -381,7 +473,7 @@ export function SettingsPage({
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void save();
+          scheduleSave(true);
         }}
       >
         <h2>{t.retentionSection}</h2>
@@ -393,7 +485,10 @@ export function SettingsPage({
           max={RETENTION_MAX}
           value={eventDays}
           disabled={!hydrated}
-          onChange={(event) => setEventDays(event.target.value)}
+          onChange={(event) => {
+            setEventDays(event.target.value);
+            changeRetentionDays(setEventDays, "event_retention_days")(event.target.value);
+          }}
         />
         <label htmlFor="settings-log-days">{t.logRetentionLabel}</label>
         <input
@@ -403,17 +498,12 @@ export function SettingsPage({
           max={RETENTION_MAX}
           value={logDays}
           disabled={!hydrated}
-          onChange={(event) => setLogDays(event.target.value)}
+          onChange={(event) => {
+            setLogDays(event.target.value);
+            changeRetentionDays(setLogDays, "log_retention_days")(event.target.value);
+          }}
         />
-        <div className="row-end">
-          <button
-            type="submit"
-            className="primary cc-focusable"
-            disabled={saving || !hydrated}
-          >
-            {t.saveBtn}
-          </button>
-        </div>
+        {/* 自动保存:无保存按钮(2026-08-28);Enter 立即存一次。 */}
       </form>
 
       {/* Notification pause */}
@@ -556,7 +646,12 @@ export function SettingsPage({
       <div className="settings-channel-add">
         <ChannelsSectionTemplate
           template={template}
-          onTemplateChange={setTemplate}
+          onTemplateChange={(value) => {
+            setTemplate(value);
+            scheduleSave(false, {
+              notification_template: value.trim() === "" ? null : value,
+            });
+          }}
           locale={locale}
         />
       </div>

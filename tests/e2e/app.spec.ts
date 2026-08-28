@@ -282,10 +282,10 @@ test.describe("desktop layout coverage", () => {
     await openPage(page, "设置");
     await page.locator("#settings-event-days").waitFor();
 
-    // Dark: applied live, persisted via 保存, and survives page switches.
+    // Dark: applied live, auto-saved (2026-08-28: no save button), and
+    // survives page switches.
     await page.getByRole("radio", { name: "深色" }).check();
     await expect(page.locator("html[data-theme=dark]")).toHaveCount(1);
-    await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(page.getByText("设置已保存。")).toBeVisible();
     await openPage(page, "通知规则");
     await page.getByRole("row", { name: /Stop/ }).waitFor();
