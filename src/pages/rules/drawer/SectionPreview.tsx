@@ -43,19 +43,21 @@ export function SectionPreview({
     () => channels[0]?.id ?? "",
   );
 
-  // 重同步复位:回到新规则视图的干净瞬态(初始 tick 也无害,目标值同初值)。
+  // 重同步复位:回执与渠道选择回到干净瞬态(初始 tick 也无害,目标值同初值)。
   useEffect(() => {
-    setPreviewDoc(null);
-    setPreviewError(null);
     setSentOk(false);
     setSendChannelId(channels[0]?.id ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetTick]);
 
   // Debounced redacted preview: monotonic request id drops stale responses.
+  // resetTick 在依赖里:壳的每次重同步(补丁提交/恢复继承)都重新拉取预览,
+  // 否则复位清掉的 previewDoc 不会再回来(满载 e2e 抓到的潜伏 bug)。
   const requestSeq = useRef(0);
   useEffect(() => {
     const id = ++requestSeq.current;
+    setPreviewDoc(null);
+    setPreviewError(null);
     const timer = setTimeout(() => {
       backend
         .previewNotification({
@@ -81,7 +83,7 @@ export function SectionPreview({
     };
   // Deps deliberately exclude unsaved text: the preview shows the SAVED
   // config (已保存配置的预览), so typing must not imply a refetch.
-  }, [backend, agent, sourceEvent, projectId]);
+  }, [backend, agent, sourceEvent, projectId, resetTick]);
 
   return (
     <>

@@ -774,7 +774,8 @@ input[type="radio"]:checked::after {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  /* 125px:五张指标卡在 960 最小窗宽(内容区 696px)恰好单行。 */
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
   gap: 12px;
   align-items: stretch;
   margin: 0;
