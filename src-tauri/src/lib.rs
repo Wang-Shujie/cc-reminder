@@ -239,10 +239,20 @@ fn shutdown_core(app: &tauri::AppHandle) {
         // Awaiting the join handle covers "active sends finish": `run` only
         // returns after the current pass completes, so this waits for real
         // work, not just the cancellation handshake.
-        let _ = tauri::async_runtime::block_on(tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            task,
-        ));
+        //
+        // v2-issues(实机日志 2026-08-27):`tauri::async_runtime::block_on` 在
+        // RunEvent::Exit 上没有 reactor 上下文,每次退出都 panic→abort,10s
+        // 排水从未生效过。这里自建一次性 current-thread runtime 来等待——
+        // 退出路径只等这一个 handle,不需要 tauri 的多线程运行时。
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        if let Ok(runtime) = runtime {
+            let _ = runtime.block_on(tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                task,
+            ));
+        }
     }
 }
 
