@@ -15,22 +15,37 @@ export function AppRoot(): ReactNode {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | null = null;
     // getTimezoneOffset is minutes WEST of UTC, so negate it for the core's
     // east-positive seconds. Reported at first paint of every session so the
     // core can persist it and evaluate quiet hours in local time (same
     // frontend-reported pattern as the notification pause).
-    backend
-      .getBootstrapState(-new Date().getTimezoneOffset() * 60)
-      .then((state) => {
-        if (!cancelled) {
-          setBoot(state);
-        }
-      })
-      .catch(() => {
-        /* no Tauri runtime (tests) or transient failure: stay on loading */
-      });
+    //
+    // v2-issues:core 初始化已后台化——钥匙串加载期间命令可能报
+    // core_starting,这里轮询重试直到 bootstrap 成功,而不是永远停在
+    // loading 屏。
+    const offset = -new Date().getTimezoneOffset() * 60;
+    const load = () => {
+      backend
+        .getBootstrapState(offset)
+        .then((state) => {
+          if (!cancelled) {
+            setBoot(state);
+          }
+        })
+        .catch(() => {
+          // no Tauri runtime (tests) or core still starting: retry shortly
+          if (!cancelled) {
+            timer = window.setTimeout(load, 400);
+          }
+        });
+    };
+    load();
     return () => {
       cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [backend]);
 
