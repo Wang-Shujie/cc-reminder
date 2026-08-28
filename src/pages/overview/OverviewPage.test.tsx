@@ -184,6 +184,12 @@ test("retry and expired counts mirror the shared snapshot", async () => {
   expect(within(plate("已过期")).getByText("5")).toBeVisible();
 });
 
+test("sent count mirrors the shared snapshot", async () => {
+  render(<OverviewPage backend={healthBackend({ succeeded_jobs: 7 })} />);
+  expect(await screen.findByText("已发送")).toBeVisible();
+  expect(within(plate("已发送")).getByText("7")).toBeVisible();
+});
+
 test("last success time is shown; a never-succeeded queue says so", async () => {
   const { unmount } = render(
     <OverviewPage backend={healthBackend({ last_success_at: "2026-08-20T09:30:00+08:00" })} />,

@@ -118,6 +118,10 @@ export function OverviewPage({
       {/* Compact metric strip — counts mirror the shared snapshot verbatim. */}
       <ul className="metric-strip">
         <li className="metric-plate">
+          <span className="metric-number">{snapshot.succeeded_jobs}</span>
+          <span className="metric-label">{t.metricLabelSent}</span>
+        </li>
+        <li className="metric-plate">
           <span className="metric-number">{snapshot.pending_jobs}</span>
           <span className="metric-label">{t.metricLabelPending}</span>
         </li>

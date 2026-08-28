@@ -286,6 +286,7 @@ fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> 
         retry_jobs: stats.retry_wait,
         failed_jobs: stats.failed,
         expired_jobs: stats.expired,
+        succeeded_jobs: stats.succeeded,
         spool_count: 0,
         rejected_count: 0,
         last_success_at: last_success(&channels),

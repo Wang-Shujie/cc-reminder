@@ -85,6 +85,8 @@ export interface HealthSnapshot {
   retry_jobs: number;
   failed_jobs: number;
   expired_jobs: number;
+  /** Cumulative delivered jobs (state=succeeded) — the 已发送 overview card. */
+  succeeded_jobs: number;
   last_success_at: string | null;
   issues: HealthIssue[];
 }

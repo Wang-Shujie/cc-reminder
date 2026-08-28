@@ -246,6 +246,7 @@ export interface Dictionary {
   metricLabelRetry: string;
   metricLabelFailed: string;
   metricLabelExpired: string;
+  metricLabelSent: string;
   lastSuccessLabel: string;
   overviewIssues: string;
   recentFailuresTitle: string;
@@ -580,6 +581,7 @@ const zhCn: Dictionary = {
   metricLabelRetry: "等待重试",
   metricLabelFailed: "失败任务",
   metricLabelExpired: "已过期",
+  metricLabelSent: "已发送",
   lastSuccessLabel: "上次成功：{time}",
   overviewIssues: "待处理问题",
   recentFailuresTitle: "最近失败",
@@ -925,6 +927,7 @@ const en: Dictionary = {
   metricLabelRetry: "Retrying",
   metricLabelFailed: "Failed",
   metricLabelExpired: "Expired",
+  metricLabelSent: "Sent",
   lastSuccessLabel: "Last success: {time}",
   overviewIssues: "Open issues",
   recentFailuresTitle: "Recent failures",

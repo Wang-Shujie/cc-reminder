@@ -82,6 +82,7 @@ export function okSnapshot(): HealthSnapshot {
     retry_jobs: 0,
     failed_jobs: 0,
     expired_jobs: 0,
+    succeeded_jobs: 0,
     last_success_at: null,
     issues: [],
   };
