@@ -222,3 +222,14 @@ test("debug logging select maps 关闭/15 分钟/60 分钟 to setDebugLogging du
     expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 0 }),
   );
 });
+
+test("the settings page embeds the add-channel form (integration page links here)", async () => {
+  // v2-issues:集成页「添加渠道」箭头跳到设置页,表单必须真实存在。
+  const backend = settingsBackend();
+  render(<SettingsPage backend={backend} />);
+
+  const form = await screen.findByRole("form", { name: "添加渠道" });
+  expect(form).toBeVisible();
+  expect(screen.getByLabelText("渠道名称")).toBeVisible();
+  expect(screen.getByLabelText("Webhook")).toBeVisible();
+});

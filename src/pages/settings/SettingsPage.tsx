@@ -682,6 +682,13 @@ export function SettingsPage({
           )}
         </section>
 
+        {/* 添加渠道(v2-issues:集成页「添加渠道」箭头跳转到这里,表单
+            必须真实存在——variant=add 只渲染添加表单,不带表格。) */}
+        <section className="settings-group" aria-label={t.addChannelAction}>
+          <h2>{t.addChannelAction}</h2>
+          <ChannelsPage locale={locale} backend={injected} variant="add" showHeading={false} />
+        </section>
+
         {/* 通知模板 */}
         <ChannelsSectionTemplate
           template={template}
