@@ -1522,6 +1522,12 @@ input[type="radio"]:checked::after {
   margin-left: auto;
 }
 
+/* 全局开关配方(:not 链特异性更高)会把 margin 归零压掉上面的 auto——
+   同特异性 + 靠后源序才能赢(实测截图:开关黏在文字后)。 */
+.switch-row > input[type="checkbox"]:not(.check-row input):not(.weekday input) {
+  margin: 0 0 0 auto;
+}
+
 .switch-row + .switch-row {
   margin-top: 8px;
 }

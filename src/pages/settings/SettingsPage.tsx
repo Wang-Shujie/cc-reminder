@@ -366,11 +366,10 @@ export function SettingsPage({
         </p>
       )}
       {validationError !== null && <p role="alert">{validationError}</p>}
-      {savedOk && (
-        <p role="status" className="muted">
-          {t.savedOk}
-        </p>
-      )}
+      {/* 静默保存(2026-08-28 用户裁决):视觉不出现"已保存",仅读屏播报。 */}
+      <p role="status" className="sr-only">
+        {savedOk ? t.savedOk : ""}
+      </p>
 
       {/* CC Switch 式重排(2026-08-28 用户裁决):无卡片框,单列分组,
           每组 = 标题 + 灰色说明 + 控件;选择类为分段胶囊(原生 radio 语义,
