@@ -292,8 +292,17 @@ export interface Dictionary {
   unmatchedProject: string;
   // Settings page (Task 19)
   sectionStartup: string;
-  sectionLanguageTheme: string;
+  sectionLanguage: string;
+  languageHint: string;
+  themeSectionTitle: string;
+  themeHint: string;
+  autostartDesc: string;
+  closeToTrayDesc: string;
+  retentionHint: string;
+  pauseHint: string;
   sectionDebugUpdate: string;
+  debugHint: string;
+  updateHint: string;
   autostartLabel: string;
   closeToTrayLabel: string;
   languageLabel: string;
@@ -631,8 +640,17 @@ const zhCn: Dictionary = {
   unmatchedProject: "未匹配项目",
   // Settings page (Task 19)
   sectionStartup: "启动与窗口",
-  sectionLanguageTheme: "语言与主题",
+  sectionLanguage: "界面语言",
+  languageHint: "应用界面与通知文案使用的语言。",
+  themeSectionTitle: "外观主题",
+  themeHint: "选择明暗外观，立即生效。",
+  autostartDesc: "登录时自动启动并在后台待命。",
+  closeToTrayDesc: "点击关闭按钮时隐藏到托盘，而不是退出应用。",
+  retentionHint: "超过保留期的历史事件与日志会被自动清理。",
+  pauseHint: "临时暂停所有通知投递。",
   sectionDebugUpdate: "调试与更新",
+  debugHint: "打开限时实时日志窗口，到时自动关闭。",
+  updateHint: "检查并安装新版本。",
   autostartLabel: "开机启动",
   closeToTrayLabel: "关闭时最小化到托盘",
   languageLabel: "语言",
@@ -981,8 +999,17 @@ const en: Dictionary = {
   unmatchedProject: "Unmatched project",
   // Settings page (Task 19)
   sectionStartup: "Startup and window",
-  sectionLanguageTheme: "Language & theme",
+  sectionLanguage: "Language",
+  languageHint: "Language used across the app and notification copy.",
+  themeSectionTitle: "Appearance",
+  themeHint: "Pick a light or dark appearance. Applies immediately.",
+  autostartDesc: "Launch at login and stay in the background.",
+  closeToTrayDesc: "Closing the window hides to the tray instead of quitting.",
+  retentionHint: "History events and logs past the retention window are cleaned up automatically.",
+  pauseHint: "Temporarily pause all notification delivery.",
   sectionDebugUpdate: "Debugging & updates",
+  debugHint: "Opens a time-boxed live log window that closes itself.",
+  updateHint: "Check for and install new versions.",
   autostartLabel: "Launch at login",
   closeToTrayLabel: "Close to tray",
   languageLabel: "Language",

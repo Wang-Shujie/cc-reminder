@@ -30,7 +30,7 @@ test("settings use native controls and auto-persist exact values", async () => {
   const user = userEvent.setup();
   render(<SettingsPage backend={backend} />);
   await user.click(screen.getByRole("checkbox", { name: "开机启动" }));
-  await user.selectOptions(screen.getByLabelText("语言"), "en");
+  await user.click(screen.getByRole("radio", { name: "English" }));
   await user.clear(screen.getByLabelText("历史保留天数"));
   await user.type(screen.getByLabelText("历史保留天数"), "14");
   // 自动保存(2026-08-28):数字输入防抖合并后,最后一次调用携带全量终值。
@@ -95,7 +95,7 @@ test("a changed language discloses that it applies after a restart", async () =>
   // Hydrated saved locale matches the applied one: no hint.
   await screen.findByLabelText("语言");
   expect(screen.queryByText(/重启后生效/)).not.toBeInTheDocument();
-  await user.selectOptions(screen.getByLabelText("语言"), "en");
+  await user.click(screen.getByRole("radio", { name: "English" }));
   expect(screen.getByText("语言将在重启应用后生效。")).toBeVisible();
 });
 
@@ -206,18 +206,18 @@ test("debug logging select maps 关闭/15 分钟/60 分钟 to setDebugLogging du
   const user = userEvent.setup();
   render(<SettingsPage backend={backend} />);
 
-  const select = await screen.findByLabelText("调试日志时长");
-  await user.selectOptions(select, "15");
+  // 分段胶囊(原生 radio,2026-08-28):点选即时生效。
+  await user.click(await screen.findByRole("radio", { name: "15 分钟" }));
   await waitFor(() =>
     expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 15 }),
   );
 
-  await user.selectOptions(select, "60");
+  await user.click(screen.getByRole("radio", { name: "60 分钟" }));
   await waitFor(() =>
     expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 60 }),
   );
 
-  await user.selectOptions(select, "0");
+  await user.click(screen.getByRole("radio", { name: "关闭" }));
   await waitFor(() =>
     expect(backend.setDebugLogging).toHaveBeenCalledWith({ duration_minutes: 0 }),
   );

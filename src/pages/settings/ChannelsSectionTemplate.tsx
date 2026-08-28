@@ -17,11 +17,9 @@ export function ChannelsSectionTemplate({
 }): ReactNode {
   const t = dictionary(locale);
   return (
-    <div className="settings-section">
+    <section className="settings-group" aria-label={t.templateLabel}>
       <h2>{t.templateLabel}</h2>
-      <label className="field-label" htmlFor="settings-template">
-        {t.templateHelp}
-      </label>
+      <p className="settings-hint">{t.templateHelp}</p>
       <textarea
         id="settings-template"
         value={template}
@@ -36,6 +34,6 @@ export function ChannelsSectionTemplate({
       >
         <RotateCcw size={14} aria-hidden="true" /> {t.templateReset}
       </button>
-    </div>
+    </section>
   );
 }

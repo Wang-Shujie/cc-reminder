@@ -21,6 +21,8 @@ import type {
   ThemeCode,
   UpdateCheckResult,
 } from "../../lib/contracts";
+import { Monitor, Moon, Sun } from "lucide-react";
+
 import { dictionary } from "../../lib/i18n";
 
 const RETENTION_MIN = 1;
@@ -84,18 +86,6 @@ export function SettingsPage({
   /** Set when a dialog closes so the post-commit effect can restore focus
    *  (restoring synchronously races the dialog's own unmount). */
   const pendingFocusRestore = useRef(false);
-  /** Last persisted theme; restores the live preview when leaving the page
-   *  without saving. */
-  const persistedThemeRef = useRef<ThemeCode>("system");
-
-  useEffect(() => {
-    // Unmount cleanup: undo any unsaved theme preview so AppShell's persisted
-    // theme applies again.
-    return () => {
-      document.documentElement.dataset.theme = persistedThemeRef.current;
-    };
-  }, []);
-
   useEffect(() => {
     if (!installConfirmOpen && pendingFocusRestore.current) {
       pendingFocusRestore.current = false;
@@ -120,7 +110,6 @@ export function SettingsPage({
         setCloseToTray(view.close_to_tray);
         setUiLocale(view.locale);
         setTheme(view.theme);
-        persistedThemeRef.current = view.theme;
         setEventDays(String(view.event_retention_days));
         setLogDays(String(view.log_retention_days));
         setOnboardingCompleted(view.onboarding_completed);
@@ -208,7 +197,6 @@ export function SettingsPage({
       if (seq !== saveSeqRef.current) {
         return;
       }
-      persistedThemeRef.current = view.theme;
       setPausedUntil(view.paused_until);
       setOnboardingCompleted(view.onboarding_completed);
       setSavedOk(true);
@@ -384,66 +372,92 @@ export function SettingsPage({
         </p>
       )}
 
-      {/* 设置重排版(用户裁决第四轮):自适应两栏分组,渠道添加占整行。 */}
-      <div className="settings-grid">
-      {/* Startup + window */}
-      <div className="settings-section">
-        <h2>{t.sectionStartup}</h2>
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={autostart}
-            disabled={!hydrated}
-            onChange={(event) => {
-              setAutostart(event.target.checked);
-              scheduleSave(true, { autostart: event.target.checked });
-            }}
-          />
-          <span>{t.autostartLabel}</span>
-        </label>
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={closeToTray}
-            disabled={!hydrated}
-            onChange={(event) => {
-              setCloseToTray(event.target.checked);
-              scheduleSave(true, { close_to_tray: event.target.checked });
-            }}
-          />
-          <span>{t.closeToTrayLabel}</span>
-        </label>
-      </div>
+      {/* CC Switch 式重排(2026-08-28 用户裁决):无卡片框,单列分组,
+          每组 = 标题 + 灰色说明 + 控件;选择类为分段胶囊(原生 radio 语义,
+          输入盖在胶囊上保持可点/可聚焦,键盘方向键原生可用)。 */}
+      <div className="settings-page">
+        {/* 启动与窗口:整行开关行(标题 + 说明 + 开关在右)。 */}
+        <section className="settings-group" aria-label={t.sectionStartup}>
+          <h2>{t.sectionStartup}</h2>
+          <div className="switch-row">
+            <div className="switch-row-text">
+              <span className="switch-row-title">{t.autostartLabel}</span>
+              <span className="switch-row-desc">{t.autostartDesc}</span>
+            </div>
+            <input
+              type="checkbox"
+              aria-label={t.autostartLabel}
+              checked={autostart}
+              disabled={!hydrated}
+              onChange={(event) => {
+                setAutostart(event.target.checked);
+                scheduleSave(true, { autostart: event.target.checked });
+              }}
+            />
+          </div>
+          <div className="switch-row">
+            <div className="switch-row-text">
+              <span className="switch-row-title">{t.closeToTrayLabel}</span>
+              <span className="switch-row-desc">{t.closeToTrayDesc}</span>
+            </div>
+            <input
+              type="checkbox"
+              aria-label={t.closeToTrayLabel}
+              checked={closeToTray}
+              disabled={!hydrated}
+              onChange={(event) => {
+                setCloseToTray(event.target.checked);
+                scheduleSave(true, { close_to_tray: event.target.checked });
+              }}
+            />
+          </div>
+        </section>
 
-      {/* 语言 + 主题合并(2026-08-28 用户裁决):一张卡,字段标签各自可读。 */}
-      <div className="settings-section">
-        <h2>{t.sectionLanguageTheme}</h2>
-        <label className="field-label" htmlFor="settings-language">
-          {t.languageLabel}
-        </label>
-        <select
-          id="settings-language"
-          value={uiLocale}
-          disabled={!hydrated}
-          onChange={(event) => {
-            setUiLocale(event.target.value as LocaleCode);
-            scheduleSave(true, { locale: event.target.value as LocaleCode });
-          }}
-        >
-          <option value="zh_cn">{t.langZh}</option>
-          <option value="en">{t.langEn}</option>
-        </select>
-        {/* The applied locale comes from bootstrap; a changed one needs a
-            restart, so say so instead of silently doing nothing. */}
-        {hydrated && uiLocale !== locale && <p className="muted">{t.localeRestartHint}</p>}
-        <div role="radiogroup" aria-label={t.themeLabel}>
-          <span className="field-label">{t.themeLabel}</span>
-          <div>
-            {(["system", "light", "dark"] as const).map((code) => (
-              <label key={code} className="check-row">
+        {/* 界面语言:分段胶囊(原生 radio)。 */}
+        <section className="settings-group" aria-label={t.sectionLanguage}>
+          <h2>{t.sectionLanguage}</h2>
+          <p className="settings-hint">{t.languageHint}</p>
+          <div className="seg seg-accent" role="radiogroup" aria-label={t.languageLabel}>
+            {([["zh_cn", t.langZh], ["en", t.langEn]] as const).map(([code, label]) => (
+              <label
+                key={code}
+                className={`seg-item${uiLocale === code ? " seg-active" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="settings-locale"
+                  className="seg-input"
+                  aria-label={label}
+                  checked={uiLocale === code}
+                  disabled={!hydrated}
+                  onChange={() => {
+                    setUiLocale(code);
+                    scheduleSave(true, { locale: code });
+                  }}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          {/* The applied locale comes from bootstrap; a changed one needs a
+              restart, so say so instead of silently doing nothing. */}
+          {hydrated && uiLocale !== locale && <p className="muted">{t.localeRestartHint}</p>}
+        </section>
+
+        {/* 外观主题:分段胶囊(浅/深/跟随系统,带图标)。 */}
+        <section className="settings-group" aria-label={t.themeSectionTitle}>
+          <h2>{t.themeSectionTitle}</h2>
+          <p className="settings-hint">{t.themeHint}</p>
+          <div className="seg seg-accent" role="radiogroup" aria-label={t.themeLabel}>
+            {(["light", "dark", "system"] as const).map((code) => (
+              <label
+                key={code}
+                className={`seg-item${theme === code ? " seg-active" : ""}`}
+              >
                 <input
                   type="radio"
                   name="settings-theme"
+                  className="seg-input"
                   aria-label={
                     code === "system" ? t.themeSystem : code === "light" ? t.themeLight : t.themeDark
                   }
@@ -454,6 +468,13 @@ export function SettingsPage({
                     scheduleSave(true, { theme: code });
                   }}
                 />
+                {code === "light" ? (
+                  <Sun size={14} aria-hidden="true" />
+                ) : code === "dark" ? (
+                  <Moon size={14} aria-hidden="true" />
+                ) : (
+                  <Monitor size={14} aria-hidden="true" />
+                )}
                 <span>
                   {code === "system"
                     ? t.themeSystem
@@ -464,186 +485,205 @@ export function SettingsPage({
               </label>
             ))}
           </div>
-        </div>
-      </div>
+        </section>
 
-      {/* Retention */}
-      {/* noValidate: bounds are validated in JS so our own alert message
-          shows instead of a native bubble blocking submission. */}
-      <form
-        className="settings-section"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          scheduleSave(true);
-        }}
-      >
-        <h2>{t.retentionSection}</h2>
-        <label htmlFor="settings-event-days">{t.eventRetentionLabel}</label>
-        <input
-          id="settings-event-days"
-          type="number"
-          min={RETENTION_MIN}
-          max={RETENTION_MAX}
-          value={eventDays}
-          disabled={!hydrated}
-          onChange={(event) => {
-            setEventDays(event.target.value);
-            changeRetentionDays(setEventDays, "event_retention_days")(event.target.value);
-          }}
-        />
-        <label htmlFor="settings-log-days">{t.logRetentionLabel}</label>
-        <input
-          id="settings-log-days"
-          type="number"
-          min={RETENTION_MIN}
-          max={RETENTION_MAX}
-          value={logDays}
-          disabled={!hydrated}
-          onChange={(event) => {
-            setLogDays(event.target.value);
-            changeRetentionDays(setLogDays, "log_retention_days")(event.target.value);
-          }}
-        />
-        {/* 自动保存:无保存按钮(2026-08-28);Enter 立即存一次。 */}
-      </form>
+        {/* 数据保留:两个并排数字域。 */}
+        <section className="settings-group" aria-label={t.retentionSection}>
+          <h2>{t.retentionSection}</h2>
+          <p className="settings-hint">{t.retentionHint}</p>
+          {/* noValidate: bounds are validated in JS so our own alert message
+              shows instead of a native bubble blocking submission. */}
+          <form
+            className="retention-fields"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              scheduleSave(true);
+            }}
+          >
+            <label className="retention-field" htmlFor="settings-event-days">
+              <span>{t.eventRetentionLabel}</span>
+              <input
+                id="settings-event-days"
+                type="number"
+                min={RETENTION_MIN}
+                max={RETENTION_MAX}
+                value={eventDays}
+                disabled={!hydrated}
+                onChange={(event) => {
+                  setEventDays(event.target.value);
+                  changeRetentionDays(setEventDays, "event_retention_days")(event.target.value);
+                }}
+              />
+            </label>
+            <label className="retention-field" htmlFor="settings-log-days">
+              <span>{t.logRetentionLabel}</span>
+              <input
+                id="settings-log-days"
+                type="number"
+                min={RETENTION_MIN}
+                max={RETENTION_MAX}
+                value={logDays}
+                disabled={!hydrated}
+                onChange={(event) => {
+                  setLogDays(event.target.value);
+                  changeRetentionDays(setLogDays, "log_retention_days")(event.target.value);
+                }}
+              />
+            </label>
+            {/* 自动保存:无保存按钮;Enter 立即存一次。 */}
+          </form>
+        </section>
 
-      {/* Credential store disclosure(条件卡,排在调试与更新前以成对填满网格) */}
-      {storeIssues.length > 0 && (
-        <div className="settings-section">
-          <h2>{t.credentialStoreSection}</h2>
-          <ul className="issue-list">
-            {storeIssues.map((issue) => (
-              <li key={`${issue.issue_code}:${issue.message}`}>
-                <span>{issue.message}</span>
-                {issue.suggested_action !== null && (
-                  <span className="muted">{issue.suggested_action}</span>
-                )}
-                {issue.suggested_command !== null && (
-                  <code className="inline-code">{issue.suggested_command}</code>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Notification pause */}
-      <div className="settings-section">
-        <h2>{t.pauseSection}</h2>
-        {pausedUntil === null ? (
-          <p className="muted">{t.notPaused}</p>
-        ) : (
-          <p>
-            {t.pausedUntilPrefix} {new Date(pausedUntil).toLocaleString()}
-          </p>
-        )}
-        <div className="agent-actions">
-          <button
-            type="button"
-            className="cc-focusable"
-            disabled={pauseBusy}
-            onClick={() => {
-              void pause("fifteen_minutes");
-            }}
-          >
-            {t.pause15m}
-          </button>
-          <button
-            type="button"
-            className="cc-focusable"
-            disabled={pauseBusy}
-            onClick={() => {
-              void pause("one_hour");
-            }}
-          >
-            {t.pause1h}
-          </button>
-          <button
-            type="button"
-            className="cc-focusable"
-            disabled={pauseBusy}
-            onClick={() => {
-              void pause("today");
-            }}
-          >
-            {t.pauseToday}
-          </button>
-          <button
-            type="button"
-            className="cc-focusable"
-            disabled={pauseBusy || pausedUntil === null}
-            onClick={() => {
-              void resume();
-            }}
-          >
-            {t.resumeNotifications}
-          </button>
-        </div>
-      </div>
-
-      {/* 调试 + 更新合并(2026-08-28 用户裁决):一张卡两块功能。 */}
-      <div className="settings-section">
-        <h2>{t.sectionDebugUpdate}</h2>
-        <label className="field-label" htmlFor="settings-debug">
-          {t.debugLoggingLabel}
-        </label>
-        <select
-          id="settings-debug"
-          value={debugMinutes}
-          disabled={debugBusy}
-          onChange={(event) => {
-            void applyDebug(Number(event.target.value) as 0 | 15 | 60);
-          }}
-        >
-          <option value={0}>{t.debugOff}</option>
-          <option value={15}>{t.debug15m}</option>
-          <option value={60}>{t.debug60m}</option>
-        </select>
-        <div className="agent-actions">
-          <button
-            type="button"
-            ref={installTriggerRef}
-            className="cc-focusable"
-            disabled={checking || installing}
-            onClick={() => {
-              void checkUpdates();
-            }}
-          >
-            {checking ? t.checkingUpdates : t.checkUpdates}
-          </button>{" "}
-          {updateResult !== null && updateResult.available && updateResult.installable && (
+        {/* 通知暂停 */}
+        <section className="settings-group" aria-label={t.pauseSection}>
+          <h2>{t.pauseSection}</h2>
+          <p className="settings-hint">{t.pauseHint}</p>
+          {pausedUntil === null ? (
+            <p className="muted">{t.notPaused}</p>
+          ) : (
+            <p>
+              {t.pausedUntilPrefix} {new Date(pausedUntil).toLocaleString()}
+            </p>
+          )}
+          <div className="agent-actions">
             <button
               type="button"
               className="cc-focusable"
-              disabled={checking || installing}
-              onClick={() => setInstallConfirmOpen(true)}
+              disabled={pauseBusy}
+              onClick={() => {
+                void pause("fifteen_minutes");
+              }}
             >
-              {t.installUpdateAction}
+              {t.pause15m}
             </button>
-          )}
-        </div>
-        {updateResult !== null &&
-          (updateResult.available ? (
-            <p>
-              {t.updateAvailablePrefix}{" "}
-              <strong>{updateResult.version ?? ""}</strong>
-            </p>
-          ) : (
-            <p className="muted">{t.upToDate}</p>
-          ))}
-        {updateResult !== null &&
-          updateResult.available &&
-          updateResult.notes !== null && <p className="muted">{updateResult.notes}</p>}
-        {installOk && (
-          <p role="status" className="muted">
-            {t.updateInstalled}
-          </p>
-        )}
-      </div>
+            <button
+              type="button"
+              className="cc-focusable"
+              disabled={pauseBusy}
+              onClick={() => {
+                void pause("one_hour");
+              }}
+            >
+              {t.pause1h}
+            </button>
+            <button
+              type="button"
+              className="cc-focusable"
+              disabled={pauseBusy}
+              onClick={() => {
+                void pause("today");
+              }}
+            >
+              {t.pauseToday}
+            </button>
+            <button
+              type="button"
+              className="cc-focusable"
+              disabled={pauseBusy || pausedUntil === null}
+              onClick={() => {
+                void resume();
+              }}
+            >
+              {t.resumeNotifications}
+            </button>
+          </div>
+        </section>
 
-      {/* 通知模板(用户裁决 2026-08-27):全局正文模板,留空 = 统一默认。 */}
-      <div className="settings-channel-add">
+        {/* 凭据存储异常披露(条件组)。 */}
+        {storeIssues.length > 0 && (
+          <section className="settings-group" aria-label={t.credentialStoreSection}>
+            <h2>{t.credentialStoreSection}</h2>
+            <ul className="issue-list">
+              {storeIssues.map((issue) => (
+                <li key={`${issue.issue_code}:${issue.message}`}>
+                  <span>{issue.message}</span>
+                  {issue.suggested_action !== null && (
+                    <span className="muted">{issue.suggested_action}</span>
+                  )}
+                  {issue.suggested_command !== null && (
+                    <code className="inline-code">{issue.suggested_command}</code>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* 调试与更新 */}
+        <section className="settings-group" aria-label={t.sectionDebugUpdate}>
+          <h2>{t.sectionDebugUpdate}</h2>
+          <p className="settings-hint">{t.debugHint}</p>
+          <div className="seg seg-accent" role="radiogroup" aria-label={t.debugLoggingLabel}>
+            {(
+              [
+                [0, t.debugOff],
+                [15, t.debug15m],
+                [60, t.debug60m],
+              ] as const
+            ).map(([minutes, label]) => (
+              <label
+                key={minutes}
+                className={`seg-item${debugMinutes === minutes ? " seg-active" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="settings-debug"
+                  className="seg-input"
+                  aria-label={label}
+                  checked={debugMinutes === minutes}
+                  disabled={debugBusy}
+                  onChange={() => {
+                    void applyDebug(minutes);
+                  }}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          <p className="settings-hint">{t.updateHint}</p>
+          <div className="agent-actions">
+            <button
+              type="button"
+              ref={installTriggerRef}
+              className="cc-focusable"
+              disabled={checking || installing}
+              onClick={() => {
+                void checkUpdates();
+              }}
+            >
+              {checking ? t.checkingUpdates : t.checkUpdates}
+            </button>
+            {updateResult !== null && updateResult.available && updateResult.installable && (
+              <button
+                type="button"
+                className="cc-focusable"
+                disabled={checking || installing}
+                onClick={() => setInstallConfirmOpen(true)}
+              >
+                {t.installUpdateAction}
+              </button>
+            )}
+          </div>
+          {updateResult !== null &&
+            (updateResult.available ? (
+              <p>
+                {t.updateAvailablePrefix} <strong>{updateResult.version ?? ""}</strong>
+              </p>
+            ) : (
+              <p className="muted">{t.upToDate}</p>
+            ))}
+          {updateResult !== null &&
+            updateResult.available &&
+            updateResult.notes !== null && <p className="muted">{updateResult.notes}</p>}
+          {installOk && (
+            <p role="status" className="muted">
+              {t.updateInstalled}
+            </p>
+          )}
+        </section>
+
+        {/* 通知模板 */}
         <ChannelsSectionTemplate
           template={template}
           onTemplateChange={(value) => {
@@ -654,34 +694,33 @@ export function SettingsPage({
           }}
           locale={locale}
         />
-      </div>
 
-      {/* 诊断/清空:网格末行宽位,右对齐,不再悬浮于版式之外。 */}
-      <div className="settings-footer">
-        {exportStatus !== null && (
-          <p role="status" className="muted">
-            {exportStatus}
-          </p>
-        )}
-        <button
-          type="button"
-          className="cc-focusable"
-          onClick={() => {
-            void exportDiagnostics();
-          }}
-        >
-          {t.exportDiagnostics}
-        </button>
-        <button
-          type="button"
-          className="cc-focusable"
-          onClick={() => {
-            setClearConfirmOpen(true);
-          }}
-        >
-          {t.clearHistory}
-        </button>
-      </div>
+        {/* 诊断/清空:页面末尾安静一行。 */}
+        <div className="settings-footer">
+          {exportStatus !== null && (
+            <p role="status" className="muted">
+              {exportStatus}
+            </p>
+          )}
+          <button
+            type="button"
+            className="cc-focusable"
+            onClick={() => {
+              void exportDiagnostics();
+            }}
+          >
+            {t.exportDiagnostics}
+          </button>
+          <button
+            type="button"
+            className="cc-focusable"
+            onClick={() => {
+              setClearConfirmOpen(true);
+            }}
+          >
+            {t.clearHistory}
+          </button>
+        </div>
       </div>
 
       {installConfirmOpen && (
