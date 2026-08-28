@@ -1643,3 +1643,13 @@ input[type="radio"]:checked::after {
     transition: none !important;
   }
 }
+
+/* v2-issues:待触发 hook 条目下的建议提示词行(最近应用结果弹窗内)。 */
+.trigger-suggestion {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.85em;
+}
+.trigger-suggestion code {
+  margin: 0 6px;
+}

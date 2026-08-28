@@ -189,11 +189,43 @@ test("once one Codex entry is observed, pending entries read as awaiting-first-r
   expect(
     await screen.findByText(/PermissionRequest · 健康 · 等待首次触发/),
   ).toBeVisible();
+  // …with a copyable suggested prompt (v2-issues:用户裁决 2026-08-28)…
+  expect(screen.getByText(/建议提示词：/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "复制命令 PermissionRequest" }),
+  ).toBeVisible();
   // …and the actionable /hooks instruction is replaced by the informational
   // notice — no command, no copy/recheck buttons.
   expect(screen.queryByText("/hooks")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "复制命令" })).not.toBeInTheDocument();
   expect(screen.getByText(/官方确认已完成/)).toBeVisible();
+});
+
+test("the suggested prompt copies to the clipboard on click", async () => {
+  // userEvent.setup() 自带 clipboard stub(覆盖 jsdom 的 getter-only 属性),
+  // 写入后经 readText 读回验证完整链路。
+  const user = userEvent.setup();
+  const backend = agentsBackend({
+    detectResults: () => [CLAUDE_DETECTED, { ...CODEX_DETECTED, installed: false }],
+    rules: [],
+    applyEntries: () => [
+      { source_event: "Stop", trust_status: "observed_working", health: "healthy" },
+      {
+        source_event: "PermissionRequest",
+        trust_status: "needs_user_confirmation",
+        health: "healthy",
+      },
+    ],
+  });
+  render(<AgentsPage backend={backend} />);
+  await screen.findByText("0.145.0");
+  await user.click(screen.getByRole("button", { name: "安装 Codex Hook" }));
+  await user.click(
+    await screen.findByRole("button", { name: "复制命令 PermissionRequest" }),
+  );
+  expect(await navigator.clipboard.readText()).toBe(
+    "请运行 ls -la / 命令（触发权限确认，选择允许）",
+  );
 });
 
 test("actions disable while running and recover after completion", async () => {

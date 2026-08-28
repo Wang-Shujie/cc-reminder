@@ -175,6 +175,14 @@ export interface Dictionary {
   ehNeedsTrust: string;
   ehAwaitingFirstRun: string;
   trustDoneAwaiting: string;
+  triggerHintPromptLabel: string;
+  triggerHintSessionStart: string;
+  triggerHintSessionEnd: string;
+  triggerHintCompact: string;
+  triggerPromptPermission: string;
+  triggerPromptTool: string;
+  triggerPromptSubagent: string;
+  triggerPromptGeneric: string;
   ehAgentUpgradeRequired: string;
   trustNotice: string;
   // Channels page (Task 18)
@@ -519,6 +527,14 @@ const zhCn: Dictionary = {
   ehNeedsTrust: "待确认",
   ehAwaitingFirstRun: "等待首次触发",
   trustDoneAwaiting: "Codex 官方确认已完成。显示「等待首次触发」的事件将在其真实发生时自动激活——无需任何操作，也不影响期间的通知投递。",
+  triggerHintPromptLabel: "建议提示词：",
+  triggerHintSessionStart: "建议操作：新开一个会话即可触发。",
+  triggerHintSessionEnd: "建议操作：退出当前会话即可触发。",
+  triggerHintCompact: "建议操作：在长对话中触发上下文压缩即可。",
+  triggerPromptPermission: "请运行 ls -la / 命令（触发权限确认，选择允许）",
+  triggerPromptTool: "请运行 ls 显示当前目录的文件",
+  triggerPromptSubagent: "用一个子代理列出当前目录的文件",
+  triggerPromptGeneric: "你好",
   ehAgentUpgradeRequired: "版本未验证(需重装此条目)",
   trustNotice: "Codex 的 Hook 需要在官方界面确认：请运行以下命令后重新检测。",
   // Channels page (Task 18)
@@ -870,6 +886,14 @@ const en: Dictionary = {
   ehHelperMismatch: "Helper mismatch",
   ehNeedsTrust: "Needs confirmation",
   ehAwaitingFirstRun: "Awaiting first run",
+  triggerHintPromptLabel: "Suggested prompt: ",
+  triggerHintSessionStart: "Suggested action: start a new session to trigger it.",
+  triggerHintSessionEnd: "Suggested action: exit the current session to trigger it.",
+  triggerHintCompact: "Suggested action: trigger context compaction in a long conversation.",
+  triggerPromptPermission: "Run ls -la / (approve the permission prompt when it appears)",
+  triggerPromptTool: "Run ls to list the files in the current directory",
+  triggerPromptSubagent: "Use a subagent to list the files in the current directory",
+  triggerPromptGeneric: "Hello",
   trustDoneAwaiting:
     "Codex official confirmation is complete. Entries showing “Awaiting first run” activate automatically the first time the event really happens — no action needed, and notifications are not blocked in the meantime.",
   ehAgentUpgradeRequired: "Unverified version (reinstall needed)",

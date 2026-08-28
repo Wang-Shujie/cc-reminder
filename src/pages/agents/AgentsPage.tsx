@@ -74,6 +74,36 @@ function entryHealthLabel(t: Dictionary, health: HookApplyEntry["health"]): stri
   }
 }
 
+/**
+ * v2-issues:待确认 hook 的触发建议(用户裁决 2026-08-28)。按事件归类给
+ * 一条可直接复制的提示词;没有提示词形态的事件(SessionStart 等由会话
+ * 生命周期触发)给操作指引,prompt 为 null 不显示复制按钮。
+ */
+function triggerSuggestion(
+  t: Dictionary,
+  event: string,
+): { label: string; prompt: string | null } {
+  switch (event) {
+    case "SessionStart":
+      return { label: t.triggerHintSessionStart, prompt: null };
+    case "SessionEnd":
+      return { label: t.triggerHintSessionEnd, prompt: null };
+    case "PreCompact":
+    case "PostCompact":
+      return { label: t.triggerHintCompact, prompt: null };
+    case "PermissionRequest":
+      return { label: t.triggerHintPromptLabel, prompt: t.triggerPromptPermission };
+    case "PreToolUse":
+    case "PostToolUse":
+      return { label: t.triggerHintPromptLabel, prompt: t.triggerPromptTool };
+    case "SubagentStart":
+    case "SubagentStop":
+      return { label: t.triggerHintPromptLabel, prompt: t.triggerPromptSubagent };
+    default:
+      return { label: t.triggerHintPromptLabel, prompt: t.triggerPromptGeneric };
+  }
+}
+
 interface Busy {
   agent: AgentKindCode;
 }
@@ -387,17 +417,47 @@ export function AgentsPage({
                 <div key={agent}>
                   <h3>{agentName(t, agent)}</h3>
                   <ul>
-                    {(entries[agent] ?? []).map((entry) => (
-                      <li key={entry.source_event}>
-                        {entry.source_event} · {entryHealthLabel(t, entry.health)}
-                        {entry.trust_status === "needs_user_confirmation" &&
-                          ` · ${
-                            codexConfirmed
-                              ? t.ehAwaitingFirstRun
-                              : t.ehNeedsTrust
-                          }`}
-                      </li>
-                    ))}
+                    {(entries[agent] ?? []).map((entry) => {
+                      const pending =
+                        entry.trust_status === "needs_user_confirmation";
+                      const suggestion = pending
+                        ? triggerSuggestion(t, entry.source_event)
+                        : null;
+                      return (
+                        <li key={entry.source_event}>
+                          {entry.source_event} · {entryHealthLabel(t, entry.health)}
+                          {pending &&
+                            ` · ${
+                              codexConfirmed
+                                ? t.ehAwaitingFirstRun
+                                : t.ehNeedsTrust
+                            }`}
+                          {suggestion !== null && (
+                            <div className="muted trigger-suggestion">
+                              {suggestion.label}
+                              {suggestion.prompt !== null && (
+                                <>
+                                  <code>{suggestion.prompt}</code>
+                                  <button
+                                    type="button"
+                                    className="cc-focusable"
+                                    aria-label={`${t.copyCommand} ${entry.source_event}`}
+                                    onClick={() => {
+                                      void navigator.clipboard?.writeText(
+                                        suggestion.prompt ?? "",
+                                      );
+                                    }}
+                                  >
+                                    <ClipboardCopy size={12} aria-hidden="true" />{" "}
+                                    {t.copyCommand}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : null,
