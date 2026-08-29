@@ -49,6 +49,14 @@ fn helper_path(dir: &TempDir) -> PathBuf {
     dir.path().join("cc-reminder-hook")
 }
 
+/// Escape a path for use inside a JSON string literal (tests hand-write JSON
+/// fixtures or assert on raw serialized text). Windows paths contain
+/// backslashes that MUST be doubled — both when seeding a fixture and when
+/// asserting a helper path appears in installed (serialized) bytes.
+fn json_path(helper: &Path) -> String {
+    helper.to_string_lossy().replace('\\', "\\\\")
+}
+
 fn owned_entries(agent: AgentKind, helper: &Path, events: &[&str]) -> Vec<OwnedHookEntry> {
     events
         .iter()
@@ -481,7 +489,16 @@ fn claude_install_preserves_crlf_newlines() {
         "any newline in foreign region must remain CRLF"
     );
     // Owned insertion happened and itself uses the detected CRLF style.
-    assert!(text.contains(helper.to_string_lossy().as_ref()));
+    // The command is serialized JSON: Windows backslash separators arrive
+    // escaped (`\\`), so assert against the escaped form. Quoting follows the
+    // host contract: POSIX single quotes vs the always-double-quote Windows
+    // form (hook_command::canonical_hook_command).
+    assert!(text.contains(&json_path(&helper)));
+    #[cfg(windows)]
+    // Serialized form of the always-double-quoted owner token: `"cc-reminder"`
+    // becomes `\"cc-reminder\"` inside the JSON string value.
+    assert!(text.contains("\\\"cc-reminder\\\""));
+    #[cfg(not(windows))]
     assert!(text.contains("'cc-reminder'"));
 }
 
@@ -496,7 +513,8 @@ fn install_into_path_containing_spaces() {
     let installed =
         patch_claude_settings(source, &owned_entries(CLAUDE, &helper, &["Stop"])).unwrap();
     let text = String::from_utf8(installed.bytes.clone()).unwrap();
-    assert!(text.contains(helper.to_string_lossy().as_ref()));
+    // Serialized JSON escapes the path's backslashes; match that form.
+    assert!(text.contains(&json_path(&helper)));
     assert_eq!(
         owned_events(CLAUDE, &installed.bytes),
         vec!["Stop".to_owned()]
@@ -1286,7 +1304,7 @@ fn uninstall_removes_only_owned_matching_entries_and_leaves_a_lookalike() {
     let helper = env.helper.stable_path();
     let lookalike = format!(
         "{{\"type\":\"command\",\"command\":\"{} --owner cc-reminder --agent claude-code --event Stop --extra\",\"timeout\":1}}",
-        helper.to_string_lossy()
+        json_path(&helper)
     );
     let seed = format!("{{\"hooks\":{{\"Stop\":[{{\"matcher\":\"\",\"hooks\":[{lookalike}]}}]}}}}");
     fs::write(&env.config_path, seed.as_bytes()).unwrap();

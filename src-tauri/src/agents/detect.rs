@@ -82,15 +82,17 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn canonicalization_deduplicates_symlink_targets() {
+        // Unix-only by necessity: a Windows hard link is a second directory
+        // entry for the same file, and fs::canonicalize cannot fold the two
+        // paths the way it folds a symlink — so the hard-link fallback can
+        // never exercise the symlink dedup path this test is about.
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("codex");
         std::fs::write(&executable, "").unwrap();
         let alias = root.path().join("alias");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&executable, &alias).unwrap();
-        #[cfg(not(unix))]
-        std::fs::hard_link(&executable, &alias).unwrap();
 
         assert_eq!(super::deduplicate_paths(vec![executable, alias]).len(), 1);
     }

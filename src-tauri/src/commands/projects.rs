@@ -448,18 +448,22 @@ mod tests {
 
     /// REAL linked-worktree shape: `<root>/repo` keeps `.git` as a DIRECTORY
     /// while the sibling checkout `<root>/wt` has `.git` as a regular FILE
-    /// containing `gitdir: <repo>/.git/worktrees/wt`.
+    /// containing `gitdir: <repo>/.git/worktrees/wt`. git for Windows writes
+    /// the pointer with FORWARD slashes (`C:/Users/...`), so the fixture does
+    /// the same — `Path::join` would emit backslashes and the resolver's
+    /// `/.git/worktrees/` marker would never match, masking a real Windows
+    /// resolution path.
     fn real_worktree_fixture() -> (std::path::PathBuf, std::path::PathBuf, CoreState) {
         let root = tempfile::tempdir().unwrap();
         let repo = root.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         let wt = root.path().join("wt");
         std::fs::create_dir_all(&wt).unwrap();
-        std::fs::write(
-            wt.join(".git"),
-            format!("gitdir: {}\n", repo.join(".git/worktrees/wt").display()),
-        )
-        .unwrap();
+        let pointer = repo
+            .join(".git/worktrees/wt")
+            .to_string_lossy()
+            .replace('\\', "/");
+        std::fs::write(wt.join(".git"), format!("gitdir: {pointer}\n")).unwrap();
         // The DB lives OUTSIDE both trees so probe_git_root never sees it.
         let db_dir = root.path().join("com.ccreminder.app");
         std::fs::create_dir_all(&db_dir).unwrap();

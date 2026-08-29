@@ -528,6 +528,11 @@ mod windows_tests {
         match std::os::windows::fs::symlink_file(&target, &link) {
             Ok(()) => assert!(super::validate_private_file(&link).is_err()),
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            // Creating a file symlink needs SeCreateSymbolicLinkPrivilege
+            // (admin or Developer Mode). Hosts without it report raw
+            // ERROR_PRIVILEGE_NOT_HELD (1314); there is nothing to assert
+            // there, and CI's runner does hold the privilege.
+            Err(error) if error.raw_os_error() == Some(1314) => {}
             Err(error) => panic!("failed to create test symlink: {error}"),
         }
     }

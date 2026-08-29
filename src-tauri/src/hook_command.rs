@@ -474,10 +474,13 @@ mod tests {
             AgentKind::ClaudeCode,
             "Stop",
         );
+        // windows_quote is applied to the path AND every argument (always-quote
+        // contract: the recogniser tokeniser dispatches on the leading `"` of
+        // each emitted token).
         assert!(
-            claude
-                .command
-                .starts_with(r#""C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe" --owner"#)
+            claude.command.starts_with(
+                r#""C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe" "--owner""#
+            )
         );
         // Codex 的 `command` 恒为 POSIX 形式(识别依赖),Windows 经
         // `commandWindows` 下发双引号形式。

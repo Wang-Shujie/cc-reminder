@@ -52,7 +52,20 @@ pub fn resolve_project(
     projects: &[ProjectRegistration],
     platform: PathPlatform,
 ) -> ProjectMatch {
-    let cwd = normalized(cwd, platform);
+    // Registration roots are canonicalized (ProjectRegistration::new), so on
+    // Windows the queried hook cwd must be brought to the same REAL form
+    // before comparison: lexical folding alone cannot reconcile an 8.3 short
+    // name (C:\Users\RUNNER~1), per-segment casing, or a symlinked directory
+    // with its expanded canonical root. When the path no longer exists (the
+    // event may outlive its directory) fall back to lexical normalization.
+    let cwd: std::borrow::Cow<'_, Path> = if platform == PathPlatform::Windows {
+        std::fs::canonicalize(cwd)
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or(std::borrow::Cow::Borrowed(cwd))
+    } else {
+        std::borrow::Cow::Borrowed(cwd)
+    };
+    let cwd = normalized(&cwd, platform);
     projects
         .iter()
         .flat_map(|project| {
@@ -340,6 +353,10 @@ mod tests {
     fn registered_windows_root_matches_non_verbatim_hook_path() {
         let root = std::env::temp_dir().join(format!("cc-reminder-resolver-{}", Uuid::now_v7()));
         std::fs::create_dir_all(&root).unwrap();
+        // The queried hook cwd must EXIST: the Windows comparison
+        // canonicalizes it to its real form (8.3 short names, casing), and a
+        // missing directory correctly falls back to lexical normalization.
+        std::fs::create_dir_all(root.join("src")).unwrap();
         let project =
             ProjectRegistration::new(Uuid::now_v7(), "app".into(), root.clone(), Vec::new())
                 .unwrap();
