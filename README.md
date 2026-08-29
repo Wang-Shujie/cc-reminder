@@ -1,50 +1,80 @@
+<div align="center">
+
 # CC Reminder
 
-CC Reminder 是一个跨平台桌面应用：它通过 Claude Code 和 Codex 的生命周期 Hook 捕获事件，在本地完成规则匹配、隐私过滤与排队，然后把通知发送到你的钉钉群或企业微信群。任务完成、等待确认、需要授权时，你在群里第一时间知道——而审批、停止等操作仍然完全留在 Agent 原有流程中。
+**Claude Code / Codex 的群通知管家 —— 任务完成、等待确认、需要授权时，你的钉钉 / 企业微信群第一时间知道。**
 
-<p align="center">
-  <img src="docs/images/workbench.png" alt="工作台：状态概览与通知历史" width="49%" />
-  <img src="docs/images/integrations.png" alt="集成：通知来源（Claude Code / Codex）与通知去向（钉钉 / 企业微信）" width="49%" />
-</p>
-<p align="center">
-  <img src="docs/images/hook-rules.png" alt="通知规则：按事件配置过滤、静默、聚合与投递目标" width="70%" />
-</p>
+审批、停止等操作仍然完全留在 Agent 原有流程中，CC Reminder 只做一件事：把值得知道的事，可靠地送到你手里。
 
-## 基本信息
+[![Release](https://img.shields.io/github/v/release/Wang-Shujie/cc-reminder)](https://github.com/Wang-Shujie/cc-reminder/releases/latest)
+[![CI](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/ci.yml/badge.svg)](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/ci.yml)
+[![Release](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/release.yml/badge.svg)](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/release.yml)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
-- **支持的 Agent**：Claude Code（用户级 `~/.claude/settings.json`）、Codex（`~/.codex/hooks.json`，信任确认走官方 `/hooks`）
-- **支持的通知渠道**：钉钉自定义机器人、企业微信群机器人（仅官方 HTTPS Webhook 端点）
-- **平台**：macOS 12+（Apple Silicon / Intel）、Windows 10/11 x64、Ubuntu 22.04+ x64
+[English](./README_EN.md) · 简体中文
 
-## 安装
+<img src="docs/images/workbench.png" alt="工作台：状态概览与通知历史" width="49%" /><img src="docs/images/integrations.png" alt="集成：通知来源与通知去向" width="49%" />
 
-发布产物通过 GitHub Releases 分发：前往本仓库的 **Releases → Latest** 页面，下载对应平台的安装包（macOS `.dmg`、Windows `.msi`/NSIS 安装器、Linux `.AppImage`/`.deb`），每个文件附带 `.sha256` 校验和。
+<img src="docs/images/rules.png" alt="通知规则：过滤、静默、聚合与投递目标" width="70%" />
 
-> 注意：二进制安装包自**第一个正式版本 tag** 构建起才提供；在此之前 Releases 页面尚无产物。
+</div>
 
-从源码运行：
+## ✨ 功能特性
 
-```bash
-pnpm install --frozen-lockfile
-pnpm tauri dev
+- **🔗 生命周期 Hook 捕获** —— 通过 Claude Code / Codex 的官方 Hook 机制捕获会话与工具事件；已签名的独立 helper 进程负责投递，审批与停止流程零干扰（中性输出、恒定退出码）。
+- **🎯 规则引擎** —— 全局规则 + 项目级字段覆盖；静默时段、高频聚合、冷却窗口、TTL 过期；权限请求永不聚合，重要事件绝不排队等待。
+- **🛡 隐私优先** —— 敏感字段在落库前完成 XChaCha20-Poly1305 字段级加密，密钥存于系统钥匙串 / 凭据管理器；通知模板可控脱敏；诊断包内强制脱敏。
+- **📬 可靠投递** —— 指数退避重试（尊重 `Retry-After`）、至少一次投递、离线 spool 补发；凭据连续失败三振自动暂停渠道，恢复凭据即恢复投递。
+- **❤️‍🩹 自愈式健康** —— Agent 配置被外部修改/清空时自动修复；Hook 漂移、渠道暂停、队列堆积统一投影到工作台与托盘菜单。
+- **🔔 原生托盘** —— 打开主窗、健康一览、暂停 15 分钟 / 1 小时 / 今日、恢复、退出，中英文跟随应用设置。
+- **🔌 开放渠道** —— 钉钉自定义机器人（加签 / 关键词）与企业微信群机器人，仅官方 HTTPS Webhook 端点。
+- **🌐 跨平台** —— macOS 12+（Apple Silicon / Intel）、Windows 10/11 x64、Ubuntu 22.04+ x64。
+
+## 📦 安装
+
+前往 [**Releases → Latest**](https://github.com/Wang-Shujie/cc-reminder/releases/latest) 下载对应平台安装包，每个文件附带 `.sha256` 校验和：
+
+| 平台 | 产物 |
+|---|---|
+| macOS 12+ (Apple Silicon / Intel) | `.dmg` |
+| Windows 10/11 x64 | `.msi` / NSIS 安装器 |
+| Ubuntu 22.04+ x64 | `.AppImage` / `.deb` |
+
+> 二进制产物自第一个正式版本 tag 起提供；更新基于 Tauri updater，更新清单经 minisign 验签。
+
+## 🚀 快速开始
+
+1. **启动应用** —— 首次启动进入引导向导，按提示完成检测与默认规则。
+2. **接入 Agent** —— 集成页 **检测 Agent** → **安装 Hook**；Codex 需在其官方界面运行 `/hooks` 完成一次信任确认。
+3. **创建机器人** —— 在钉钉 / 企业微信群里建机器人拿 Webhook（分步指引见应用内表单与[运维手册 §5](docs/operations.md)），在集成页添加渠道并 **测试发送**。
+4. **配置规则** —— 在通知规则页按事件 / 项目 / Agent 过滤，选择投递渠道，完成。
+
+## 🔧 工作原理
+
+```
+Claude Code / Codex ──hook──▶ 已签名 helper ──IPC──▶ 规则匹配 · 隐私过滤 ──▶ 投递队列 ──▶ 钉钉 / 企业微信
+                                    │                    │
+                                 离线落盘 spool        本地 SQLite（字段级加密）
 ```
 
-首次启动后按引导完成：检测 Agent → 安装 Hooks → 添加渠道 → 选择默认规则 → 发送测试。详细操作、诊断导出与安全卸载说明见[运维手册](docs/operations.md)。
+应用不可用时 helper 自动落盘，恢复后按 TTL 补发；所有审批、停止等交互操作不经 CC Reminder，保持 Agent 原生体验。
 
-## 隐私
+## 🛠 从源码构建
 
-- 事件在本地处理：默认只外发脱敏后的元数据与摘要字段，敏感内容在 Hook 进程内即被丢弃或加密存储于本机数据库。
-- 渠道凭据（Webhook、token、签名密钥）只保存在操作系统安全存储中（macOS 钥匙串 / Windows 凭据管理器 / Linux Secret Service），界面不回显。
-- 无遥测、无远程日志、无云端依赖；诊断包只含脱敏日志与统计信息。
-- 卸载应用内的 Hook 时只移除 CC Reminder 自己创建的条目，你原有的配置逐字节保留。
+```bash
+# 前置：Node 20+ / pnpm 10+ / Rust 1.80+（macOS 需 Xcode CLT，Linux 需 webkit2gtk-4.1）
+pnpm install --frozen-lockfile
 
-## 文档
+pnpm dev                     # 开发运行
+pnpm verify                  # 前端测试 + 类型检查 + 构建 + Playwright
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust 全量测试
 
-- 运维手册（安装、信任、队列语义、诊断、卸载与发布验收清单）：[docs/operations.md](docs/operations.md)
-- 分层架构与依赖方向约定：[docs/architecture.md](docs/architecture.md)
-- 待办与实机事件记录：[docs/v2-issues.md](docs/v2-issues.md)
-- v1 设计与实施计划：[docs/superpowers/specs/2026-07-29-cc-reminder-design.md](docs/superpowers/specs/2026-07-29-cc-reminder-design.md) / [docs/superpowers/plans/2026-07-29-cc-reminder.md](docs/superpowers/plans/2026-07-29-cc-reminder.md)
+pnpm tauri build             # 打包当前平台产物
+scripts/local-release-build.sh   # 本地发布包（含 hash 校验的 helper + 真实 manifest）
+```
 
-## 许可证
+## 📚 文档
 
-暂未随 v1 指定；发布前由维护者补充。
+- [运维手册（安装 / 渠道 / 规则 / 诊断 / 卸载）](docs/operations.md)
+- [设计规范与 UI 纪律](DESIGN.md)
+- [遗留问题与实机事件记录](docs/v2-issues.md)
