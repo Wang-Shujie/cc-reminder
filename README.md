@@ -2,7 +2,13 @@
 
 CC Reminder 是一个跨平台桌面应用：它通过 Claude Code 和 Codex 的生命周期 Hook 捕获事件，在本地完成规则匹配、隐私过滤与排队，然后把通知发送到你的钉钉群或企业微信群。任务完成、等待确认、需要授权时，你在群里第一时间知道——而审批、停止等操作仍然完全留在 Agent 原有流程中。
 
-![通知规则页面](docs/images/hook-rules.png)
+<p align="center">
+  <img src="docs/images/workbench.png" alt="工作台：状态概览与通知历史" width="49%" />
+  <img src="docs/images/integrations.png" alt="集成：通知来源（Claude Code / Codex）与通知去向（钉钉 / 企业微信）" width="49%" />
+</p>
+<p align="center">
+  <img src="docs/images/hook-rules.png" alt="通知规则：按事件配置过滤、静默、聚合与投递目标" width="70%" />
+</p>
 
 ## 基本信息
 
