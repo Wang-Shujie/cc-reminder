@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   TestApp,
-  backendNeedingCodexTrust,
+  backendWithUnverifiedAgentVersion,
   claudeRulesFixtures,
   codexRulesFixtures,
   onboardingBackend,
@@ -41,14 +41,26 @@ test("onboarding follows detect install channel defaults test order", async () =
   expect(await screen.findByRole("heading", { name: "发送测试" })).toBeVisible();
 });
 
-test("Codex trust is a separate blocking checklist item with official command", async () => {
-  render(<TestApp backend={backendNeedingCodexTrust()} />);
-  expect(await screen.findByText("/hooks")).toBeVisible();
-  expect(screen.getByRole("button", { name: "重新检测" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "复制命令" })).toBeInTheDocument();
-  expect(screen.queryByText(/bypass/i)).not.toBeInTheDocument();
-  // The trust item blocks advancing to hook installation.
-  expect(screen.getByRole("button", { name: "下一步" })).toBeDisabled();
+test("an agent newer than the catalog shows a version note but never deadlocks", async () => {
+  const user = userEvent.setup();
+  const backend = backendWithUnverifiedAgentVersion();
+  render(<TestApp backend={backend} />);
+  // claude-code 2.1.247 > catalog 2.1.218 → needs_compatible_version_confirmation.
+  expect(await screen.findByText("claude-code")).toBeVisible();
+  expect(screen.getByText("版本高于已验证目录")).toBeVisible();
+  // The confirmation belongs to the install step, so detection must NOT gate
+  // navigation — blocking here deadlocked the wizard (regression test).
+  expect(screen.getByRole("button", { name: "下一步" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "下一步" }));
+  // The install step discloses the safe-subset consequence BEFORE the click;
+  // clicking 安装 Hook IS the acknowledgment (confirm_compatible_version).
+  expect(
+    await screen.findByText(/只启用经目录验证的安全事件子集/),
+  ).toBeVisible();
+  await user.click(await screen.findByRole("button", { name: "安装 Hook" }));
+  expect(backend.applyHookAction).toHaveBeenCalledWith(
+    expect.objectContaining({ confirm_compatible_version: true }),
+  );
 });
 
 test("completion is persisted only after a successful test send", async () => {
@@ -114,27 +126,49 @@ function detectionResults(codexNeedsConfirmation: boolean): AgentIntegrationSumm
   ];
 }
 
-test("resume with a channel still blocks on a pending Codex trust confirmation", async () => {
-  const user = userEvent.setup();
+test("resume with a channel skips detection even when a version needs consent", async () => {
   let codexNeedsConfirmation = true;
   const backend = onboardingBackend({
     channels: [existingChannel()],
     detectResults: () => detectionResults(codexNeedsConfirmation),
   });
   render(<TestApp backend={backend} />);
-  // The trust checklist is shown even though a channel already exists; the
-  // flow must NOT jump straight to the defaults step.
-  expect(await screen.findByText("/hooks")).toBeVisible();
-  expect(screen.getByRole("button", { name: "下一步" })).toBeDisabled();
-  expect(
-    screen.queryByRole("heading", { name: "选择默认规则" }),
-  ).not.toBeInTheDocument();
-  // A recheck that comes back clean clears the gate and resumes to defaults.
-  codexNeedsConfirmation = false;
-  await user.click(screen.getByRole("button", { name: "重新检测" }));
+  // A version newer than the catalog no longer gates the resume: with every
+  // agent installed the flow proceeds to the defaults step (the consent
+  // belongs to the install action, not to navigation).
   expect(
     await screen.findByRole("heading", { name: "选择默认规则" }),
   ).toBeVisible();
+});
+
+test("resume with a missing agent stays on the detection checklist", async () => {
+  const backend = onboardingBackend({
+    channels: [existingChannel()],
+    detectResults: () => [
+      {
+        agent: "claude-code",
+        installed: false,
+        version: null,
+        executable_path: null,
+        health: "missing",
+        needs_compatible_version_confirmation: false,
+      },
+      {
+        agent: "codex",
+        installed: true,
+        version: "0.145.0",
+        executable_path: "/usr/local/bin/codex",
+        health: "detected",
+        needs_compatible_version_confirmation: false,
+      },
+    ],
+  });
+  render(<TestApp backend={backend} />);
+  // A genuinely missing agent still blocks the jump to defaults.
+  expect(await screen.findByRole("heading", { name: "检测 Agent" })).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "选择默认规则" }),
+  ).not.toBeInTheDocument();
 });
 
 test("a failed detection shows an alert with retry and keeps Next disabled", async () => {

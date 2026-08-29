@@ -880,8 +880,10 @@ export function onboardingBackend(options: FakeBackendOptions = {}): FakeBackend
   });
 }
 
-/** Codex hook trust is still pending: the checklist must block, not bypass. */
-export function backendNeedingCodexTrust(): FakeBackend {
+/** One agent's version is newer than the embedded catalog
+ * (needs_compatible_version_confirmation). This must NOT gate the wizard:
+ * the confirmation belongs to the install step. */
+export function backendWithUnverifiedAgentVersion(): FakeBackend {
   return new FakeBackend({
     onboardingCompleted: false,
     locale: "zh_cn",
@@ -890,10 +892,10 @@ export function backendNeedingCodexTrust(): FakeBackend {
       {
         agent: "claude-code",
         installed: true,
-        version: "2.1.218",
+        version: "2.1.247",
         executable_path: "/usr/local/bin/claude",
         health: "detected",
-        needs_compatible_version_confirmation: false,
+        needs_compatible_version_confirmation: true,
       },
       {
         agent: "codex",
@@ -901,7 +903,7 @@ export function backendNeedingCodexTrust(): FakeBackend {
         version: "0.145.0",
         executable_path: "/usr/local/bin/codex",
         health: "detected",
-        needs_compatible_version_confirmation: true,
+        needs_compatible_version_confirmation: false,
       },
     ],
   });

@@ -36,6 +36,8 @@ export interface Dictionary {
   installHook: string;
   detectedAgents: string;
   detectFailed: string;
+  versionUnverified: string;
+  versionConsentHint: string;
   trustPending: string;
   trustViewGuide: string;
   trustGuideTitle: string;
@@ -389,6 +391,9 @@ const zhCn: Dictionary = {
   installHook: "安装 Hook",
   detectedAgents: "检测结果",
   detectFailed: "检测结果获取失败，请重试。",
+  versionUnverified: "版本高于已验证目录",
+  versionConsentHint:
+    "所选 Agent 的版本高于内置能力目录已验证的版本（仅影响事件兼容性核验）。点击“安装 Hook”即确认在此版本上继续；安装将只启用经目录验证的安全事件子集（SessionStart / SessionEnd / PermissionRequest / Stop），目录更新后重装即可启用完整事件集。",
   trustPending: "Codex 需要信任 Hook：在终端启动 codex（交互模式，直接运行 codex 而非 codex exec），输入 /hooks（带 s），审查并信任 CC Reminder 的两条钩子后回到这里重新检测。注意：codex exec 非交互模式存在不派发钩子的已知上游问题，请用交互会话验证。",
   trustViewGuide: "查看指引",
   trustGuideTitle: "Codex 信任指引",
@@ -744,6 +749,9 @@ const en: Dictionary = {
   installHook: "Install Hook",
   detectedAgents: "Detection results",
   detectFailed: "Detection failed. Please retry.",
+  versionUnverified: "Newer than the verified catalog",
+  versionConsentHint:
+    "An agent's version is newer than the embedded capability catalog's verified version (this only affects event-compatibility verification). Clicking \"Install Hook\" confirms you want to continue on this version; the install will enable only the catalog-verified safe event subset (SessionStart / SessionEnd / PermissionRequest / Stop). Reinstall after the catalog updates to enable the full event set.",
   trustPending:
     "Codex needs hook trust: launch codex in interactive mode (run `codex`, not `codex exec`), type /hooks (with s), review and trust the two CC Reminder hooks, then re-check here. Note: `codex exec` has a known upstream issue where trusted hooks may still not dispatch — verify with an interactive session.",
   trustViewGuide: "View guide",

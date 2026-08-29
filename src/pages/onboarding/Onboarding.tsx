@@ -20,11 +20,13 @@ import { AppShell } from "../../shell/AppShell";
 
 type Step = "detect" | "install" | "channel" | "defaults" | "test";
 
-/** True when detection shows an unresolved trust gate or a missing agent. */
+/** True when detection shows a missing agent. A version newer than the
+ * embedded catalog (`needs_compatible_version_confirmation`) does NOT gate
+ * navigation: it is confirmed at install time, exactly like the Agent
+ * integration page — blocking here deadlocked the wizard for every agent
+ * version above the catalog (e.g. claude-code 2.1.247 > 2.1.218). */
 function trustGateBlocked(agents: AgentIntegrationSummary[]): boolean {
-  return agents.some(
-    (agent) => agent.needs_compatible_version_confirmation || !agent.installed,
-  );
+  return agents.some((agent) => !agent.installed);
 }
 
 export function Onboarding({
@@ -96,6 +98,11 @@ export function Onboarding({
   const blockedAgents =
     detections?.filter((agent) => agent.needs_compatible_version_confirmation) ??
     [];
+  // Installing IS the acknowledgment: the backend rejects unconfirmed applies
+  // for catalog-unverified versions (agent_confirmation_required), and this
+  // disclosure is what the user sees before that click (Agent integration
+  // page parity, minus the extra round trip).
+  const needsVersionConsent = blockedAgents.some((agent) => agent.installed);
 
   function runDetection(): void {
     setDetections(null);
@@ -125,7 +132,7 @@ export function Onboarding({
           agent: agent.agent as "claude-code" | "codex",
           action: "install",
           expected_health_revision: 0,
-          confirm_compatible_version: false,
+          confirm_compatible_version: needsVersionConsent,
         });
       }
       setStep("channel");
@@ -265,28 +272,11 @@ export function Onboarding({
                   {agent.version ?? "—"} · {agent.health}
                 </span>
                 {agent.needs_compatible_version_confirmation && (
-                  <span className="trust-item">{t.trustPending}</span>
+                  <span className="trust-item">{t.versionUnverified}</span>
                 )}
               </li>
             ))}
           </ul>
-          {blockedAgents.length > 0 && (
-            <p className="trust-command">
-              <span>{t.trustCommand}</span>
-              <button
-                type="button"
-                className="cc-focusable"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(t.trustCommand);
-                }}
-              >
-                {t.copyCommand}
-              </button>
-              <button type="button" className="cc-focusable" onClick={runDetection}>
-                {t.recheck}
-              </button>
-            </p>
-          )}
           {detectError && (
             <p className="trust-command" role="alert">
               <span>{t.detectFailed}</span>
@@ -299,7 +289,7 @@ export function Onboarding({
             <button
               type="button"
               className="primary cc-focusable"
-              disabled={detections === null || blockedAgents.length > 0}
+              disabled={detections === null || detections.length === 0}
               onClick={() => setStep("install")}
             >
               {t.next}
@@ -311,6 +301,11 @@ export function Onboarding({
       {step === "install" && (
         <section>
           <h1>{t.onboardingInstall}</h1>
+          {needsVersionConsent && (
+            <p className="muted field-hint" role="note">
+              {t.versionConsentHint}
+            </p>
+          )}
           {errorLine}
           <div className="row-end">
             <button
