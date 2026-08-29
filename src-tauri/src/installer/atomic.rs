@@ -37,22 +37,42 @@ pub(crate) fn publish_rename(temp: &Path, target: &Path) -> std::io::Result<()> 
         use std::os::windows::ffi::OsStrExt;
         const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
         const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0002;
+        // MOVEFILE_REPLACE_EXISTING 需要对目标的 DELETE 访问;杀毒/索引器/编辑器
+        // 常短暂持有文件且不共享删除,Unix rename 无此限制。对这些瞬态冲突做
+        // 有界重试(ponytail: 固定 5×20ms,不区分错误来源)。
+        const RETRIES: usize = 5;
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
+        const ERROR_ACCESS_DENIED: u32 = 5;
+        const ERROR_SHARING_VIOLATION: u32 = 32;
         let mut temp_w: Vec<u16> = temp.as_os_str().encode_wide().collect();
         let mut target_w: Vec<u16> = target.as_os_str().encode_wide().collect();
         temp_w.push(0);
         target_w.push(0);
         // SAFETY: 两个 NUL 结尾的 UTF-16 路径指针仅在本调用内使用。
-        let moved = unsafe {
-            windows_sys::Win32::Storage::FileSystem::MoveFileExW(
-                temp_w.as_ptr(),
-                target_w.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if moved == 0 {
-            return Err(std::io::Error::last_os_error());
+        for attempt in 0..=RETRIES {
+            let moved = unsafe {
+                windows_sys::Win32::Storage::FileSystem::MoveFileExW(
+                    temp_w.as_ptr(),
+                    target_w.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            };
+            if moved != 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            let transient = matches!(
+                error.raw_os_error(),
+                Some(code)
+                    if code as u32 == ERROR_ACCESS_DENIED
+                        || code as u32 == ERROR_SHARING_VIOLATION
+            );
+            if !transient || attempt == RETRIES {
+                return Err(error);
+            }
+            std::thread::sleep(RETRY_DELAY);
         }
-        Ok(())
+        unreachable!("loop returns on every branch")
     }
     #[cfg(not(windows))]
     {
@@ -164,9 +184,8 @@ fn perform_replace(
     {
         let _ = fsync_parent(target.parent().unwrap_or(Path::new("/")));
     }
-    // Windows write-through semantics would use MoveFileExW/ReplaceFileW here;
-    // ponytail: the Unix path is the one under test, the Windows durability
-    // shim is left for the platform owner to wire up.
+    // Windows 侧耐久性已由 publish_rename 的 MOVEFILE_WRITE_THROUGH 覆盖,
+    // 无需父目录 fsync(NTFS 上也无对应语义)。
     Ok(())
 }
 

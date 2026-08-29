@@ -96,9 +96,13 @@ fn send_ingress_windows(name: &str, request: &IngressRequest) -> Result<IngressR
     }
     runtime.block_on(async move {
         let handle = pipe.into_raw_handle();
+        // into_raw_handle 已把所有权移出 File;from_raw_handle 失败时句柄无主,
+        // 必须在此关闭,否则每次失败泄漏一个管道句柄。
         let mut stream = unsafe {
-            NamedPipeClient::from_raw_handle(handle as RawHandle)
-                .map_err(|error| error.to_string())?
+            NamedPipeClient::from_raw_handle(handle as RawHandle).map_err(|error| {
+                windows_sys::Win32::Foundation::CloseHandle(handle);
+                error.to_string()
+            })?
         };
         timeout(remaining, async {
             stream

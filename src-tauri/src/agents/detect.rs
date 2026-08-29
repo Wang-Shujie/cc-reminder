@@ -517,6 +517,15 @@ fn run_version_command(executable: &Path) -> Result<String, VersionCommandError>
         command.process_group(0);
     }
     let mut child = command.spawn().map_err(|_| VersionCommandError::Failed)?;
+    // Windows:.cmd 候选的直接子进程是 cmd.exe,孙进程(node)继承
+    // stdout/stderr 句柄,只杀直接子进程会让读取线程永远阻塞(检测线程
+    // 挂死,无外部兜底 deadline)。kill-on-close Job Object 对应 Unix 的
+    // process_group(0)+kill(-pgid),超时时整树终止。
+    // ponytail: std 无法 CREATE_SUSPENDED 再入 job,spawn 到 attach 之间
+    // 出生的孙进程会逃逸;出现实害时改用 std::os::windows::process 前置
+    // 命令扩展或创建后立即 attach 的专有路径。
+    #[cfg(windows)]
+    let job = JobHandle(attach_kill_on_close_job(&child));
     let stdout = child.stdout.take().ok_or(VersionCommandError::Failed)?;
     let stderr = child.stderr.take().ok_or(VersionCommandError::Failed)?;
     let stdout_reader = thread::spawn(move || read_bounded(stdout));
@@ -528,6 +537,10 @@ fn run_version_command(executable: &Path) -> Result<String, VersionCommandError>
         Some(status) => status,
         None => {
             kill_timed_out_process(&mut child);
+            // Windows 必须先整树终止再 join:持管道句柄的孙进程存活时,
+            // join 会永远阻塞。
+            #[cfg(windows)]
+            terminate_job_tree(&job);
             let _ = child.wait();
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
@@ -560,6 +573,68 @@ fn kill_timed_out_process(child: &mut std::process::Child) {
 #[cfg(not(unix))]
 fn kill_timed_out_process(child: &mut std::process::Child) {
     let _ = child.kill();
+}
+
+/// Windows 版整树超时终止:直接子进程(cmd.exe)的孙进程(node)持有继承的
+/// 管道句柄,仅 child.kill() 会让读取线程 join 永远阻塞。TerminateJobObject
+/// 终止 job 内全部进程,句柄随之关闭,读取线程得以 EOF 返回。
+#[cfg(windows)]
+fn terminate_job_tree(job: &JobHandle) {
+    if job.0 != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0, 1);
+        }
+    }
+}
+
+/// kill-on-close 的 Job Object RAII 句柄:Drop 即 CloseHandle。由于设置了
+/// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,关闭最后一个句柄会终止 job 内仍在
+/// 运行的进程——run_version_command 的所有提前返回路径因此都正确清场。
+#[cfg(windows)]
+struct JobHandle(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        if self.0 != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+        }
+    }
+}
+
+#[cfg(windows)]
+fn attach_kill_on_close_job(
+    child: &std::process::Child,
+) -> windows_sys::Win32::Foundation::HANDLE {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    // SAFETY: job 句柄为本函数刚创建,进程句柄来自存活的子进程;
+    // 失败路径立即 CloseHandle,不向外泄漏句柄。
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job == INVALID_HANDLE_VALUE {
+            return INVALID_HANDLE_VALUE;
+        }
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+            || AssignProcessToJobObject(job, child.as_raw_handle()) == 0
+        {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+            return INVALID_HANDLE_VALUE;
+        }
+        job
+    }
 }
 
 fn read_bounded(reader: impl Read) -> Vec<u8> {
