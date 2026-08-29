@@ -518,9 +518,7 @@ mod tests {
     fn agent_hook_and_rejected_health_reach_the_snapshot() {
         // v2-issues:agents/hook 漂移/ingress 拒绝此前完全进不了快照,
         // 事实故障下界面仍显示健康。三者必须各自抬级并产出 issue。
-        use crate::model::{
-            AgentInstallationRecord, AgentKind, InstallationHealth, TrustStatus,
-        };
+        use crate::model::{AgentInstallationRecord, AgentKind, InstallationHealth, TrustStatus};
         use crate::security::credentials::CredentialStore;
         use crate::security::crypto::FieldCipher;
         use crate::storage::config::ConfigRepository;

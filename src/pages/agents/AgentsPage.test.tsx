@@ -224,7 +224,7 @@ test("the suggested prompt copies to the clipboard on click", async () => {
     await screen.findByRole("button", { name: "复制命令 PermissionRequest" }),
   );
   expect(await navigator.clipboard.readText()).toBe(
-    "请运行 ls -la / 命令（触发权限确认，选择允许）",
+    "请运行一个会触发权限确认的只读命令（例如列出当前目录之外的某个目录），并在权限弹窗中选择允许",
   );
 });
 

@@ -24,6 +24,17 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 - **逐 OS 验收实测**：docs/operations.md 附录 C 中所有 ⏳ 单元（真实测试消息、签名包校验、升级/卸载流程等）需在具备渠道凭据与三平台主机的条件下执行并回填证据。
 - **签名凭据与 updater 配置注入**：release.yml 已机器强制 pubkey 非空 + 端点无占位符，但整条流水线从未端到端执行过（AUTHORED AND REVIEWED, NOT YET EXECUTED）；首次打 tag 时按工作流头部维护者清单操作。
 - ~~**HTTP 响应体上限时序**（channels/http.rs ~53）~~ **已解决(v2-fixes 0fdcdf0)**:chunk 流式读取,超限即断,不再整读。原内容:：`response.bytes()` 在 64 KiB 校验前读取完整响应体；官方固定两个 host 且无重定向，实际风险低，改为 `bytes_stream().take()` 即可。
+- **Windows 构建链修复轮（2026-08-29,windows-release 分支）已修**:① msvc target 编译(仅 4 个 unix 权限位测试需 cfg(unix) 门);② Authenticode 指纹改经 `--config` 注入(v1 环境变量 `TAURI_WINDOWS_CERTIFICATE_THUMBPRINT` 从不被 2.x 读取);③ verify-package 改查 MSI 打包内容(-Archive),旧门槛检查的裸 exe 会被 bundler 还原为未签名快照;④ NSIS 形态显式钉死(currentUser/中英双语);⑤ Claude Code 的 hook `command` 在 Windows 用双引号形式(其 handler 无 `commandWindows` 键,POSIX 单引号会让每次 hook 失败),识别 tokeniser 支持双形式;⑥ detect 版本探测超时改 Job Object 整树终止(.cmd shim 的孙进程曾可让检测线程挂死);⑦ publish_rename 对 ACCESS_DENIED/SHARING_VIOLATION 有界重试;⑧ IPC 管道 busy 自愈 + 错误路径句柄泄漏;⑨ ci.yml windows leg 加 clippy -D warnings + cargo test --lib(Windows 分支代码首次有 lint/测试门)。**已修但未实机验证**,全部落在逐 OS 验收(P 系列)范围。
+- **Windows 遗留(P 系列验收时处理)**:
+  - IPC Windows 连接无读写 deadline(同步句柄无超时 API;卡死客户端可占住一个实例+线程;unix 臂有 IPC_TOTAL_TIMEOUT)——正解是 overlapped IO 重设计,先记录;
+  - 长时间运行的 helper 进程使 MoveFileExW 就地升级失败(已有 5×20ms 重试;若实测仍现,升级为"move aside 再发布");
+  - 安装路径含 `%` 时 cmd.exe 展开无干净转义(windows_quote 不处理),已知边界;
+  - `canonicalize()` 的 `\\?\` verbatim 前缀会进 Detection 展示路径(项目匹配 resolver 已处理,仅显示问题);
+  - 本地无 Windows 出包演练(local-release-build.sh 仅 Darwin host;可依 cargo-xwin 加 ps1 孪生脚本);
+  - MSI 为未入 updater feed 的附带产物(latest.json 只发 setup.exe),状态应写入 operations.md 或从上传清单移除;
+  - ci.yml windows 测试门首轮可能暴露真实失败,属 P 系列应收敛内容;
+  - detect 的 Job Object 在 spawn 与 attach 之间出生的孙进程会逃逸(std 无 CREATE_SUSPENDED,已留 ponytail 注释);
+  - 顺手记录(非 Windows 特有):health.rs:101 tray_label 硬编码中文「个失败任务」,en locale 用户托盘显示中文。
 
 ## 健壮性 / 清理
 

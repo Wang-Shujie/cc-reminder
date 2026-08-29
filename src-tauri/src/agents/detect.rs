@@ -603,15 +603,13 @@ impl Drop for JobHandle {
 }
 
 #[cfg(windows)]
-fn attach_kill_on_close_job(
-    child: &std::process::Child,
-) -> windows_sys::Win32::Foundation::HANDLE {
+fn attach_kill_on_close_job(child: &std::process::Child) -> windows_sys::Win32::Foundation::HANDLE {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
     };
     // SAFETY: job 句柄为本函数刚创建,进程句柄来自存活的子进程;
     // 失败路径立即 CloseHandle,不向外泄漏句柄。
