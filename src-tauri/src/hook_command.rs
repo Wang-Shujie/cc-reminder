@@ -112,9 +112,19 @@ pub fn canonical_hook_command(
         "--event",
         event,
     ];
+    // Claude Code 的 handler 没有 `commandWindows` 覆盖键(仅 Codex 支持):
+    // Windows 上它的 `command` 由 cmd.exe/PowerShell 直接执行,POSIX 单引号
+    // 会被当字面字符,每次 hook 都会失败。因此 Claude 的 `command` 按当前
+    // 平台选择引号形式;Codex 的 `command` 恒为 POSIX 形式(识别 tokeniser
+    // 与指纹都依赖它),Windows 经 `commandWindows` 下发。
+    let quoter = if agent == AgentKind::ClaudeCode && cfg!(windows) {
+        windows_quote
+    } else {
+        posix_quote
+    };
     HookCommand {
-        command: std::iter::once(posix_quote(&path.to_string_lossy()))
-            .chain(args.iter().map(|a| posix_quote(a)))
+        command: std::iter::once(quoter(&path.to_string_lossy()))
+            .chain(args.iter().map(|a| quoter(a)))
             .collect::<Vec<_>>()
             .join(" "),
         command_windows: Some(
@@ -423,6 +433,29 @@ mod tests {
                 "Stop",
             ))
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn claude_command_uses_windows_quoting_on_windows() {
+        let claude = canonical_hook_command(
+            Path::new(r"C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe"),
+            AgentKind::ClaudeCode,
+            "Stop",
+        );
+        assert!(
+            claude
+                .command
+                .starts_with(r#""C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe" --owner"#)
+        );
+        // Codex 的 `command` 恒为 POSIX 形式(识别依赖),Windows 经
+        // `commandWindows` 下发双引号形式。
+        let codex = canonical_hook_command(
+            Path::new(r"C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe"),
+            AgentKind::Codex,
+            "Stop",
+        );
+        assert!(codex.command.starts_with('\''));
     }
 
     #[test]

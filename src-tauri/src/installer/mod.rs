@@ -682,11 +682,80 @@ fn handler_event(agent: AgentKind, handler: &Value) -> Option<String> {
     recognize_owned(agent, command.value.as_ref(), command_windows)
 }
 
+/// Split a canonical command string into its shell words. Dispatches on the
+/// quoting form: the Windows form (Claude Code 的 `command` 在 Windows 上是
+/// 双引号形式) 按 cmd.exe/CommandLineToArgvW 规则解析,POSIX 形式按下方的
+/// 单引号规则解析。Ownership 识别对两种形式都必须可用。
+fn shell_words(command: &str) -> Vec<String> {
+    if command.starts_with('"') {
+        windows_words(command)
+    } else {
+        posix_words(command)
+    }
+}
+
+/// Split a Windows-form (`windows_quote`) command into shell words:
+/// `"` toggles a quoted run; a backslash run before `"` collapses in pairs
+/// and an odd trailing backslash escapes the quote (CommandLineToArgvW 规则,
+/// 与 `windows_quote` 的发射规则互逆);其余反斜杠字面保留。
+fn windows_words(command: &str) -> Vec<String> {
+    let bytes = command.as_bytes();
+    let mut words = Vec::new();
+    let mut current: Vec<u8> = Vec::new();
+    let mut in_quotes = false;
+    let mut has_token = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\\' {
+            let mut run = 0usize;
+            while index < bytes.len() && bytes[index] == b'\\' {
+                run += 1;
+                index += 1;
+            }
+            if index < bytes.len() && bytes[index] == b'"' {
+                for _ in 0..run / 2 {
+                    current.push(b'\\');
+                }
+                if run % 2 == 1 {
+                    current.push(b'"');
+                } else {
+                    in_quotes = !in_quotes;
+                }
+                index += 1;
+            } else {
+                for _ in 0..run {
+                    current.push(b'\\');
+                }
+            }
+            has_token = true;
+        } else if byte == b'"' {
+            in_quotes = !in_quotes;
+            has_token = true;
+            index += 1;
+        } else if byte.is_ascii_whitespace() && !in_quotes {
+            if has_token {
+                words.push(String::from_utf8(std::mem::take(&mut current)).expect("utf8 word"));
+                has_token = false;
+            }
+            index += 1;
+        } else {
+            current.push(byte);
+            has_token = true;
+            index += 1;
+        }
+    }
+    if has_token {
+        words.push(String::from_utf8(current).expect("utf8 word"));
+    }
+    words
+}
+
 /// Split a canonical posix command string into its shell words, honouring
 /// single-quote runs (including the `'\''` apostrophe escape) and backslash
 /// escapes outside quotes. Whitespace inside a quoted run is preserved, which
 /// is what makes a helper path containing spaces tokenise as a single word.
-fn shell_words(command: &str) -> Vec<String> {
+fn posix_words(command: &str) -> Vec<String> {
     let bytes = command.as_bytes();
     let mut words = Vec::new();
     let mut current: Vec<u8> = Vec::new();
@@ -919,6 +988,48 @@ mod tests {
         );
         let apostrophe = shell_words("'it'\\''s'");
         assert_eq!(apostrophe, vec!["it's".to_owned()]);
+    }
+
+    #[test]
+    fn shell_words_parses_the_windows_form() {
+        // Claude Code 在 Windows 上的 `command` 是双引号形式;识别 tokeniser
+        // 必须能解析它(空格路径、& 字符、反斜杠),否则所有权识别失效。
+        let words = shell_words(
+            r#""C:\Users\a & b\CC Reminder\hook.exe" --owner cc-reminder --agent claude-code --event Stop"#,
+        );
+        assert_eq!(
+            words,
+            vec![
+                r"C:\Users\a & b\CC Reminder\hook.exe".to_owned(),
+                "--owner".to_owned(),
+                "cc-reminder".to_owned(),
+                "--agent".to_owned(),
+                "claude-code".to_owned(),
+                "--event".to_owned(),
+                "Stop".to_owned(),
+            ]
+        );
+        // \" 转义与成对反斜杠折叠(CommandLineToArgvW 规则)。
+        let escaped = shell_words(r#""C:\path\"quoted"\ end"#);
+        assert_eq!(
+            escaped,
+            vec![r#"C:\path"quoted\"#.to_owned(), "end".to_owned()]
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn recognize_accepts_windows_form_claude_command() {
+        let command = canonical_hook_command(
+            Path::new(r"C:\Users\u\AppData\Roaming\com.ccreminder.app\bin\cc-reminder-hook.exe"),
+            AgentKind::ClaudeCode,
+            "Stop",
+        );
+        // Claude 输出从不携带 commandWindows,候选按 None 参与指纹。
+        assert_eq!(
+            recognize_owned(AgentKind::ClaudeCode, &command.command, None).as_deref(),
+            Some("Stop")
+        );
     }
 
     #[test]
