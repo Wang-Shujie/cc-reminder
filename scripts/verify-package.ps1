@@ -18,7 +18,10 @@
       7. on a Windows host: the Authenticode signature status of the desktop
          binary (and -Installer, when given) must be Valid. This fails LOUDLY
          on unsigned artifacts; it is skipped ONLY on non-Windows hosts
-         (pwsh on macOS/Linux). (macOS codesign/notarization parity lives in
+         (pwsh on macOS/Linux), or when -SkipAuthenticode is passed for LOCAL
+         UNSIGNED builds (scripts/local-release-build.ps1) — the same escape
+         hatch as omitting --macos-app-bundle in verify-package.sh. CI never
+         passes it. (macOS codesign/notarization parity lives in
          verify-package.sh.)
 
     The scripts take explicit artifact arguments and never delete anything
@@ -40,6 +43,9 @@
 .PARAMETER PublishedFile
     Repeatable list of published artifacts that must each have a valid sibling
     ".sha256" checksum.
+.PARAMETER SkipAuthenticode
+    Skip the Authenticode gate (check 7) for LOCAL UNSIGNED builds that carry
+    no signing certificate. Release CI never passes this.
 
 .EXAMPLE
     ./scripts/verify-package.ps1 -DesktopBinary .\target\release\cc-reminder.exe `
@@ -52,7 +58,8 @@ param(
     [Parameter(Mandatory = $true)] [string] $Manifest,
     [string] $Archive = "",
     [string[]] $Installer = @(),
-    [string[]] $PublishedFile = @()
+    [string[]] $PublishedFile = @(),
+    [switch] $SkipAuthenticode
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,8 +105,17 @@ try {
             Select-Object -First 1
         if (-not $found) { Fail "could not locate 'cc-reminder.exe' inside $Archive" }
         $DesktopBinary = $found.FullName
-        $found = Get-ChildItem -Path $WorkDir -Recurse -File -Filter "cc-reminder-hook.exe" |
+        # Tauri bundles EVERY cargo bin in the install root, so a helper copy
+        # also sits at <install>\cc-reminder-hook.exe next to the one the
+        # runtime actually reads (<install>\resources\bin\). Those two bytes
+        # legitimately differ (each link embeds a fresh PE timestamp), and the
+        # manifest describes the RESOURCES one — the installer::helper contract
+        # (BIN_RESOURCE_DIR). Prefer it; never "verify" the wrong copy.
+        $helperHits = Get-ChildItem -Path $WorkDir -Recurse -File -Filter "cc-reminder-hook.exe"
+        $found = $helperHits |
+            Where-Object { $_.FullName -like "*resources*bin*" } |
             Select-Object -First 1
+        if (-not $found) { $found = $helperHits | Select-Object -First 1 }
         if (-not $found) { Fail "could not locate 'cc-reminder-hook.exe' inside $Archive" }
         $HelperBinary = $found.FullName
         $found = Get-ChildItem -Path $WorkDir -Recurse -File -Filter "helper-manifest.json" |
@@ -235,9 +251,13 @@ try {
     # Windows Authenticode gate. Runs ONLY on a Windows host; fails LOUDLY
     # there for unsigned or untrusted artifacts. Non-Windows hosts skip with a
     # note (PowerShell 5.1 has no $IsWindows; absence means Windows).
+    # -SkipAuthenticode is the LOCAL UNSIGNED BUILD escape hatch (same spirit
+    # as omitting --macos-app-bundle in verify-package.sh); CI never passes it.
     # ---------------------------------------------------------------------------
     $onWindows = (-not $PSVersionTable.ContainsKey("Platform")) -or ($PSVersionTable.Platform -eq "Win32NT")
-    if ($onWindows) {
+    if ($SkipAuthenticode) {
+        Write-Host "  authenticode   : skipped (-SkipAuthenticode: local unsigned build)"
+    } elseif ($onWindows) {
         foreach ($signedArtifact in (@($DesktopBinary) + @($Installer) | Where-Object { $_ -ne "" })) {
             $signature = Get-AuthenticodeSignature -FilePath $signedArtifact
             if ($signature.Status -ne "Valid") {
