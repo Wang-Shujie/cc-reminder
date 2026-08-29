@@ -637,7 +637,9 @@ mod tests {
         }
     }
 
+    // 只读前置依赖 unix 权限位(chmod 0o444),Windows 无对应语义。
     #[test]
+    #[cfg(unix)]
     fn reported_offset_persistence_is_best_effort() {
         // v2-issues: 只读存储不得把 bootstrap 挡在永久加载屏——offset 写失败
         // 必须被吞掉(仅影响下次启动的静默小时时区)。

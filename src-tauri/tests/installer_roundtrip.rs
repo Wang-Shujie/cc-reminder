@@ -588,7 +588,10 @@ fn external_change_after_inspection_is_reported_without_overwrite() {
     assert!(!after.contains("replacement"));
 }
 
+// 以下三个测试断言 unix 权限位语义(mode 0o600/0o640、目录写位),
+// Windows 无对应语义,仅 unix 编译。
 #[test]
+#[cfg(unix)]
 fn atomic_replace_writes_durally_and_restores_mode() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -626,6 +629,7 @@ fn atomic_replace_writes_durally_and_restores_mode() {
 }
 
 #[test]
+#[cfg(unix)]
 fn atomic_replace_preserves_original_mode_when_none_requested() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -641,6 +645,7 @@ fn atomic_replace_preserves_original_mode_when_none_requested() {
 }
 
 #[test]
+#[cfg(unix)]
 fn atomic_replace_uses_a_same_directory_temp() {
     // If the temp lived in /tmp (different filesystem), rename would fall back to a
     // non-atomic copy. We assert same-directory placement by making the parent
