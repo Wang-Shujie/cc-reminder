@@ -290,7 +290,10 @@ fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> 
     // 维护 hook_installations)——纯读库投影,零子进程成本。
     let mut agent_states = Vec::new();
     let mut issues: Vec<HealthIssue> = Vec::new();
-    for agent in [crate::model::AgentKind::ClaudeCode, crate::model::AgentKind::Codex] {
+    for agent in [
+        crate::model::AgentKind::ClaudeCode,
+        crate::model::AgentKind::Codex,
+    ] {
         if let Ok(record) = state.storage.integrations.agent(agent) {
             let level = installation_health_level(record.health_status);
             agent_states.push(crate::health::AgentIntegrationHealth {
@@ -302,7 +305,11 @@ fn build_health_snapshot(state: &CoreState) -> Result<HealthSnapshot, AppError> 
             });
         }
         let agent_label = agent_kind_label(agent);
-        let hooks = state.storage.integrations.list_hooks(agent).unwrap_or_default();
+        let hooks = state
+            .storage
+            .integrations
+            .list_hooks(agent)
+            .unwrap_or_default();
         let mut broken = 0u32;
         let mut repair = 0u32;
         let mut untrusted = 0u32;
@@ -512,8 +519,7 @@ mod tests {
         // v2-issues:agents/hook 漂移/ingress 拒绝此前完全进不了快照,
         // 事实故障下界面仍显示健康。三者必须各自抬级并产出 issue。
         use crate::model::{
-            AgentInstallationRecord, AgentKind, HookInstallationRecord, InstallationHealth,
-            TrustStatus,
+            AgentInstallationRecord, AgentKind, InstallationHealth, TrustStatus,
         };
         use crate::security::credentials::CredentialStore;
         use crate::security::crypto::FieldCipher;
@@ -537,7 +543,9 @@ mod tests {
             QueueRepository::new(database.clone()),
             integrations.clone(),
             CredentialStore::memory_for_test(),
-            crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(FieldCipher::from_key([4u8; 32]))),
+            crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(
+                FieldCipher::from_key([4u8; 32]),
+            )),
             std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
                 &root.path().join("logs"),
                 1024 * 1024,
@@ -591,7 +599,11 @@ mod tests {
             .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
 
         let snapshot = health_snapshot(&state).unwrap();
-        let codes: Vec<_> = snapshot.issues.iter().map(|i| i.issue_code.as_str()).collect();
+        let codes: Vec<_> = snapshot
+            .issues
+            .iter()
+            .map(|i| i.issue_code.as_str())
+            .collect();
         assert!(codes.contains(&"hook.needs_repair"), "codes: {codes:?}");
         assert!(codes.contains(&"hook.needs_trust"), "codes: {codes:?}");
         assert!(codes.contains(&"ingress.rejected"), "codes: {codes:?}");

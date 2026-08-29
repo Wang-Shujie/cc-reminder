@@ -491,60 +491,64 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                 };
                 // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
                 // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
-                let reply = match std::panic::AssertUnwindSafe(pipeline_for_ipc.process_live(request))
-                    .catch_unwind()
-                    .await
-                {
-                    // 正常路径:Processed 推 history-changed;Duplicate 不推。
-                    Ok(Ok(pipeline::LiveOutcome::Processed { event_id })) => {
-                        // v2-issues: 事件落库即推送 history-changed,
-                        // 通知记录订阅端即时刷新(重复事件无历史变化)。
-                        crate::worker::emit(&ipc_events, crate::worker::CoreEvent::HistoryChanged);
-                        IngressResponse::Accepted { event_id }
-                    }
-                    Ok(Ok(pipeline::LiveOutcome::Duplicate { event_id })) => {
-                        IngressResponse::Accepted { event_id }
-                    }
-                    Ok(Err(_)) => {
-                        // Redacted one-liner through the Diagnostics chokepoint;
-                        // never the request contents.
-                        ipc_diagnostics.info("ipc", "ingress request rejected");
-                        ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        crate::worker::emit(
-                            &ipc_events,
-                            crate::worker::CoreEvent::HealthChanged { channel_id: None },
-                        );
-                        IngressResponse::Rejected {
-                            // The hook contract requires a neutral outcome + exit 0; the
-                            // rejection code is diagnostic only. An unrecognized helper
-                            // surfaces as `unrecognized` so the hook does not retry.
-                            error_code: "unrecognized".to_owned(),
+                let reply =
+                    match std::panic::AssertUnwindSafe(pipeline_for_ipc.process_live(request))
+                        .catch_unwind()
+                        .await
+                    {
+                        // 正常路径:Processed 推 history-changed;Duplicate 不推。
+                        Ok(Ok(pipeline::LiveOutcome::Processed { event_id })) => {
+                            // v2-issues: 事件落库即推送 history-changed,
+                            // 通知记录订阅端即时刷新(重复事件无历史变化)。
+                            crate::worker::emit(
+                                &ipc_events,
+                                crate::worker::CoreEvent::HistoryChanged,
+                            );
+                            IngressResponse::Accepted { event_id }
                         }
-                    }
-                    // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
-                    // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
-                    Err(payload) => {
-                        // futures_util 的 catch_unwind:Err 即 panic 载荷本体。
-                        let message = payload
-                            .downcast_ref::<String>()
-                            .cloned()
-                            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                            .unwrap_or_else(|| "<non-string panic payload>".to_owned());
-                        ipc_diagnostics.info(
-                            "ipc",
-                            &format!("ingress handler panicked: {message}; loop survived"),
-                        );
-                        ipc_diagnostics.info("ipc", "ingress request rejected");
-                        ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        crate::worker::emit(
-                            &ipc_events,
-                            crate::worker::CoreEvent::HealthChanged { channel_id: None },
-                        );
-                        IngressResponse::Rejected {
-                            error_code: "unrecognized".to_owned(),
+                        Ok(Ok(pipeline::LiveOutcome::Duplicate { event_id })) => {
+                            IngressResponse::Accepted { event_id }
                         }
-                    }
-                };
+                        Ok(Err(_)) => {
+                            // Redacted one-liner through the Diagnostics chokepoint;
+                            // never the request contents.
+                            ipc_diagnostics.info("ipc", "ingress request rejected");
+                            ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            crate::worker::emit(
+                                &ipc_events,
+                                crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                            );
+                            IngressResponse::Rejected {
+                                // The hook contract requires a neutral outcome + exit 0; the
+                                // rejection code is diagnostic only. An unrecognized helper
+                                // surfaces as `unrecognized` so the hook does not retry.
+                                error_code: "unrecognized".to_owned(),
+                            }
+                        }
+                        // v2-issues(实机教训):单请求 panic 不许杀死整个接受环——
+                        // 环死 = hook 全灭且零日志。捕获、记录、按拒绝答复。
+                        Err(payload) => {
+                            // futures_util 的 catch_unwind:Err 即 panic 载荷本体。
+                            let message = payload
+                                .downcast_ref::<String>()
+                                .cloned()
+                                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                                .unwrap_or_else(|| "<non-string panic payload>".to_owned());
+                            ipc_diagnostics.info(
+                                "ipc",
+                                &format!("ingress handler panicked: {message}; loop survived"),
+                            );
+                            ipc_diagnostics.info("ipc", "ingress request rejected");
+                            ipc_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            crate::worker::emit(
+                                &ipc_events,
+                                crate::worker::CoreEvent::HealthChanged { channel_id: None },
+                            );
+                            IngressResponse::Rejected {
+                                error_code: "unrecognized".to_owned(),
+                            }
+                        }
+                    };
                 let _ = response.send(reply).await;
             }
         });

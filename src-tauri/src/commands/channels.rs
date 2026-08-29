@@ -424,7 +424,9 @@ mod tests {
         let queue = QueueRepository::new(database.clone());
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = crate::security::credentials::CredentialStore::memory_for_test();
-        let cipher = crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(FieldCipher::from_key([7u8; 32])));
+        let cipher = crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(
+            FieldCipher::from_key([7u8; 32]),
+        ));
         std::mem::forget(root);
         let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
             &database_path.parent().unwrap().join("logs"),
@@ -506,7 +508,9 @@ mod tests {
         let queue = QueueRepository::new(database.clone());
         let integrations = IntegrationRepository::new(database.clone());
         let credentials = crate::security::credentials::CredentialStore::memory_for_test();
-        let cipher = crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(FieldCipher::from_key([9u8; 32])));
+        let cipher = crate::security::crypto::LazyFieldCipher::ready(std::sync::Arc::new(
+            FieldCipher::from_key([9u8; 32]),
+        ));
         std::mem::forget(root);
         let diagnostics = std::sync::Arc::new(crate::diagnostics::Diagnostics::test(
             &database_path.parent().unwrap().join("logs"),
