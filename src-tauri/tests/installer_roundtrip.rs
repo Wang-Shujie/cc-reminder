@@ -719,7 +719,8 @@ fn hook_command_carries_both_platform_commands() {
     // no-special-char tokens unquoted. Both carry the agent/event markers.
     assert!(cmd.command.contains("'codex'"));
     assert!(cmd.command.contains("'Stop'"));
-    assert!(win.contains("--agent codex --event Stop"));
+    // be52b8e 起 Windows 形式对每个参数加双引号(cmd.exe/CommandLineToArgvW 安全)。
+    assert!(win.contains("\"--agent\" \"codex\" \"--event\" \"Stop\""));
 }
 
 // ---- fix-round: handler-granularity splice, non-array guards, multi-insert ----

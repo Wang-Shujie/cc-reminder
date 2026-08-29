@@ -234,24 +234,22 @@ fn shutdown_core(app: &tauri::AppHandle) {
         .worker_task
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let worker_task = worker_lock.take();
-    if let Some(task) = worker_task {
-        // Awaiting the join handle covers "active sends finish": `run` only
-        // returns after the current pass completes, so this waits for real
-        // work, not just the cancellation handshake.
+    let worker_done = worker_lock.take();
+    if let Some(done) = worker_done {
+        // Wait (≤10s) for "active sends finish": the worker sets the flag when
+        // its run loop returns, so this waits for real work, not just the
+        // cancellation handshake.
         //
-        // v2-issues(实机日志 2026-08-27):`tauri::async_runtime::block_on` 在
-        // RunEvent::Exit 上没有 reactor 上下文,每次退出都 panic→abort,10s
-        // 排水从未生效过。这里自建一次性 current-thread runtime 来等待——
-        // 退出路径只等这一个 handle,不需要 tauri 的多线程运行时。
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        if let Ok(runtime) = runtime {
-            let _ = runtime.block_on(tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                task,
-            ));
+        // v2-issues(实机日志 2026-08-27/28):在此处等待 tokio JoinHandle——
+        // 无论 tauri runtime 还是自建 current-thread runtime——都实测 panic
+        // "there is no reactor running"(被 await 的任务处在 runtime 关闭
+        // 路径上),abort 抹掉优雅收尾。改为纯 std 完成标志 + 轮询:退出路径
+        // 只需要"最多等 10 秒",100ms 粒度绰绰有余,零 runtime 依赖。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done.load(std::sync::atomic::Ordering::Relaxed)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 }
@@ -416,6 +414,45 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let bg_endpoint = paths.endpoint();
     let bg_logs = paths.logs.clone();
     let bg_state_for_worker = app.state::<CoreState>().inner().clone();
+    // 5h. v2-issues(2026-08-29 实锤复发):Claude Code 会话会把内存中的
+    //     空 hooks 态落盘(磁盘被清、DB 仍记 healthy)。自愈循环周期性
+    //     比对磁盘与 DB,结构损伤即复用 Repair 事务恢复;应用内卸载已删
+    //     DB 行,绝不复活。helper 不可用则循环不启动(占位 helper 的
+    //     Repair 会被 typed 拒绝,轮询无意义)。
+    let selfheal_integrations = integrations.clone();
+    let selfheal_cipher = cipher.clone();
+    let selfheal_events = core_event_sink.clone();
+    let selfheal_diagnostics = bg_diagnostics.clone();
+    let selfheal_cancel = bg_cancel.clone();
+    let selfheal_home = directories::BaseDirs::new()
+        .map(|d| d.home_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let selfheal_helper = app.path().resource_dir().ok().and_then(|resources_dir| {
+        crate::installer::helper::load_bundled_installer(&resources_dir, &paths.bin)
+            .and_then(|loaded| {
+                loaded.ensure_installed()?;
+                Ok(loaded)
+            })
+            .ok()
+    });
+    if let Some(helper) = selfheal_helper {
+        tauri::async_runtime::spawn(agents::selfheal::selfheal_loop(
+            selfheal_integrations,
+            selfheal_cipher,
+            helper,
+            selfheal_home,
+            selfheal_events,
+            selfheal_diagnostics,
+            std::time::Duration::from_secs(60),
+            selfheal_cancel,
+        ));
+    } else {
+        bg_diagnostics.info(
+            "selfheal",
+            "self-heal loop not started (bundled helper unavailable)",
+        );
+    }
+
     tauri::async_runtime::spawn(async move {
         // 5a. Keychain cipher load on the blocking pool — the potentially
         //     minutes-long step (ACL dialog). `load_or_create_logged` carries
@@ -569,12 +606,17 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         let worker_events = core_event_sink.clone();
         let worker = DeliveryWorker::new(worker_config, worker_events);
         let worker_cancel = bg_cancel.clone();
-        let worker_task = tauri::async_runtime::spawn(async move {
+        // 纯 std 完成标志:任务体最后置位,RunEvent::Exit 轮询等待(见
+        // shutdown_core)。JoinHandle 在退出路径上等待实测必 panic。
+        let worker_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_done_flag = worker_done.clone();
+        tauri::async_runtime::spawn(async move {
             let _ = worker.run(worker_cancel).await;
+            worker_done_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         });
         {
             let mut guard = bg_state_for_worker.runtime.worker_task.lock().unwrap();
-            *guard = Some(worker_task);
+            *guard = Some(worker_done);
         }
 
         // 5e. `core://` forwarder: the single consumer of the bounded event
@@ -629,6 +671,7 @@ fn setup_core(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             std::time::Duration::from_secs(6 * 60 * 60),
             redetect_cancel,
         ));
+
         bg_diagnostics.info("startup", "background init complete");
     });
 

@@ -56,11 +56,16 @@ pub struct StorageHandles {
 #[derive(Clone)]
 pub struct RuntimeHandles {
     pub cancel_token: std::sync::Arc<Mutex<Option<crate::worker::CancellationToken>>>,
-    /// Join handle of the delivery-worker task, stashed by the app shell next
-    /// to `cancel_token` so `RunEvent::Exit` can wait (≤10s) for the in-flight
-    /// send pass during graceful shutdown. Always `None` in pure command
-    /// tests — no worker is running there.
-    pub worker_task: std::sync::Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    /// Completion flag of the delivery-worker task, stashed by the app shell
+    /// next to `cancel_token` so `RunEvent::Exit` can wait (≤10s) for the
+    /// in-flight send pass during graceful shutdown. Always `None` in pure
+    /// command tests — no worker is running there.
+    ///
+    /// v2-issues:曾存 tokio JoinHandle 并用 block_on 等待——退出路径上无论
+    /// tauri runtime 还是自建 runtime 都实测 panic("no reactor running",被
+    /// await 的任务在 runtime 关闭路径上)。改为纯 std 完成标志:任务体最后
+    /// 置位,退出线程轮询等待,零 runtime 依赖。
+    pub worker_task: std::sync::Arc<Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
     /// Applies the autostart setting to the OS (register/unregister the
     /// LaunchAgent / login item). Injected by the app shell from the Tauri
     /// autostart plugin; defaults to a no-op so pure command tests can run.

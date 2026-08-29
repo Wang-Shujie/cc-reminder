@@ -83,3 +83,9 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 - **设置页添加渠道缺失**(65f7ebc):`ChannelsPage variant="add"` 实现了但从未渲染,集成页"添加渠道→"跳到的页面没有添加入口。已嵌入设置页。
 - **目录未验证盖写条目健康**(1dc7cdf):Codex 0.149.1 超出目录验证线(0.145.0)时 `entry_health` 短路把已装条目(含 observed_working)全部标"需要升级 Agent"且聚合 Error。条目改显真实健康;目录未验证聚合降 NeedsRepair;"版本未验证(需重装此条目)"仅保留给条目缺失分支。
 - **等待首次触发无抓手**(889be62,功能):待确认条目按事件类型给出可复制建议提示词(权限请求/工具/子代理/普通对话)或操作指引(新会话/退出/压缩),完成一次真实触发即转绿。
+
+## 实机事件记录(2026-08-29 第五轮:Claude Code hooks 清空复发 + 自愈根治)
+
+- **现象**:Claude Code hook 再次无法捕获(Codex 正常)。取证:`~/.claude/settings.json` 四个事件键再次全部空数组(mtime 与用户触发测试同时刻),应用 DB 仍记 healthy——与第四轮同因:Claude Code 会话把内存中的空 hooks 态落盘。
+- **根治(self-heal)**:新增后台自愈循环(60s,启动即首查):比对磁盘 owned 条目与 DB 记录,出现结构损伤(缺失/漂移/helper 不匹配)即复用既有 Repair 事务(读→合并→加密快照→原子替换→落库)恢复,绝不触碰外来内容。边界:应用内卸载已删 DB 行→绝不复活;Codex 待确认/目录未验证不触发(Repair 会重置信任)。测试:纯判定 + 端到端(清空恢复 + 外来内容保留 + 已健康不重复动作)。
+- **附带修复**:①退出 panic 此前修复未根除(自建 runtime block_on 仍在 runtime 关闭路径 panic)——改为纯 std 完成标志 + 轮询等待,零 runtime 依赖;②遗留测试损坏(early be52b8e Windows 全引号化后 fixture/断言未同步,历次"全绿"被 grep 截断掩盖)——fixture 更新为新格式,roundtrip 34 例全绿。

@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod detect;
+pub mod selfheal;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

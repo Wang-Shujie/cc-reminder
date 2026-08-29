@@ -11,7 +11,7 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "'/Users/fixtures/.cc-reminder/bin/cc-reminder-hook' '--owner' 'cc-reminder' '--agent' 'codex' '--event' 'Stop'", "commandWindows": "/Users/fixtures/.cc-reminder/bin/cc-reminder-hook --owner cc-reminder --agent codex --event Stop", "timeout": 1 }
+          { "type": "command", "command": "'/Users/fixtures/.cc-reminder/bin/cc-reminder-hook' '--owner' 'cc-reminder' '--agent' 'codex' '--event' 'Stop'", "commandWindows": "\"/Users/fixtures/.cc-reminder/bin/cc-reminder-hook\" \"--owner\" \"cc-reminder\" \"--agent\" \"codex\" \"--event\" \"Stop\"", "timeout": 1 }
         ]
       },
       {
