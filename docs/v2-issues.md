@@ -59,3 +59,14 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
 - **写入者判定**:13:12 时段应用主线程正卡在钥匙串(无 UI 可操作),唯一活跃的 settings 写入方是 Claude Code 自身(文件含 model/effortLevel/switchModelsOnFlag 等其专属键,当晚会话内有多次 /model 切换)——其设置持久化把一份**空的 hooks 内存态**落了盘。空态来源最可能是上午多次卸载/修复流转中被快照,确切时机无法从磁盘证据逐字定罪。
 - **修复**:恢复四条 hook 命令(备份后精确重写);全新 claude -p 会话即时落库验证。
 - **经验**:该类失败在应用之外,应用只能检测与修复——集成页/概览的 drift 检测(配置指纹 vs 已安装行)应能标出;用户侧若 hooks 再次消失,重开集成页点「修复」即可。另:hooks 被清空期间启动的会话持有空快照,恢复配置后需重启会话。
+
+## 发布前修复轮(2026-08-28,v2-mac-native 7337edb..889be62)
+
+用户实测反馈四项 + 排查中实锤一项,全部已修复并过全量基线(277+34+1 Rust / 126 前端 / fmt / clippy -D warnings / pnpm verify / 敏感工件 0 发现):
+
+- **启动慢 5–10s**(7337edb→138bb5c):钥匙串读取(ACL 弹窗在窗口出现前不可见,实测阻塞 5–120s+)卡在同步启动路径。setup 只做快速 SQLite 操作即返回(窗口立现),钥匙串→pipeline→IPC→worker 全部移入后台初始化任务;命令层 LazyFieldCipher 未就绪返回 typed `configuration.core_starting`;前端 bootstrap 400ms 轮询重试。
+- **退出必 panic**(7337edb):`tauri::async_runtime::block_on` 在 RunEvent::Exit 无 reactor 上下文,优雅关闭 10s 排水从未生效过。改为一次性 current-thread runtime 等待。
+- **健康假阳性**(eb5d247):`build_health_snapshot` 完全没填 agents、`rejected_count=0` 硬编码;ingress 被拒不发事件。现读库投影 agent 安装健康 / hook 漂移 / 信任状态,IPC 拒绝计数进快照并广播 health-changed,expired 抬为 Error。
+- **设置页添加渠道缺失**(65f7ebc):`ChannelsPage variant="add"` 实现了但从未渲染,集成页"添加渠道→"跳到的页面没有添加入口。已嵌入设置页。
+- **目录未验证盖写条目健康**(1dc7cdf):Codex 0.149.1 超出目录验证线(0.145.0)时 `entry_health` 短路把已装条目(含 observed_working)全部标"需要升级 Agent"且聚合 Error。条目改显真实健康;目录未验证聚合降 NeedsRepair;"版本未验证(需重装此条目)"仅保留给条目缺失分支。
+- **等待首次触发无抓手**(889be62,功能):待确认条目按事件类型给出可复制建议提示词(权限请求/工具/子代理/普通对话)或操作指引(新会话/退出/压缩),完成一次真实触发即转绿。
