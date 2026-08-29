@@ -60,17 +60,41 @@ case "$triple" in
 esac
 pnpm tauri build --config "$(printf '{"bundle":{"createUpdaterArtifacts":false,"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","%s"]}}' "$host_bin")"
 
-echo "[4/4] verifying the bundle actually embeds the staged manifest"
-bundled="src-tauri/target/release/bundle/macos/CC Reminder.app/Contents/Resources/resources/helper-manifest.json"
-python3 - "$bundled" "$triple" <<'EOF'
-import json, sys
-m = json.load(open(sys.argv[1]))
-entry = next((h for h in m["helpers"] if h["target_triple"] == sys.argv[2]), None)
+echo "[4/5] reconciling the embedded manifest with the bundled helper bytes"
+# v2-issues(2026-08-29):[1] 单独编译的 helper 与 [3] tauri build 内部整包
+# 重编的 helper 字节天然不同(cargo feature 解析差异),打包进 .app 的是
+# 后者——manifest 必须按打包后的最终字节对齐,否则运行时/verify-package
+# 的 SHA-256 校验都会失败。
+app="src-tauri/target/release/bundle/macos/CC Reminder.app"
+bundled_helper="$app/Contents/MacOS/cc-reminder-hook"
+bundled_manifest="$app/Contents/Resources/resources/helper-manifest.json"
+python3 - "$bundled_helper" "$bundled_manifest" "$triple" <<'EOF'
+import hashlib, json, sys
+data = open(sys.argv[1], "rb").read()
+m = json.load(open(sys.argv[2]))
+entry = next((h for h in m["helpers"] if h["target_triple"] == sys.argv[3]), None)
 assert entry and entry["length"] > 0 and not entry["sha256"].startswith("REPLACE"), \
     f"bundle still carries the placeholder manifest: {m}"
-print(f"verified: bundle carries a real {sys.argv[2]} helper entry "
-      f"(v{entry['helper_version']}, {entry['length']} bytes)")
+actual = {"length": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+if (entry["length"], entry["sha256"]) != (actual["length"], actual["sha256"]):
+    entry["length"] = actual["length"]
+    entry["sha256"] = actual["sha256"]
+    json.dump(m, open(sys.argv[2], "w"), indent=2, ensure_ascii=False)
+    print(f"manifest reconciled to the bundled bytes ({actual['length']} bytes)")
+else:
+    print(f"manifest already matches the bundled bytes ({actual['length']} bytes)")
 EOF
+
+echo "[5/5] rebuilding the dmg from the reconciled bundle + verify-package gate"
+dmg_dir="src-tauri/target/release/bundle/dmg"
+rm -f "$dmg_dir/CC Reminder_2.0.0_aarch64.dmg"
+hdiutil create -volname "CC Reminder" -srcfolder "src-tauri/target/release/bundle/macos" \
+  -ov -format UDZO "$dmg_dir/CC Reminder_2.0.0_aarch64.dmg" >/dev/null
+./scripts/verify-package.sh \
+  --desktop-binary "$app/Contents/MacOS/cc-reminder" \
+  --helper-binary "$bundled_helper" \
+  --manifest "$bundled_manifest" \
+  --macos-app-bundle "$app"
 
 echo "done — bundle at src-tauri/target/release/bundle/macos/CC Reminder.app"
 echo "tracked placeholders restored automatically."
