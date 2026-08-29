@@ -173,3 +173,14 @@ jobs:
 
       - name: Hook contract tests (test-support)
         run: cargo test --manifest-path src-tauri/Cargo.toml --features test-support --test hook_contract
+
+      # Windows-only gates: quality (ubuntu) compiles cfg(windows) bodies but
+      # never lints or tests them — the named-pipe/DACL/job-object paths would
+      # otherwise first execute on a release tag.
+      - name: Clippy (Windows code paths)
+        if: runner.os == 'Windows'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust unit tests (Windows code paths)
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib

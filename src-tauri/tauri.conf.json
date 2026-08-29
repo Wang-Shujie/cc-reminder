@@ -45,6 +45,16 @@
     "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "12.0"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "https://timestamp.digicert.com",
+      "tsp": true,
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "SimpChinese"],
+        "displayLanguageSelector": true
+      }
     }
   },
   "plugins": {

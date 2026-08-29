@@ -420,7 +420,7 @@ mod windows_permissions {
     }
 
     fn well_known_sid(kind: i32) -> Result<Vec<u8>, AppError> {
-        let mut size = SECURITY_MAX_SID_SIZE as u32;
+        let mut size = SECURITY_MAX_SID_SIZE;
         let mut sid = vec![0_u8; size as usize];
         if unsafe { CreateWellKnownSid(kind, null_mut(), sid.as_mut_ptr().cast(), &mut size) } == 0
         {

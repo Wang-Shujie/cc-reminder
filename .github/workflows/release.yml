@@ -350,18 +350,34 @@ jobs:
           cat src-tauri/resources/helper-manifest.json
 
       # --- 4. Package + sign the app ----------------------------------------
-      # TAURI_SIGNING_* signs the updater artifact; TAURI_WINDOWS_CERTIFICATE_
-      # THUMBPRINT makes Tauri Authenticode-sign the bundled executables and
-      # the NSIS installer. No resource overlay is needed: tauri.conf.json
+      # TAURI_SIGNING_* signs the updater artifact. The Authenticode thumbprint
+      # MUST go through the config merge patch: tauri-cli 2.x reads
+      # bundle.windows.certificateThumbprint from CONFIG only — the env var
+      # TAURI_WINDOWS_CERTIFICATE_THUMBPRINT is a Tauri v1 relic it never reads,
+      # and without the config key can_sign() is false and nothing gets signed.
+      # No resource overlay beyond the thumbprint is needed: tauri.conf.json
       # already bundles helper-manifest.json AND resources/bin/, and step 3
       # replaced the committed placeholder bytes with the signed ones.
       - name: Build and sign x64 installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ env.WINDOWS_CERT_THUMBPRINT }}
         shell: bash
-        run: pnpm tauri build --config '{"bundle":{"resources":["resources/capabilities/claude-code-2.1.218.json","resources/capabilities/codex-0.145.0.json","resources/helper-manifest.json","resources/bin/cc-reminder-hook.exe"]}}'
+        run: |
+          BUILD_CONFIG=$(python - <<'PYEOF'
+          import json, os
+          print(json.dumps({"bundle": {
+              "resources": [
+                  "resources/capabilities/claude-code-2.1.218.json",
+                  "resources/capabilities/codex-0.145.0.json",
+                  "resources/helper-manifest.json",
+                  "resources/bin/cc-reminder-hook.exe",
+              ],
+              "windows": {"certificateThumbprint": os.environ["WINDOWS_CERT_THUMBPRINT"]},
+          }}))
+          PYEOF
+          )
+          pnpm tauri build --config "$BUILD_CONFIG"
 
       # --- 5. Checksums + verify-package gate ON THIS PLATFORM -------------
       - name: Generate SHA-256 sidecars for every Windows artifact
@@ -374,21 +390,29 @@ jobs:
               Set-Content -LiteralPath "$($_.FullName).sha256" -Value "$hash  $($_.Name)"
             }
 
-      # Structural checks (marker/credential/bypass scans + manifest hash of
-      # the final signed helper) on the build outputs, plus a LOUD
-      # Authenticode Valid assertion on the signed installer. An unsigned
-      # installer fails the job right here.
+      # Structural checks (marker/credential/bypass scans + manifest hash) run
+      # against the bytes INSIDE the MSI via -Archive: the bundler restores
+      # target/release/cc-reminder.exe to its unsigned pre-build snapshot after
+      # bundling, so checking that file directly would always fail — and only
+      # the archive check verifies the helper resource injection end-to-end.
+      # The setup.exe Authenticode gate covers the NSIS payload; both published
+      # artifacts get their .sha256 sidecars validated via -PublishedFile.
       - name: Verify package (Authenticode + structure)
         shell: pwsh
         run: |
           $installer = Get-ChildItem src-tauri\target\release\bundle\nsis -Filter *-setup.exe |
             Select-Object -First 1 -ExpandProperty FullName
           if (-not $installer) { throw "no NSIS installer produced" }
+          $msi = Get-ChildItem src-tauri\target\release\bundle\msi -Filter *.msi |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $msi) { throw "no MSI produced" }
           ./scripts/verify-package.ps1 `
+            -Archive $msi `
             -DesktopBinary src-tauri\target\release\cc-reminder.exe `
             -HelperBinary src-tauri\resources\bin\cc-reminder-hook.exe `
             -Manifest src-tauri\resources\helper-manifest.json `
-            -Installer $installer
+            -Installer $installer `
+            -PublishedFile $installer, $msi
 
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v4

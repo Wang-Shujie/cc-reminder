@@ -714,9 +714,7 @@ fn windows_words(command: &str) -> Vec<String> {
                 index += 1;
             }
             if index < bytes.len() && bytes[index] == b'"' {
-                for _ in 0..run / 2 {
-                    current.push(b'\\');
-                }
+                current.resize(current.len() + run / 2, b'\\');
                 if run % 2 == 1 {
                     current.push(b'"');
                 } else {
@@ -724,9 +722,7 @@ fn windows_words(command: &str) -> Vec<String> {
                 }
                 index += 1;
             } else {
-                for _ in 0..run {
-                    current.push(b'\\');
-                }
+                current.resize(current.len() + run, b'\\');
             }
             has_token = true;
         } else if byte == b'"' {
