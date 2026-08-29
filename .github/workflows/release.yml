@@ -307,7 +307,10 @@ jobs:
           $pfxPath = Join-Path $env:RUNNER_TEMP "certificate.pfx"
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
           $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          # A PFX with intermediates imports several certs; Thumbprint must be a
+          # single value or every downstream /sha1 consumer breaks.
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password |
+            Select-Object -First 1
           "WINDOWS_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Remove-Item -LiteralPath $pfxPath
 
@@ -411,7 +414,7 @@ jobs:
             -DesktopBinary src-tauri\target\release\cc-reminder.exe `
             -HelperBinary src-tauri\resources\bin\cc-reminder-hook.exe `
             -Manifest src-tauri\resources\helper-manifest.json `
-            -Installer $installer `
+            -Installer $installer, $msi `
             -PublishedFile $installer, $msi
 
       - name: Upload Windows release artifacts

@@ -35,8 +35,8 @@
     before resolving the three required paths inside it. Supported:
     .msi (administrative install via msiexec /a), .zip.
 .PARAMETER Installer
-    Optional installer artifact (.msi/.exe) whose Authenticode status is also
-    asserted on a Windows host.
+    Optional installer artifact(s) (.msi/.exe) whose Authenticode status is
+    also asserted on a Windows host.
 .PARAMETER PublishedFile
     Repeatable list of published artifacts that must each have a valid sibling
     ".sha256" checksum.
@@ -51,7 +51,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $HelperBinary,
     [Parameter(Mandatory = $true)] [string] $Manifest,
     [string] $Archive = "",
-    [string] $Installer = "",
+    [string[]] $Installer = @(),
     [string[]] $PublishedFile = @()
 )
 
@@ -238,7 +238,7 @@ try {
     # ---------------------------------------------------------------------------
     $onWindows = (-not $PSVersionTable.ContainsKey("Platform")) -or ($PSVersionTable.Platform -eq "Win32NT")
     if ($onWindows) {
-        foreach ($signedArtifact in (@($DesktopBinary, $Installer) | Where-Object { $_ -ne "" })) {
+        foreach ($signedArtifact in (@($DesktopBinary) + @($Installer) | Where-Object { $_ -ne "" })) {
             $signature = Get-AuthenticodeSignature -FilePath $signedArtifact
             if ($signature.Status -ne "Valid") {
                 Fail ("Authenticode status of '{0}' is '{1}' (must be Valid; detail: {2})" -f `

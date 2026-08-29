@@ -113,10 +113,12 @@ pub fn canonical_hook_command(
         event,
     ];
     // Claude Code 的 handler 没有 `commandWindows` 覆盖键(仅 Codex 支持):
-    // Windows 上它的 `command` 由 cmd.exe/PowerShell 直接执行,POSIX 单引号
-    // 会被当字面字符,每次 hook 都会失败。因此 Claude 的 `command` 按当前
-    // 平台选择引号形式;Codex 的 `command` 恒为 POSIX 形式(识别 tokeniser
-    // 与指纹都依赖它),Windows 经 `commandWindows` 下发。
+    // Windows 上的执行解释器不做保证(官方走 Git Bash,但无 bash 环境时回退
+    // cmd/PowerShell,POSIX 单引号在后两者下会被当字面字符)。双引号形式在
+    // 三种解释器下均合法,故 Claude 的 `command` 在 Windows 用 windows 引号
+    // 形式(极端路径含 $/反引号时 bash 会展开,已知边界);Codex 的 `command`
+    // 恒为 POSIX 形式(识别 tokeniser 与指纹都依赖它),Windows 经
+    // `commandWindows` 下发。
     let quoter = if agent == AgentKind::ClaudeCode && cfg!(windows) {
         windows_quote
     } else {
@@ -149,12 +151,41 @@ pub fn command_fingerprint(command: &HookCommand) -> String {
 fn posix_quote(v: &str) -> String {
     format!("'{}'", v.replace('\'', "'\\''"))
 }
+/// Windows 引号形式:恒定双引号——识别 tokeniser 以首字符 `"` 分派解析规则,
+/// 裸形式(旧实现对无空格路径)会让无空格的 helper 路径走进 POSIX 分支、
+/// 反斜杠被当转义吃掉;恒定加引号后分派才可靠,且双引号在 Git Bash /
+/// cmd.exe / PowerShell 下均合法。转义按 CommandLineToArgvW 规则:引号前的
+/// 反斜杠串翻倍后写引号(嵌入 `"` 记为 2n+1 个反斜杠 + `"`),闭合引号前的
+/// 反斜杠串翻倍,防止被解析成转义引号。
 fn windows_quote(v: &str) -> String {
-    if v.is_empty() || v.chars().any(char::is_whitespace) || v.contains(['&', '|', '<', '>', '^']) {
-        format!("\"{}\"", v.replace('"', "\\\""))
-    } else {
-        v.into()
+    let mut out = String::with_capacity(v.len() + 8);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for ch in v.chars() {
+        match ch {
+            '\\' => backslashes += 1,
+            '"' => {
+                for _ in 0..=backslashes {
+                    out.push('\\');
+                }
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                for _ in 0..backslashes {
+                    out.push('\\');
+                }
+                backslashes = 0;
+                out.push(ch);
+            }
+        }
     }
+    for _ in 0..backslashes {
+        out.push('\\');
+        out.push('\\');
+    }
+    out.push('"');
+    out
 }
 
 pub fn run_helper() {

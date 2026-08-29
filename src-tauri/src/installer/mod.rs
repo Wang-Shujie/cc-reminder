@@ -1014,6 +1014,28 @@ mod tests {
     }
 
     #[test]
+    fn windows_form_command_from_the_emitter_roundtrips() {
+        // 阻断回归:windows_quote 曾对无空格路径走裸形式(不加引号),而识别
+        // tokeniser 以首字符分派解析规则——默认 helper 路径恰无空格,会走进
+        // POSIX 分支、反斜杠被当转义,识别失效。发射器必须恒定加引号。
+        let command = canonical_hook_command(
+            Path::new(r"C:\Users\u\AppData\Roaming\com.ccreminder.app\bin\cc-reminder-hook.exe"),
+            AgentKind::ClaudeCode,
+            "Stop",
+        );
+        let windows_form = command
+            .command_windows
+            .expect("windows form always present");
+        assert!(windows_form.starts_with('"'), "emitter must always quote");
+        let tokens = shell_words(&windows_form);
+        assert_eq!(
+            tokens[0],
+            r"C:\Users\u\AppData\Roaming\com.ccreminder.app\bin\cc-reminder-hook.exe"
+        );
+        assert_eq!(tokens.len(), 7);
+    }
+
+    #[test]
     #[cfg(windows)]
     fn recognize_accepts_windows_form_claude_command() {
         let command = canonical_hook_command(

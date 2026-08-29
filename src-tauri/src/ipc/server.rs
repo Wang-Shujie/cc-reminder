@@ -65,17 +65,25 @@ impl IpcServer {
             let (tx, rx) = mpsc::channel(64);
             std::thread::spawn(move || {
                 let mut first_pipe = Some(first_pipe);
+                // 64 实例占满(ERROR_PIPE_BUSY)是瞬态;其余失败(安全描述符
+                // 分配、DACL 校验)可能永久。统一指数退避至 1s:瞬态快速自愈,
+                // 永久失败退化为怠速循环而非热循环。绝不能退出——退出即 IPC
+                // 入口对进程余生永久静默。
+                let mut retry_delay = std::time::Duration::from_millis(5);
                 loop {
                     let pipe = match first_pipe.take() {
                         Some(pipe) => pipe,
                         None => match create_named_pipe(&wide) {
-                            Ok(pipe) => pipe,
-                            // 64 实例上限被占满(ERROR_PIPE_BUSY)时绝不能退出:
-                            // 退出即 IPC 入口永久静默。稍候重试,自愈。
-                            // ponytail: 永久性失败(名字非法等)会变成 5ms 空转,
-                            // 可接受——create_named_pipe 首次成功过,名字合法。
+                            Ok(pipe) => {
+                                retry_delay = std::time::Duration::from_millis(5);
+                                pipe
+                            }
                             Err(_) => {
-                                std::thread::sleep(std::time::Duration::from_millis(5));
+                                std::thread::sleep(retry_delay);
+                                retry_delay = std::cmp::min(
+                                    retry_delay * 2,
+                                    std::time::Duration::from_secs(1),
+                                );
                                 continue;
                             }
                         },

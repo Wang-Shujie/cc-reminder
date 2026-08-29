@@ -33,7 +33,9 @@ CC Reminder v1 于 2026-08-26 合并入 main（d175fd0）。**v2 于 2026-08-26 
   - 本地无 Windows 出包演练(local-release-build.sh 仅 Darwin host;可依 cargo-xwin 加 ps1 孪生脚本);
   - MSI 为未入 updater feed 的附带产物(latest.json 只发 setup.exe),状态应写入 operations.md 或从上传清单移除;
   - ci.yml windows 测试门首轮可能暴露真实失败,属 P 系列应收敛内容;
-  - detect 的 Job Object 在 spawn 与 attach 之间出生的孙进程会逃逸(std 无 CREATE_SUSPENDED,已留 ponytail 注释);
+  - detect 的 Job Object 在 spawn 与 attach 之间出生的孙进程会逃逸(std 无 CREATE_SUSPENDED,已留 ponytail 注释);attach 本身失败时静默降级为旧行为(仅杀直接子进程),无日志可见;
+  - Claude Code 在 Windows 官方经 Git Bash 执行 hook(issue #32930):双引号形式在 bash 下合法,但路径含 `$`/反引号时会被展开(罕见,已知边界);POSIX 单引号在无 bash 回退 cmd/PowerShell 时会失败;
+  - 若存在修复轮之前的 Windows 开发机安装(从未正式发布),其 Claude 条目为 POSIX 形式,升级后不被识别为自有条目——重装 Hook 即可,无迁移代码;
   - 顺手记录(非 Windows 特有):health.rs:101 tray_label 硬编码中文「个失败任务」,en locale 用户托盘显示中文。
 
 ## 健壮性 / 清理
