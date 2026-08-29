@@ -52,16 +52,19 @@
       "tsp": true,
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English", "SimpChinese"],
+        "languages": [
+          "English",
+          "SimpChinese"
+        ],
         "displayLanguageSelector": true
       }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlBQzY3N0I2NDVENUM2NjAKUldSZ3h0VkZ0bmZHbWthSGhCTVdnSUpZdFQ5azJDdGVZNXhnQTRvT3c3TnJXRW5hTUpOVlJpcW4K",
       "endpoints": [
-        "https://github.com/UPDATE_OWNER_PLACEHOLDER/cc-reminder/releases/latest/download/latest.json"
+        "https://github.com/Wang-Shujie/cc-reminder/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
