@@ -7,7 +7,6 @@
 Approvals, stops and every other interaction stay exactly where they belong: inside the Agent's native flow. CC Reminder does one thing — deliver what's worth knowing, reliably.
 
 [![Release](https://img.shields.io/github/v/release/Wang-Shujie/cc-reminder)](https://github.com/Wang-Shujie/cc-reminder/releases/latest)
-[![CI](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/ci.yml/badge.svg)](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/ci.yml)
 [![Release](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/release.yml/badge.svg)](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 

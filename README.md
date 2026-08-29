@@ -7,7 +7,6 @@
 审批、停止等操作仍然完全留在 Agent 原有流程中，CC Reminder 只做一件事：把值得知道的事，可靠地送到你手里。
 
 [![Release](https://img.shields.io/github/v/release/Wang-Shujie/cc-reminder)](https://github.com/Wang-Shujie/cc-reminder/releases/latest)
-[![CI](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/ci.yml/badge.svg)](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/ci.yml)
 [![Release](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/release.yml/badge.svg)](https://github.com/Wang-Shujie/cc-reminder/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
