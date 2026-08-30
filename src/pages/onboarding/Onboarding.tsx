@@ -52,6 +52,7 @@ export function Onboarding({
   const [keywordPrefix, setKeywordPrefix] = useState("");
   const [kind, setKind] = useState<ChannelKindCode>("we_com");
   const [selectedChannel, setSelectedChannel] = useState<ChannelId | "">("");
+  const [installDone, setInstallDone] = useState(false);
 
   // Resume: load channels AND run detection once on mount, then compute the
   // true starting step. A pending Codex trust confirmation (or a missing
@@ -135,7 +136,10 @@ export function Onboarding({
           confirm_compatible_version: needsVersionConsent,
         });
       }
-      setStep("channel");
+      // Stay on this step: Codex hooks stay INERT until the user trusts them
+      // via /hooks in a terminal (the VSCode extension never shows the trust
+      // prompt), so the guide must be seen here — not buried in a later page.
+      setInstallDone(true);
     } catch (e: unknown) {
       setError(errorOf(e));
     }
@@ -301,10 +305,37 @@ export function Onboarding({
       {step === "install" && (
         <section>
           <h1>{t.onboardingInstall}</h1>
-          {needsVersionConsent && (
-            <p className="muted field-hint" role="note">
-              {t.versionConsentHint}
-            </p>
+          {installDone ? (
+            <>
+              <p role="status">{t.wizardInstallDone}</p>
+              {/* Codex hooks are INERT until trusted via /hooks in a terminal;
+                  the VSCode/IDE extension never surfaces the trust prompt. */}
+              {(detections ?? []).some(
+                (agent) => agent.agent === "codex" && agent.installed,
+              ) && (
+                <div className="trust-command" role="note">
+                  <p>{t.wizardCodexTrustNote}</p>
+                  <p className="trust-command">
+                    <code>{t.trustCommand}</code>
+                    <button
+                      type="button"
+                      className="cc-focusable"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(t.trustCommand);
+                      }}
+                    >
+                      {t.copyCommand}
+                    </button>
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            needsVersionConsent && (
+              <p className="muted field-hint" role="note">
+                {t.versionConsentHint}
+              </p>
+            )
           )}
           {errorLine}
           <div className="row-end">
@@ -315,9 +346,23 @@ export function Onboarding({
             >
               {t.onboardingBack}
             </button>
-            <button type="button" className="primary cc-focusable" onClick={installHooks}>
-              {t.installHook}
-            </button>
+            {installDone ? (
+              <button
+                type="button"
+                className="primary cc-focusable"
+                onClick={() => setStep("channel")}
+              >
+                {t.wizardContinue}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary cc-focusable"
+                onClick={installHooks}
+              >
+                {t.installHook}
+              </button>
+            )}
           </div>
         </section>
       )}

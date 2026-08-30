@@ -183,10 +183,16 @@ test.describe("workflow coverage", () => {
     await next.focus();
     await page.keyboard.press("Enter");
 
-    // Step 2: install hooks.
+    // Step 2: install hooks. Installing stays on this step to surface the
+    // Codex terminal-trust guide (role=note) — the keyboard user reads it and
+    // proceeds via 继续.
     const install = page.getByRole("button", { name: "安装 Hook" });
     await install.waitFor();
     await install.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("status").waitFor();
+    const proceed = page.getByRole("button", { name: "继续" });
+    await proceed.focus();
     await page.keyboard.press("Enter");
 
     // Step 3: add a channel (typed entirely from the keyboard).

@@ -18,6 +18,9 @@ async function completeDetectAndInstall(user: ReturnType<typeof userEvent.setup>
   expect(await screen.findByText("claude-code")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "下一步" }));
   await user.click(await screen.findByRole("button", { name: "安装 Hook" }));
+  // Install no longer auto-advances: it stays to surface the Codex trust guide.
+  expect(await screen.findByRole("status")).toHaveTextContent("Hook 安装完成。");
+  await user.click(screen.getByRole("button", { name: "继续" }));
 }
 
 async function completeChannelAndDefaults(user: ReturnType<typeof userEvent.setup>) {
@@ -61,6 +64,27 @@ test("an agent newer than the catalog shows a version note but never deadlocks",
   expect(backend.applyHookAction).toHaveBeenCalledWith(
     expect.objectContaining({ confirm_compatible_version: true }),
   );
+});
+
+test("after installing, the wizard surfaces the terminal-trust guide for Codex", async () => {
+  const user = userEvent.setup();
+  render(<TestApp backend={onboardingBackend()} />);
+  expect(await screen.findByText("claude-code")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "下一步" }));
+  await user.click(await screen.findByRole("button", { name: "安装 Hook" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Hook 安装完成。");
+  // The guide must be seen HERE: Codex hooks are inert until trusted via
+  // /hooks in a terminal, and the VSCode/IDE extension never shows the prompt.
+  const note = await screen.findByRole("note");
+  expect(note).toHaveTextContent("在终端");
+  expect(note).toHaveTextContent("VSCode");
+  expect(note).toHaveTextContent("/hooks");
+  expect(screen.getByRole("button", { name: "复制命令" })).toBeInTheDocument();
+  // The user chooses when to move on to the channel step.
+  await user.click(screen.getByRole("button", { name: "继续" }));
+  expect(
+    await screen.findByRole("heading", { name: "添加渠道" }),
+  ).toBeVisible();
 });
 
 test("completion is persisted only after a successful test send", async () => {

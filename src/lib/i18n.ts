@@ -38,6 +38,9 @@ export interface Dictionary {
   detectFailed: string;
   versionUnverified: string;
   versionConsentHint: string;
+  wizardInstallDone: string;
+  wizardCodexTrustNote: string;
+  wizardContinue: string;
   trustPending: string;
   trustViewGuide: string;
   trustGuideTitle: string;
@@ -391,6 +394,10 @@ const zhCn: Dictionary = {
   installHook: "安装 Hook",
   detectedAgents: "检测结果",
   detectFailed: "检测结果获取失败，请重试。",
+  wizardInstallDone: "Hook 安装完成。",
+  wizardContinue: "继续",
+  wizardCodexTrustNote:
+    "最后一步（Codex 专用）：Codex 的 Hook 需要你在终端信任后才会真正触发——CC Reminder 无法代你确认。请打开一个终端，直接运行 codex（交互模式）；出现 CC Reminder 的 Hook 信任提示时选择信任；再输入 /hooks（带 s）检查两条钩子是否已受信。注意：Codex 的 VSCode/IDE 插件里不会出现信任确认，codex exec 非交互模式也没有 /hooks——必须用终端交互会话。这一步可以稍后做，不影响继续完成向导；状态可随时在「集成 → 通知来源」重新检测。",
   versionUnverified: "版本高于已验证目录",
   versionConsentHint:
     "所选 Agent 的版本高于内置能力目录已验证的版本（仅影响事件兼容性核验）。点击“安装 Hook”即确认在此版本上继续；安装将只启用经目录验证的安全事件子集（SessionStart / SessionEnd / PermissionRequest / Stop），目录更新后重装即可启用完整事件集。",
@@ -541,7 +548,8 @@ const zhCn: Dictionary = {
   triggerPromptSubagent: "用一个子代理列出当前目录的文件",
   triggerPromptGeneric: "你好",
   ehAgentUpgradeRequired: "版本未验证(需重装此条目)",
-  trustNotice: "Codex 的 Hook 需要在官方界面确认：请运行以下命令后重新检测。",
+  trustNotice:
+    "Codex 的 Hook 必须由你在官方界面确认信任（CC Reminder 无法代你确认）：请在终端以交互模式启动 codex（直接运行 codex）——VSCode/IDE 插件中不会出现信任确认；看到 CC Reminder 的 Hook 信任提示时选择信任，然后输入 /hooks（带 s）检查两条钩子是否已列为受信，完成后回到这里重新检测。codex exec 非交互模式没有 /hooks，且存在信任后仍不派发钩子的已知上游问题。",
   // Channels page (Task 18)
   addChannelAction: "添加渠道",
   templateLabel: "通知模板",
@@ -750,6 +758,10 @@ const en: Dictionary = {
   detectedAgents: "Detection results",
   detectFailed: "Detection failed. Please retry.",
   versionUnverified: "Newer than the verified catalog",
+  wizardInstallDone: "Hooks installed.",
+  wizardContinue: "Continue",
+  wizardCodexTrustNote:
+    "One last step (Codex only): Codex hooks only fire after YOU trust them in a terminal — CC Reminder cannot confirm on your behalf. Open a terminal and run codex directly (interactive mode); when the CC Reminder hook-trust prompt appears, accept it; then type /hooks (with s) to check both hooks are trusted. Note: the Codex VSCode/IDE extension never shows the trust prompt, and `codex exec` (non-interactive) has no /hooks — use a terminal session. You can do this later; it does not block finishing the wizard, and the status is always visible under Integrations → Notification sources.",
   versionConsentHint:
     "An agent's version is newer than the embedded capability catalog's verified version (this only affects event-compatibility verification). Clicking \"Install Hook\" confirms you want to continue on this version; the install will enable only the catalog-verified safe event subset (SessionStart / SessionEnd / PermissionRequest / Stop). Reinstall after the catalog updates to enable the full event set.",
   trustPending:
@@ -906,7 +918,7 @@ const en: Dictionary = {
     "Codex official confirmation is complete. Entries showing “Awaiting first run” activate automatically the first time the event really happens — no action needed, and notifications are not blocked in the meantime.",
   ehAgentUpgradeRequired: "Unverified version (reinstall needed)",
   trustNotice:
-    "Codex hooks need confirmation in the official UI: run the command below, then re-check.",
+    "Codex hooks must be trusted by you in the official UI (CC Reminder cannot confirm on your behalf): launch codex interactively from a TERMINAL (run `codex`) — the VSCode/IDE extension never shows the trust prompt; accept the CC Reminder hook-trust prompt when it appears, then type /hooks (with s) to check that both hooks are listed as trusted, and come back here to re-check. `codex exec` (non-interactive) has no /hooks and a known upstream issue where trusted hooks may still not dispatch.",
   // Channels page (Task 18)
   addChannelAction: "Add channel",
   templateLabel: "Notification template",
