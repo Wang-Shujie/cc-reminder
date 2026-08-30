@@ -53,6 +53,18 @@ function Get-Sha256([string] $path) {
     ([BitConverter]::ToString(
         $sha256Provider.ComputeHash([IO.File]::ReadAllBytes($path))) -replace "-", "").ToLowerInvariant()
 }
+# Write UTF-8 WITHOUT a BOM: PS 5.1's Set-Content -Encoding UTF8 always emits
+# one, and the runtime manifest parser (serde_json) rejects BOM-prefixed JSON
+# as malformed — which bricks hook installation in the packaged app.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Write-JsonNoBom([string] $path, $value) {
+    # [IO.File] uses the PROCESS working directory, which does not follow
+    # PowerShell's Set-Location — resolve against the provider location.
+    $full = if ([IO.Path]::IsPathRooted($path)) { $path } else {
+        Join-Path (Get-Location -PSProvider FileSystem).ProviderPath $path
+    }
+    [IO.File]::WriteAllText($full, ($value | ConvertTo-Json -Depth 5) + "`n", $utf8NoBom)
+}
 try {
 
     # --- 1. Build the release helper ----------------------------------------
@@ -79,13 +91,14 @@ try {
             }
         )
     }
-    $manifestDoc | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifest -Encoding UTF8
+    $manifestDoc | ConvertTo-Json -Depth 5 > $null  # fail fast if not serializable
+    Write-JsonNoBom $manifest $manifestDoc
 
     # Tauri reads the resource map through a merge-config FILE (not inline
     # JSON) to stay out of shell-quoting hell; updater artifacts stay off —
     # no minisign key exists for a local build.
     $buildConfig = Join-Path $env:TEMP ("cc-reminder-local-build-" + [Guid]::NewGuid().ToString("N") + ".json")
-    [ordered]@{
+    Write-JsonNoBom $buildConfig ([ordered]@{
         bundle = [ordered]@{
             createUpdaterArtifacts = $false
             resources              = @(
@@ -95,7 +108,7 @@ try {
                 "resources/bin/cc-reminder-hook.exe"
             )
         }
-    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $buildConfig -Encoding UTF8
+    })
 
     # --- 3. Build the installers (NSIS + MSI) --------------------------------
     # tauri build re-runs cargo across ALL bins, so the in-tree rebuild's

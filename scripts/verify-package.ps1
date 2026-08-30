@@ -145,6 +145,13 @@ try {
     # reject placeholders, then length + SHA-256 match (same contract as
     # installer::helper at runtime).
     # -------------------------------------------------------------------------
+    # ConvertFrom-Json silently tolerates a UTF-8 BOM, but the RUNTIME parser
+    # (serde_json) rejects BOM-prefixed JSON as malformed — a shipped manifest
+    # must be BOM-free or hook installation bricks in the packaged app.
+    $manifestHead = [IO.File]::ReadAllBytes($Manifest)[0..2]
+    if ($manifestHead[0] -eq 0xEF -and $manifestHead[1] -eq 0xBB -and $manifestHead[2] -eq 0xBF) {
+        Fail "manifest starts with a UTF-8 BOM: the runtime JSON parser rejects it (rewrite without a BOM)"
+    }
     try {
         $doc = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     } catch {

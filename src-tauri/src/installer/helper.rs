@@ -155,7 +155,11 @@ pub fn load_bundled_installer(
             MANIFEST_RESOURCE_PATH
         ))
     })?;
-    let manifest: HelperManifestFile = serde_json::from_str(&text)
+    // Windows tooling loves a UTF-8 BOM and serde_json rejects it as invalid
+    // syntax — strip it so a BOM-prefixed manifest still loads (the manifest
+    // ships inside the signed bundle, so this is leniency, not trust).
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let manifest: HelperManifestFile = serde_json::from_str(text)
         .map_err(|_| helper_unavailable_error("helper manifest is malformed"))?;
     let triple = current_target_triple();
     let entry = select_target_entry(&manifest, triple)
@@ -691,6 +695,36 @@ mod tests {
         let error =
             load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap_err();
         assert_eq!(error.code, "configuration.helper_unavailable");
+    }
+
+    #[test]
+    fn utf8_bom_prefixed_manifest_still_loads() {
+        // Windows staging tools emit BOM-prefixed JSON; serde_json alone would
+        // reject it and brick hook installation in an otherwise valid package.
+        let root = tempfile::tempdir().unwrap();
+        let payload = b"bom-tolerated helper bytes";
+        let resources = root.path().join("resources");
+        fs::create_dir_all(resources.join("bin")).unwrap();
+        fs::write(resources.join("bin").join(stable_filename()), payload).unwrap();
+        let mut manifest = b"\xef\xbb\xbf".to_vec();
+        manifest.extend_from_slice(
+            serde_json::to_vec_pretty(&HelperManifestFile {
+                helpers: vec![HelperManifestEntry {
+                    target_triple: current_target_triple().to_owned(),
+                    helper_version: Version::parse("0.9.0").unwrap(),
+                    filename: stable_filename(),
+                    length: payload.len() as u64,
+                    sha256: sha256_hex(payload),
+                }],
+            })
+            .unwrap()
+            .as_slice(),
+        );
+        fs::write(resources.join("helper-manifest.json"), manifest).unwrap();
+
+        let installer =
+            load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap();
+        assert_eq!(installer.manifest_version(), &Version::parse("0.9.0").unwrap());
     }
 
     #[test]
