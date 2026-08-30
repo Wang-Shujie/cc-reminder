@@ -29,7 +29,7 @@ use serde_json::json;
 
 use crate::error::{AppError, ErrorDomain};
 use crate::events::catalog::catalogued_hooks;
-use crate::hook_command::{HookCommand, canonical_hook_command, command_fingerprint};
+use crate::hook_command::{HookCommand, canonical_hook_command};
 use crate::model::AgentKind;
 
 pub use atomic::atomic_replace_checked;
@@ -629,9 +629,11 @@ fn recognize_owned(
     command: &str,
     command_windows: Option<&str>,
 ) -> Option<String> {
-    // `canonical_hook_command` posix-quotes every argument, so we tokenise the
-    // command with a small shell-word reader (handles `'/path with space/'` and
-    // the `'\''` apostrophe escape) rather than searching for a literal marker.
+    // `canonical_hook_command` quotes every argument, so we tokenise the
+    // command with a small shell-word reader (handles `'/path with space/'`,
+    // the `'\''` apostrophe escape and the Windows double-quoted form) rather
+    // than searching for a literal marker.
+    let _ = command_windows;
     let tokens = shell_words(command);
     if tokens.len() != 7 {
         return None;
@@ -653,23 +655,14 @@ fn recognize_owned(
     if !catalogued.iter().any(|candidate| candidate == event) {
         return None;
     }
-    let canonical = canonical_hook_command(Path::new(&tokens[0]), agent, event);
-    let expected = match agent {
-        AgentKind::ClaudeCode => HookCommand {
-            command_windows: None,
-            ..canonical
-        },
-        AgentKind::Codex => canonical,
-    };
-    let candidate = HookCommand {
-        command: command.to_owned(),
-        command_windows: command_windows.map(str::to_owned),
-    };
-    if command_fingerprint(&expected) == command_fingerprint(&candidate) {
-        Some(event.clone())
-    } else {
-        None
-    }
+    // Structural equivalence only: the quoting style of the stored command
+    // evolves across releases (POSIX single quotes → Windows double quotes for
+    // Codex's cmd.exe /C dispatch), and a fingerprint comparison would refuse
+    // to recognize previously-installed entries — orphaning them so they can
+    // neither be uninstalled nor migrated. Path (tokens[0]) is NOT pinned:
+    // any entry carrying our owner/agent/event triad is ours, exactly as
+    // before — the fingerprint comparison never pinned it either.
+    Some(event.clone())
 }
 
 fn handler_event(agent: AgentKind, handler: &Value) -> Option<String> {

@@ -112,14 +112,17 @@ pub fn canonical_hook_command(
         "--event",
         event,
     ];
-    // Claude Code 的 handler 没有 `commandWindows` 覆盖键(仅 Codex 支持):
-    // Windows 上的执行解释器不做保证(官方走 Git Bash,但无 bash 环境时回退
-    // cmd/PowerShell,POSIX 单引号在后两者下会被当字面字符)。双引号形式在
-    // 三种解释器下均合法,故 Claude 的 `command` 在 Windows 用 windows 引号
-    // 形式(极端路径含 $/反引号时 bash 会展开,已知边界);Codex 的 `command`
-    // 恒为 POSIX 形式(识别 tokeniser 与指纹都依赖它),Windows 经
-    // `commandWindows` 下发。
-    let quoter = if agent == AgentKind::ClaudeCode && cfg!(windows) {
+    // Windows 上两个 agent 的 `command` 都用 windows 双引号形式:
+    // - Claude Code 的 handler 没有 `commandWindows` 覆盖键(仅 Codex 支持),
+    //   官方经 Git Bash 执行,双引号合法。
+    // - Codex 的 Windows 派发是 `cmd.exe /C "<command_line>"`(hooks 引擎
+    //   command_runner.rs 对 command_line 再包一层引号):cmd 的 /C 引号规则
+    //   对多引号对的命令行剥掉首尾引号,POSIX 单引号形式因此被解析成残缺
+    //   命令("文件名、目录名或卷标语法不正确",exit 1)——实测 `command`
+    //   字段被直接执行,`commandWindows` 并未生效,故 `command` 本身必须是
+    //   cmd 可解析的形式(双引号包 exe + 引号参数,剥引号后正确执行)。
+    // Unix 上恒为 POSIX 形式。
+    let quoter = if cfg!(windows) {
         windows_quote
     } else {
         posix_quote
@@ -434,16 +437,19 @@ mod tests {
 
     #[test]
     fn canonical_commands_quote_metacharacters_without_changing_fingerprints() {
-        let posix = canonical_hook_command(
-            Path::new("/Users/a b/it's/bin/cc-reminder-hook"),
-            AgentKind::Codex,
-            "Stop",
-        );
-        assert!(
-            posix
-                .command
-                .starts_with("'/Users/a b/it'\\''s/bin/cc-reminder-hook' ")
-        );
+        #[cfg(unix)]
+        {
+            let posix = canonical_hook_command(
+                Path::new("/Users/a b/it's/bin/cc-reminder-hook"),
+                AgentKind::Codex,
+                "Stop",
+            );
+            assert!(
+                posix
+                    .command
+                    .starts_with("'/Users/a b/it'\\''s/bin/cc-reminder-hook' ")
+            );
+        }
         let windows = canonical_hook_command(
             Path::new(r"C:\Users\a & b\cc-reminder-hook.exe"),
             AgentKind::Codex,
@@ -482,14 +488,18 @@ mod tests {
                 r#""C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe" "--owner""#
             )
         );
-        // Codex 的 `command` 恒为 POSIX 形式(识别依赖),Windows 经
-        // `commandWindows` 下发双引号形式。
+        // Codex 的 `command` 在 Windows 同为双引号形式:cmd /C 直接执行
+        // `command` 字段,POSIX 形式被引号剥离规则解析成残缺命令(exit 1)。
         let codex = canonical_hook_command(
             Path::new(r"C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe"),
             AgentKind::Codex,
             "Stop",
         );
-        assert!(codex.command.starts_with('\''));
+        assert!(
+            codex.command.starts_with(
+                r#""C:\Program Files\CC Reminder\bin\cc-reminder-hook.exe" "--owner""#
+            )
+        );
     }
 
     #[test]

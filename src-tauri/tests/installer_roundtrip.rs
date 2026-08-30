@@ -729,15 +729,16 @@ fn hook_command_carries_both_platform_commands() {
     let dir = tempfile::tempdir().unwrap();
     let helper = helper_path(&dir);
     let cmd = owned_command(&helper, CODEX, "Stop");
-    assert!(cmd.command.starts_with('\'') || cmd.command.starts_with('/'));
+    // Windows: `command` itself must survive Codex's `cmd.exe /C "..."` wrap
+    // (quotes around the exe only, bare args); the all-quoted POSIX form dies
+    // with exit 1 there.
+    assert!(cmd.command.starts_with('"'));
     assert!(cmd.command_windows.is_some());
     let win = cmd.command_windows.as_deref().unwrap();
     assert!(win.contains("cc-reminder-hook"));
-    // The canonical posix form quotes every argument; the windows form leaves
-    // no-special-char tokens unquoted. Both carry the agent/event markers.
-    assert!(cmd.command.contains("'codex'"));
-    assert!(cmd.command.contains("'Stop'"));
-    // be52b8e 起 Windows 形式对每个参数加双引号(cmd.exe/CommandLineToArgvW 安全)。
+    // Both carry the agent/event markers.
+    assert!(cmd.command.contains("codex"));
+    assert!(cmd.command.contains("Stop"));
     assert!(win.contains("\"--agent\" \"codex\" \"--event\" \"Stop\""));
 }
 
