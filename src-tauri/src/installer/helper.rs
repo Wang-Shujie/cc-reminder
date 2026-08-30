@@ -724,7 +724,10 @@ mod tests {
 
         let installer =
             load_bundled_installer(root.path(), root.path().join("bin").as_path()).unwrap();
-        assert_eq!(installer.manifest_version(), &Version::parse("0.9.0").unwrap());
+        assert_eq!(
+            installer.manifest_version(),
+            &Version::parse("0.9.0").unwrap()
+        );
     }
 
     #[test]

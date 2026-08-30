@@ -518,6 +518,14 @@ fn run_version_command(executable: &Path) -> Result<String, VersionCommandError>
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    #[cfg(windows)]
+    {
+        // Detection runs on the visible app: without CREATE_NO_WINDOW every
+        // `claude --version` / `codex --version` pops a console window (and
+        // cmd.exe again for the .cmd shims).
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
     let mut child = command.spawn().map_err(|_| VersionCommandError::Failed)?;
     // Windows:.cmd 候选的直接子进程是 cmd.exe,孙进程(node)继承
     // stdout/stderr 句柄,只杀直接子进程会让读取线程永远阻塞(检测线程
