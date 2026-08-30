@@ -323,7 +323,12 @@ impl HookInstaller {
                 source_event: event.clone(),
                 matcher: Some(String::new()),
                 command: owned_command(&selection.helper_path, self.agent, event),
-                timeout_seconds: 1,
+                // 10s: the helper finishes in ~150ms warm, but a COLD spawn
+                // (Defender scan, Codex's env-cleared sandbox) has been
+                // observed to exceed 1s — Codex then taskkills the tree and
+                // reports "hook exited with code 1". Every internal helper
+                // deadline is well under 1s; 10s is only the outer bound.
+                timeout_seconds: 10,
             })
             .collect()
     }
