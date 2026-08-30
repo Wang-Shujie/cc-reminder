@@ -224,7 +224,33 @@ impl HookInstaller {
         let bytes = fs::read(&self.config_path).map_err(|_| write_failed())?;
         let inspected_hash = sha256_hex(&bytes);
         let patch = self.patch(&bytes, &desired)?;
+
+        // Test seam: simulate an external editor changing the file between the
+        // inspection read above and the atomic replace below so the replace's
+        // independent re-read detects drift. No effect in production builds.
+        // Runs BEFORE the idempotent short-circuit below so the drift path
+        // stays exercisable.
+        if forced_drift_enabled() {
+            let _ = fs::write(&self.config_path, b"{\"external\":\"drift\"}");
+        }
+        let current = fs::read(&self.config_path).map_err(|_| write_failed())?;
         let file_mode = current_mode(&self.config_path);
+
+        // Idempotent apply: when the desired content already equals what is on
+        // disk (a self-heal tick re-firing Repair, a duplicate install click),
+        // do NOT rewrite the file. Codex binds its trust to a hash of the
+        // hooks.json content, so an identical-content rewrite still breaks the
+        // user's completed /hooks confirmation. Records are refreshed so the
+        // repository stays consistent with what is on disk.
+        if patch.bytes == current {
+            let installed = inspect_owned_entries(self.agent, &current)?;
+            let records = self.build_records(&installed, &patch.after_hash, selection)?;
+            self.repository.replace_hooks(self.agent, &records)?;
+            return Ok(Installation {
+                agent: self.agent,
+                records,
+            });
+        }
 
         // Encrypt ONLY the previous hooks subtree + source hash + mode. The AAD
         // binds ciphertext to the snapshot id; `snapshot_aad` is shared with the
@@ -242,13 +268,6 @@ impl HookInstaller {
                 file_mode,
                 created_at: Utc::now(),
             })?;
-
-        // Test seam: simulate an external editor changing the file between the
-        // inspection read above and the atomic replace below so the replace's
-        // independent re-read detects drift. No effect in production builds.
-        if forced_drift_enabled() {
-            let _ = fs::write(&self.config_path, b"{\"external\":\"drift\"}");
-        }
 
         atomic_replace_checked(&self.config_path, &inspected_hash, &patch.bytes, file_mode)?;
 

@@ -1206,6 +1206,23 @@ fn snapshot_encryption_unavailable_aborts_before_writing_agent_config() {
 }
 
 #[test]
+fn reinstall_with_identical_content_leaves_config_bytes_untouched() {
+    let env = InstallerEnvironment::codex_fixture();
+    env.apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let first = fs::read(&env.config_path).unwrap();
+
+    // A duplicate install (a self-heal tick re-firing Repair, a double click)
+    // must NOT rewrite the file: Codex binds its trust to a hash of the
+    // hooks.json CONTENT, so even an identical-content rewrite invalidates the
+    // /hooks confirmation the user already completed.
+    env.apply(HookAction::Install, &env.selection(&["Stop"]))
+        .unwrap();
+    let second = fs::read(&env.config_path).unwrap();
+    assert_eq!(first, second, "identical apply must not rewrite the file");
+}
+
+#[test]
 fn codex_change_waits_for_official_trust_until_matching_hook_is_observed() {
     let env = InstallerEnvironment::codex_fixture();
     let installation = env
