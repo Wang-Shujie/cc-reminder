@@ -725,6 +725,9 @@ fn atomic_replace_round_trips_through_a_real_install() {
 }
 
 #[test]
+// v2.0.1 macOS 适配检查:Windows 执行形式断言只在 Windows 编译下成立
+// (cfg!(windows) 随编译目标切换);Unix 版断言见 hook_command_carries_posix_form。
+#[cfg(windows)]
 fn hook_command_carries_both_platform_commands() {
     let dir = tempfile::tempdir().unwrap();
     let helper = helper_path(&dir);
@@ -739,6 +742,24 @@ fn hook_command_carries_both_platform_commands() {
     // Both carry the agent/event markers.
     assert!(cmd.command.contains("codex"));
     assert!(cmd.command.contains("Stop"));
+    assert!(win.contains("\"--agent\" \"codex\" \"--event\" \"Stop\""));
+}
+
+/// Unix 编译下的对照:command 恒为 POSIX 单引号形式,commandWindows 仍为
+/// windows_quote 形式(键存在但无消费方)。
+#[test]
+#[cfg(not(windows))]
+fn hook_command_carries_posix_form_on_unix() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = helper_path(&dir);
+    let cmd = owned_command(&helper, CODEX, "Stop");
+    assert!(
+        cmd.command.starts_with('\''),
+        "unix command must be POSIX-quoted"
+    );
+    assert!(cmd.command.contains("'codex'"));
+    let win = cmd.command_windows.as_deref().unwrap();
+    assert!(win.contains("cc-reminder-hook"));
     assert!(win.contains("\"--agent\" \"codex\" \"--event\" \"Stop\""));
 }
 

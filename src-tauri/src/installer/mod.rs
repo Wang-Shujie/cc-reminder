@@ -1007,6 +1007,9 @@ mod tests {
     }
 
     #[test]
+    // v2.0.1 macOS 适配检查:Windows 形式发射断言只在 Windows 编译下成立
+    // (cfg!(windows) 随编译目标切换,macOS 编译走 POSIX 分支)。
+    #[cfg(windows)]
     fn windows_form_command_from_the_emitter_roundtrips() {
         // 阻断回归:windows_quote 曾对无空格路径走裸形式(不加引号),而识别
         // tokeniser 以首字符分派解析规则——默认 helper 路径恰无空格,会走进

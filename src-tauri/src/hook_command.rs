@@ -460,7 +460,7 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    use super::{canonical_hook_command, command_fingerprint, insert_ingress};
+    use super::{canonical_hook_command, insert_ingress};
     use crate::events::normalize::SafeIngressEvent;
     use crate::ipc::protocol::MAX_SAFE_ENVELOPE_BYTES;
     use crate::model::{AgentKind, ScalarValue};
@@ -481,26 +481,31 @@ mod tests {
                     .starts_with("'/Users/a b/it'\\''s/bin/cc-reminder-hook' ")
             );
         }
-        let windows = canonical_hook_command(
-            Path::new(r"C:\Users\a & b\cc-reminder-hook.exe"),
-            AgentKind::Codex,
-            "Stop",
-        );
-        assert!(
-            windows
-                .command_windows
-                .as_deref()
-                .unwrap()
-                .starts_with(r#"& "C:\Users\a & b\cc-reminder-hook.exe" "#)
-        );
-        assert_eq!(
-            command_fingerprint(&windows),
-            command_fingerprint(&canonical_hook_command(
+        // v2.0.1 macOS 适配检查:cfg!(windows) 随编译目标切换——Windows 形式
+        // 的断言只有在 Windows 编译下才成立(macOS 编译走 POSIX 分支)。
+        #[cfg(windows)]
+        {
+            let windows = canonical_hook_command(
                 Path::new(r"C:\Users\a & b\cc-reminder-hook.exe"),
                 AgentKind::Codex,
                 "Stop",
-            ))
-        );
+            );
+            assert!(
+                windows
+                    .command_windows
+                    .as_deref()
+                    .unwrap()
+                    .starts_with(r#"& "C:\Users\a & b\cc-reminder-hook.exe" "#)
+            );
+            assert_eq!(
+                command_fingerprint(&windows),
+                command_fingerprint(&canonical_hook_command(
+                    Path::new(r"C:\Users\a & b\cc-reminder-hook.exe"),
+                    AgentKind::Codex,
+                    "Stop",
+                ))
+            );
+        }
     }
 
     #[test]

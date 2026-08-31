@@ -253,10 +253,24 @@ pub(crate) fn purge_local_data_impl(state: &CoreState) -> Result<(), AppError> {
     }
     #[cfg(not(windows))]
     {
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            let _ = std::fs::remove_dir_all(&data_dir);
-        });
+        // v2-issues(macOS 适配检查 2026-08-31):曾用 std::thread 延迟 3s 删除
+        // ——但 app.exit(0) 的优雅关闭在毫秒级完成,进程退出即杀掉线程,
+        // macOS 上数据目录实际从未被删。与 Windows 对称:分离的子进程在
+        // 本进程退出后继续存活并完成删除。单引号包裹路径(data_dir 位于
+        // "Application Support" 下,必含空格)。
+        use std::process::{Command, Stdio};
+        let quoted = format!(
+            "'{}'",
+            data_dir.display().to_string().replace('\'', "'\\''")
+        );
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("sleep 3 && rm -rf {quoted}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| configuration_error("purge_failed", "could not schedule deletion"))?;
     }
     Ok(())
 }
@@ -465,5 +479,20 @@ mod tests {
         let a = pause_until(PauseDuration::OneHour, now);
         let b = pause_until(PauseDuration::OneHour, now);
         assert_eq!(a, b);
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod purge_tests {
+    /// v2-issues:分离删除命令必须正确引用含空格/单引号的路径
+    /// (macOS 数据目录位于 "Application Support" 下)。
+    #[test]
+    fn purge_command_quotes_spaces_and_apostrophes() {
+        let quote = |raw: &str| format!("'{}'", raw.replace('\'', "'\\''"));
+        assert_eq!(
+            quote("/Users/imac/Library/Application Support/com.ccreminder.app"),
+            "'/Users/imac/Library/Application Support/com.ccreminder.app'"
+        );
+        assert_eq!(quote("/tmp/it's"), "'/tmp/it'\\''s'");
     }
 }
