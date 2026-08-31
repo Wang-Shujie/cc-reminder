@@ -132,8 +132,12 @@ pub fn canonical_hook_command(
             .chain(args.iter().map(|a| quoter(a)))
             .collect::<Vec<_>>()
             .join(" "),
+        // `commandWindows` 的实测派发(Windows 进程捕获原文):codex 用
+        // `powershell -NoProfile -Command "<commandWindows>"` 执行——双引号
+        // 形式在 PowerShell 里是字符串字面量序列(语法错误,exit 1),必须
+        // 用调用操作符 `&` 前缀才能作为命令执行。
         command_windows: Some(
-            std::iter::once(windows_quote(&path.to_string_lossy()))
+            std::iter::once(format!("& {}", windows_quote(&path.to_string_lossy())))
                 .chain(args.iter().map(|a| windows_quote(a)))
                 .collect::<Vec<_>>()
                 .join(" "),
@@ -460,7 +464,7 @@ mod tests {
                 .command_windows
                 .as_deref()
                 .unwrap()
-                .starts_with(r#""C:\Users\a & b\cc-reminder-hook.exe" "#)
+                .starts_with(r#"& "C:\Users\a & b\cc-reminder-hook.exe" "#)
         );
         assert_eq!(
             command_fingerprint(&windows),

@@ -1019,13 +1019,18 @@ mod tests {
         let windows_form = command
             .command_windows
             .expect("windows form always present");
-        assert!(windows_form.starts_with('"'), "emitter must always quote");
-        let tokens = shell_words(&windows_form);
-        assert_eq!(
-            tokens[0],
-            r"C:\Users\u\AppData\Roaming\com.ccreminder.app\bin\cc-reminder-hook.exe"
+        // PowerShell 派发形式:`&`(调用操作符)+ 双引号包 exe + 双引号参数。
+        // 不用 shell_words 断言——它是 POSIX 语义(对 Windows 反斜杠路径与
+        // `\"` 转义的处理与 PowerShell/.NET 不同),直接断言形式本身。
+        assert!(
+            windows_form.starts_with(r#"& ""#),
+            "commandWindows must carry the PowerShell call operator"
         );
-        assert_eq!(tokens.len(), 7);
+        assert!(
+            windows_form
+                .ends_with(r#""--owner" "cc-reminder" "--agent" "claude-code" "--event" "Stop""#),
+            "actual commandWindows form: {windows_form}"
+        );
     }
 
     #[test]
