@@ -111,6 +111,9 @@ fn locale_of(app: &AppHandle) -> String {
 }
 
 fn show_main(app: &AppHandle) {
+    // 托盘"打开"/左键点击是关闭进托盘后的主要恢复入口:窗口回来的同时
+    // 把隐藏的 macOS Dock 图标带回来(见 lib.rs 的 CloseRequested 隐藏点)。
+    crate::set_dock_visible(app, true);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();

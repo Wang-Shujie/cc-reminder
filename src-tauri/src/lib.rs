@@ -172,6 +172,9 @@ pub fn run() {
                 if ops.focus {
                     let _ = window.set_focus();
                 }
+                // 二次启动即明确的"我要回来"信号:关闭进托盘时隐藏的
+                // Dock 图标在此恢复(见 CloseRequested 的隐藏点)。
+                set_dock_visible(app, true);
             }
         }))
         .plugin(tauri_plugin_autostart::init(
@@ -204,6 +207,10 @@ pub fn run() {
                     .unwrap_or(true);
                 if close_action(close_to_tray) == CloseAction::HideToTray {
                     let _ = window.hide();
+                    // v2.0.1(用户需求 2026-08-31):关闭进托盘 = 托盘应用形态,
+                    // macOS Dock 图标同时隐藏;恢复入口(托盘打开/二次启动)
+                    // 会把它带回来。
+                    set_dock_visible(window.app_handle(), false);
                     api.prevent_close();
                 }
             }
@@ -254,6 +261,20 @@ pub fn run() {
                 shutdown_core(app);
             }
         });
+}
+
+/// macOS-only Dock icon visibility, tied to the close-to-tray lifecycle:
+/// hiding the main window into the tray also removes the Dock icon (the tray
+/// becomes the only surface), and every "bring the window back" path restores
+/// it. No-op on other platforms.
+#[cfg(target_os = "macos")]
+pub(crate) fn set_dock_visible(app: &tauri::AppHandle, visible: bool) {
+    let _ = app.set_dock_visibility(visible);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn set_dock_visible(app: &tauri::AppHandle, visible: bool) {
+    let _ = (app, visible);
 }
 
 /// What a main-window `CloseRequested` should do, decided purely from the
