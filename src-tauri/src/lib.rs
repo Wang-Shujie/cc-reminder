@@ -81,10 +81,9 @@ pub fn uninstall_hooks_cli() -> i32 {
     };
     let integrations = IntegrationRepository::new(database);
     // The uninstall transaction refuses to mutate without the field cipher
-    // (encrypted rollback snapshot). Loading it here reads the OS keyring —
-    // available in the uninstaller's interactive user session.
-    let lazy_cipher = crate::security::crypto::LazyFieldCipher::new();
-    let Ok(cipher) = lazy_cipher.get().map(|arc| (*arc).clone()) else {
+    // (encrypted rollback snapshot). Load it synchronously from the OS
+    // keyring — available in the uninstaller's interactive user session.
+    let Ok(cipher) = crate::security::crypto::FieldCipher::load_or_create() else {
         print("error: credential store is unavailable; cannot write rollback snapshots");
         return 1;
     };
