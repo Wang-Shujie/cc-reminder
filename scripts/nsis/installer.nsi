@@ -488,9 +488,30 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "{{this}}"
 {{/each}}
 !insertmacro MUI_RESERVEFILE_LANGDLL
-; CC Reminder uninstall extras: the hook-uninstall checkbox text and the
-; PREUNINSTALL hook (must come after MUI_LANGUAGE so LangString resolves).
-!include "cc_hooks.nsh"
+; ---------------------------------------------------------------------------
+; CC Reminder uninstall extras (inlined: tauri-bundler renders this template
+; into its own NSIS working directory and does not copy companion .nsh files).
+; ---------------------------------------------------------------------------
+; The PREUNINSTALL hook below stops the running app first (its self-heal loop
+; would reinstall freshly-removed hooks otherwise) and, when the confirm-page
+; checkbox is ticked, invokes the app's --uninstall-hooks CLI, which runs the
+; exact same uninstall transaction the GUI uses. The checkbox itself lives in
+; un.ConfirmShow above because its label needs $LANGUAGE at page-show time.
+
+!macro NSIS_HOOK_PREUNINSTALL
+  ; Stop the running app BEFORE removing hooks. /F because the tray keeps the
+  ; app alive after the window closes.
+  nsExec::Exec 'taskkill /IM "${MAINBINARYNAME}.exe" /F'
+  Pop $0
+  ; Give the process and its file handles a moment to go away.
+  Sleep 800
+
+  ${If} $CcUninstallHooksCheckboxState = 1
+    nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-hooks'
+    Pop $0
+  ${EndIf}
+!macroend
+; ---------------------------------------------------------------------------
 {{#each language_files}}
   !include "{{this}}"
 {{/each}}
