@@ -390,6 +390,7 @@ export class FakeBackend implements Backend {
   readonly installUpdate: Backend["installUpdate"];
   readonly exportDiagnostics: Backend["exportDiagnostics"];
   readonly clearHistory: Backend["clearHistory"];
+  readonly purgeLocalData: Backend["purgeLocalData"];
   readonly setDebugLogging: Backend["setDebugLogging"];
 
   constructor(options: FakeBackendOptions = {}) {
@@ -753,6 +754,7 @@ export class FakeBackend implements Backend {
       this.clearHistoryCalls.push({ ...input });
       return 0;
     });
+    this.purgeLocalData = vi.fn(async (): Promise<void> => {});
     this.setDebugLogging = vi.fn(
       async (input: SetDebugLoggingInput): Promise<SettingsView> => {
         this.setDebugLoggingCalls.push(clone(input));

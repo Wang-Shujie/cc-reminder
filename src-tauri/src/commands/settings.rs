@@ -219,6 +219,67 @@ fn local_now(offset_seconds: Option<i32>) -> chrono::DateTime<chrono::FixedOffse
     offset.from_utc_datetime(&Utc::now().naive_utc())
 }
 
+pub(crate) fn purge_local_data_impl(state: &CoreState) -> Result<(), AppError> {
+    // 1. Channel credentials live in the OS keyring, NOT in the data
+    //    directory — delete each one while the database is still open.
+    for channel in state.storage.config.list_channels()? {
+        let _ = state.credentials.delete(&channel.credential_ref);
+    }
+    // 2. Schedule the data-directory deletion to run AFTER this process exits
+    //    (the database, logs and IPC artifacts are held open until then). A
+    //    detached cmd sleeps past our shutdown window and removes the tree;
+    //    any file still locked (worst case: a slow writer) simply survives —
+    //    nothing is partially deleted inside the directory.
+    let data_dir = state
+        .storage
+        .integrations
+        .database_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| configuration_error("path_invalid", "data directory unavailable"))?;
+    #[cfg(windows)]
+    {
+        use std::process::{Command, Stdio};
+        Command::new("cmd.exe")
+            .args([
+                "/C", "timeout", "/t", "3", "/nobreak", ">nul", "&", "rd", "/s", "/q",
+            ])
+            .arg(&data_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| configuration_error("purge_failed", "could not schedule deletion"))?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let _ = std::fs::remove_dir_all(&data_dir);
+        });
+    }
+    Ok(())
+}
+
+/// Danger-zone action: wipe every piece of local state (database, settings,
+/// logs, caches) plus the channel credentials in the OS keyring, then exit.
+/// The deletion itself runs detached, after this process has released its
+/// file handles.
+#[tauri::command]
+pub async fn purge_local_data(
+    state: State<'_, CoreState>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || purge_local_data_impl(&state))
+        .await
+        .map_err(|_| configuration_error("join_failed", "command join failed"))??;
+    // Graceful exit: RunEvent::Exit stops IPC, cancels the worker and closes
+    // the database. The detached deletion fires ~3s later.
+    app.exit(0);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

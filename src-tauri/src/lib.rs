@@ -55,6 +55,97 @@ fn local_offset_from_stored(stored_seconds: i32) -> FixedOffset {
     })
 }
 
+/// CLI entry for the uninstaller's "uninstall hooks" checkbox
+/// (`cc-reminder.exe --uninstall-hooks`, invoked by NSIS PREUNINSTALL).
+/// Runs the EXACT same uninstall transaction the GUI uses for every agent
+/// whose config still carries owned entries; never starts the GUI. Exits 0
+/// when every present config was cleaned (or there was nothing to clean).
+pub fn uninstall_hooks_cli() -> i32 {
+    use crate::agents::HookSelection;
+    use crate::installer::helper::HelperInstaller;
+    use crate::installer::lifecycle::{HookAction, HookInstaller};
+    use std::collections::BTreeSet;
+    use std::io::Write;
+
+    let print = |msg: &str| {
+        let _ = std::io::stderr().write_all(format!("{msg}\n").as_bytes());
+    };
+
+    let Ok(paths) = crate::paths::AppPaths::discover() else {
+        print("error: application data directory is unavailable");
+        return 1;
+    };
+    let Ok(database) = Database::open(&paths.database) else {
+        print("error: could not open the local database");
+        return 1;
+    };
+    let integrations = IntegrationRepository::new(database);
+    // The uninstall transaction refuses to mutate without the field cipher
+    // (encrypted rollback snapshot). Loading it here reads the OS keyring —
+    // available in the uninstaller's interactive user session.
+    let lazy_cipher = crate::security::crypto::LazyFieldCipher::new();
+    let Ok(cipher) = lazy_cipher.get().map(|arc| (*arc).clone()) else {
+        print("error: credential store is unavailable; cannot write rollback snapshots");
+        return 1;
+    };
+    let home = directories::BaseDirs::new()
+        .map(|d| d.home_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let bin_dir = paths.data_dir.join("bin");
+
+    let mut failures = 0usize;
+    for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let config_path = match agent {
+            AgentKind::ClaudeCode => home.join(".claude").join("settings.json"),
+            AgentKind::Codex => home.join(".codex").join("hooks.json"),
+        };
+        let Ok(bytes) = std::fs::read(&config_path) else {
+            // No config file — nothing installed for this agent.
+            continue;
+        };
+        let Ok(installed) = crate::installer::inspect_owned_entries(agent, &bytes) else {
+            print(&format!(
+                "warning: {agent:?} config is malformed; leaving it untouched"
+            ));
+            continue;
+        };
+        if installed.is_empty() {
+            continue;
+        }
+        let events: BTreeSet<String> = installed
+            .iter()
+            .map(|entry| entry.source_event.clone())
+            .collect();
+        let placeholder = HelperInstaller::undeployed_placeholder(bin_dir.clone());
+        let selection = HookSelection {
+            events,
+            helper_path: placeholder.stable_path(),
+            helper_version: placeholder.manifest_version().clone(),
+        };
+        let installer = HookInstaller::new(
+            agent,
+            config_path,
+            integrations.clone(),
+            Some(cipher.clone()),
+            placeholder,
+        );
+        match installer.apply(HookAction::Uninstall, &selection) {
+            Ok(_) => print(&format!("uninstalled {agent:?} hooks")),
+            Err(error) => {
+                failures += 1;
+                print(&format!(
+                    "error: uninstalling {agent:?} hooks failed: {} ({})",
+                    error.code, error.message
+                ));
+            }
+        }
+    }
+    if failures == 0 {
+        print("hooks uninstalled");
+    }
+    if failures > 0 { 1 } else { 0 }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -146,6 +237,7 @@ pub fn run() {
             commands::settings::save_settings,
             commands::settings::set_notification_pause,
             commands::settings::clear_notification_pause,
+            commands::settings::purge_local_data,
             commands::diagnostics::export_diagnostics,
             commands::diagnostics::clear_history,
             commands::diagnostics::set_debug_logging,

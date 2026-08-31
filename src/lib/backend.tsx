@@ -82,6 +82,7 @@ export interface Backend {
    *  bridge from this side. */
   exportDiagnostics(): Promise<DiagnosticExportResult>;
   clearHistory(input: { preserve_active_jobs: boolean }): Promise<number>;
+  purgeLocalData(): Promise<void>;
   setDebugLogging(input: SetDebugLoggingInput): Promise<SettingsView>;
   subscribe(
     event: CoreEventName,
@@ -200,6 +201,9 @@ export class TauriBackend implements Backend {
   }
   clearHistory(input: { preserve_active_jobs: boolean }): Promise<number> {
     return invoke("clear_history", { input });
+  }
+  purgeLocalData(): Promise<void> {
+    return invoke("purge_local_data");
   }
   setDebugLogging(input: SetDebugLoggingInput): Promise<SettingsView> {
     return invoke("set_debug_logging", { input });

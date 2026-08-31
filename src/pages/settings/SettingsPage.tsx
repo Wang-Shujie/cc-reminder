@@ -74,6 +74,11 @@ export function SettingsPage({
   const [loadError, setLoadError] = useState<PageError | null>(null);
   const [actionError, setActionError] = useState<PageError | null>(null);
 
+  /** Danger zone: wipe all local data then exit. */
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+  const [purgeStatus, setPurgeStatus] = useState<string | null>(null);
+  const [purgeError, setPurgeError] = useState<PageError | null>(null);
+
   const [checking, setChecking] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [installConfirmOpen, setInstallConfirmOpen] = useState(false);
@@ -708,6 +713,17 @@ export function SettingsPage({
               {exportStatus}
             </p>
           )}
+          {purgeStatus !== null && (
+            <p role="status" className="muted">
+              {purgeStatus}
+            </p>
+          )}
+          {purgeError !== null && (
+            <p role="alert">
+              {purgeError.message}
+              {purgeError.suggested_action !== null && <>（{purgeError.suggested_action}）</>}
+            </p>
+          )}
           <button
             type="button"
             className="cc-focusable"
@@ -726,8 +742,50 @@ export function SettingsPage({
           >
             {t.clearHistory}
           </button>
+          <button
+            type="button"
+            className="cc-focusable"
+            onClick={() => {
+              setPurgeConfirmOpen(true);
+            }}
+          >
+            {t.purgeDataTitle}
+          </button>
         </div>
       </div>
+
+      {purgeConfirmOpen && (
+        <div className="dialog-overlay" role="presentation">
+          <div className="dialog" role="dialog" aria-modal="true" aria-label={t.purgeDataTitle}>
+            <h2>{t.purgeDataTitle}</h2>
+            <p role="alert">{t.purgeDataWarning}</p>
+            <div className="row-end">
+              <button
+                type="button"
+                className="cc-focusable"
+                onClick={() => {
+                  setPurgeConfirmOpen(false);
+                }}
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                className="primary cc-focusable"
+                onClick={() => {
+                  void backend
+                    .purgeLocalData()
+                    .then(() => setPurgeStatus(t.purgeDataStatus))
+                    .catch((e: unknown) => setPurgeError(errorOf(e)))
+                    .finally(() => setPurgeConfirmOpen(false));
+                }}
+              >
+                {t.purgeDataConfirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {installConfirmOpen && (
         <div className="dialog-overlay">

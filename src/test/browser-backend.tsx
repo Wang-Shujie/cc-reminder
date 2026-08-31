@@ -761,6 +761,8 @@ export class BrowserTestBackend implements Backend {
     return { status: "saved", filename: "cc-reminder-diagnostics.zip" };
   }
 
+  async purgeLocalData(): Promise<void> {}
+
   async clearHistory(input: { preserve_active_jobs: boolean }): Promise<number> {
     const before = this.historyState.length;
     this.historyState =

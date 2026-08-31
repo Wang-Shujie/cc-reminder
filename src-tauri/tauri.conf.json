@@ -52,6 +52,7 @@
       "tsp": true,
       "nsis": {
         "installMode": "currentUser",
+        "template": "../scripts/nsis/installer.nsi",
         "languages": [
           "English",
           "SimpChinese"

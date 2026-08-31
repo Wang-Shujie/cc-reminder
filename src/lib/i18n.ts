@@ -59,6 +59,10 @@ export interface Dictionary {
   exportDiagnostics: string;
   clearHistory: string;
   clearHistoryWarning: string;
+  purgeDataTitle: string;
+  purgeDataWarning: string;
+  purgeDataConfirm: string;
+  purgeDataStatus: string;
   confirmClearHistory: string;
   // Hook Rules page (Task 17)
   scopeLabel: string;
@@ -419,6 +423,11 @@ const zhCn: Dictionary = {
   exportDiagnostics: "导出诊断",
   clearHistory: "清除历史",
   clearHistoryWarning: "将删除已完成的通知历史；活动任务及其事件将被保留。",
+  purgeDataTitle: "清空本地数据",
+  purgeDataWarning:
+    "将删除全部本地数据：通知历史、通知规则、项目与渠道配置（含系统钥匙串中保存的渠道凭据）、日志与缓存，应用随后退出。此操作不可恢复。卸载程序中的「卸载钩子/删除数据」不会受影响。",
+  purgeDataConfirm: "确认清空并退出",
+  purgeDataStatus: "本地数据已清除，应用正在退出。",
   confirmClearHistory: "确认清除历史",
   scopeLabel: "作用域",
   scopeGlobal: "全局",
@@ -783,6 +792,11 @@ const en: Dictionary = {
   exportDiagnostics: "Export diagnostics",
   clearHistory: "Clear history",
   clearHistoryWarning: "Completed notification history will be deleted; active jobs and their events are preserved.",
+  purgeDataTitle: "Clear local data",
+  purgeDataWarning:
+    "Deletes ALL local data: notification history, rules, project and channel configuration (including channel credentials stored in the OS keyring), logs and caches — then exits the app. This cannot be undone. The uninstaller's hook/data options are unaffected.",
+  purgeDataConfirm: "Clear and exit",
+  purgeDataStatus: "Local data cleared; the app is exiting.",
   confirmClearHistory: "Confirm clear history",
   scopeLabel: "Scope",
   scopeGlobal: "Global",
