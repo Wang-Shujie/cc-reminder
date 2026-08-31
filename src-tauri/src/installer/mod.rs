@@ -1019,18 +1019,32 @@ mod tests {
         let windows_form = command
             .command_windows
             .expect("windows form always present");
-        // PowerShell 派发形式:`&`(调用操作符)+ 双引号包 exe + 双引号参数。
-        // 不用 shell_words 断言——它是 POSIX 语义(对 Windows 反斜杠路径与
-        // `\"` 转义的处理与 PowerShell/.NET 不同),直接断言形式本身。
-        assert!(
-            windows_form.starts_with(r#"& ""#),
-            "commandWindows must carry the PowerShell call operator"
-        );
+        // Claude 的 commandWindows 恒为全参数双引号形式(无 `&` 调用操作符——
+        // 那是 Codex 的 PowerShell 派发契约;Claude 并不消费该键)。
+        assert!(windows_form.starts_with('"'), "emitter must always quote");
         assert!(
             windows_form
                 .ends_with(r#""--owner" "cc-reminder" "--agent" "claude-code" "--event" "Stop""#),
             "actual commandWindows form: {windows_form}"
         );
+
+        // Codex 的 commandWindows 则为裸路径 + 裸参数——powershell -Command
+        // 与 cmd.exe /C 两种 wrapper 下都可直接执行(见 canonical_hook_command)。
+        let codex = canonical_hook_command(
+            Path::new(r"C:\Users\u\AppData\Roaming\com.ccreminder.app\bin\cc-reminder-hook.exe"),
+            AgentKind::Codex,
+            "Stop",
+        );
+        let codex_windows = codex.command_windows.as_deref().unwrap();
+        assert!(
+            codex_windows.starts_with(r"C:\Users\u\"),
+            "codex commandWindows must be the bare form, got: {codex_windows}"
+        );
+        assert!(
+            codex_windows.ends_with(r"--owner cc-reminder --agent codex --event Stop"),
+            "actual codex commandWindows form: {codex_windows}"
+        );
+        assert!(!codex_windows.contains('"'), "bare form must not quote");
     }
 
     #[test]

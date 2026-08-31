@@ -112,16 +112,47 @@ pub fn canonical_hook_command(
         "--event",
         event,
     ];
-    // Windows 上两个 agent 的 `command` 都用 windows 双引号形式:
-    // - Claude Code 的 handler 没有 `commandWindows` 覆盖键(仅 Codex 支持),
-    //   官方经 Git Bash 执行,双引号合法。
-    // - Codex 的 Windows 派发是 `cmd.exe /C "<command_line>"`(hooks 引擎
-    //   command_runner.rs 对 command_line 再包一层引号):cmd 的 /C 引号规则
-    //   对多引号对的命令行剥掉首尾引号,POSIX 单引号形式因此被解析成残缺
-    //   命令("文件名、目录名或卷标语法不正确",exit 1)——实测 `command`
-    //   字段被直接执行,`commandWindows` 并未生效,故 `command` 本身必须是
-    //   cmd 可解析的形式(双引号包 exe + 引号参数,剥引号后正确执行)。
-    // Unix 上恒为 POSIX 形式。
+    // Windows 的派发机制(实测:进程捕获 + Codex 源码 command_runner.rs):
+    // - Claude Code:handler 无 `commandWindows` 键,官方经 Git Bash 执行
+    //   `command`——全参数双引号形式合法(裸路径会在 bash 里被 `\` 转义破坏)。
+    // - Codex TUI:   `powershell -NoProfile -Command "<commandWindows>"`——
+    //                引号形式与 POSIX 形式在 PS 里都是字符串字面量序列
+    //                (ParserError,exit 1);裸路径 + 裸参数被当命令执行
+    //                (实测 exit 0)。
+    // - Codex app-server(多环境 fallback):`cmd.exe /C "<commandWindows>"`——
+    //                `&` 操作符是 cmd 分隔符(实测 exit 1);裸形式直接执行
+    //                (实测 exit 0)。
+    // ⇒ Codex 的 `commandWindows` 用裸路径 + 裸参数(路径无空格时两种
+    //   wrapper 均可执行);`command` 保持 windows 引号形式(识别与 Git Bash
+    //   兼容)。Unix 上恒为 POSIX 形式。
+    if cfg!(windows) && agent == AgentKind::Codex {
+        let space_free = !path.to_string_lossy().contains(' ');
+        let ps_form = || {
+            std::iter::once(format!("& {}", windows_quote(&path.to_string_lossy())))
+                .chain(args.iter().map(|a| windows_quote(a)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let bare = || {
+            std::iter::once(path.to_string_lossy().into_owned())
+                .chain(args.iter().map(|a| a.to_string()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        return HookCommand {
+            // 仅识别/Git-Bash 兼容用途——Codex Windows 执行的是 commandWindows。
+            command: windows_quote(&path.to_string_lossy())
+                + " "
+                + &args
+                    .iter()
+                    .map(|a| windows_quote(a))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            // 路径含空格时无 cmd/PS 公共形式,退化为仅 PowerShell 可用的
+            // 调用操作符形式(stable helper 路径仅在用户名含空格时含空格)。
+            command_windows: Some(if space_free { bare() } else { ps_form() }),
+        };
+    }
     let quoter = if cfg!(windows) {
         windows_quote
     } else {
@@ -132,12 +163,8 @@ pub fn canonical_hook_command(
             .chain(args.iter().map(|a| quoter(a)))
             .collect::<Vec<_>>()
             .join(" "),
-        // `commandWindows` 的实测派发(Windows 进程捕获原文):codex 用
-        // `powershell -NoProfile -Command "<commandWindows>"` 执行——双引号
-        // 形式在 PowerShell 里是字符串字面量序列(语法错误,exit 1),必须
-        // 用调用操作符 `&` 前缀才能作为命令执行。
         command_windows: Some(
-            std::iter::once(format!("& {}", windows_quote(&path.to_string_lossy())))
+            std::iter::once(windows_quote(&path.to_string_lossy()))
                 .chain(args.iter().map(|a| windows_quote(a)))
                 .collect::<Vec<_>>()
                 .join(" "),
