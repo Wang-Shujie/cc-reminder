@@ -1,7 +1,7 @@
 # CC Reminder 运维手册
 
 面向操作者的安装、信任、日常运行、诊断与安全卸载说明，并附发布验收清单（见文末）。
-本文档随应用版本演进（当前 `2.0.0`，见 `src-tauri/tauri.conf.json`）；所有界面文案以实际 UI（默认简体中文）为准。
+本文档随应用版本演进（当前 `2.0.1`，见 `src-tauri/tauri.conf.json`）；所有界面文案以实际 UI（默认简体中文）为准。
 
 - 设计文档：[docs/superpowers/specs/2026-07-29-cc-reminder-design.md](superpowers/specs/2026-07-29-cc-reminder-design.md)
 - 分层架构：[docs/architecture.md](../docs/architecture.md)
