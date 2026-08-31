@@ -53,6 +53,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # v2.0.1 发现:tag 推送在部分仓库配置下未触发本 workflow(0 次运行记录),
+  # 增加 manual dispatch 作为重跑入口(gh workflow run release.yml)。
+  workflow_dispatch:
 
 permissions:
   contents: read
