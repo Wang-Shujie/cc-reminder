@@ -742,7 +742,12 @@ fn hook_command_carries_both_platform_commands() {
     // Both carry the agent/event markers.
     assert!(cmd.command.contains("codex"));
     assert!(cmd.command.contains("Stop"));
-    assert!(win.contains("\"--agent\" \"codex\" \"--event\" \"Stop\""));
+    // 14d83ef 起 commandWindows 为裸形式(双 wrapper 公共可执行子集):
+    // 路径 + 裸参数,参数不再带引号。
+    assert!(
+        win.ends_with("--owner cc-reminder --agent codex --event Stop"),
+        "actual commandWindows form: {win}"
+    );
 }
 
 /// Unix 编译下的对照:command 恒为 POSIX 单引号形式,commandWindows 仍为

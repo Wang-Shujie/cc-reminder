@@ -461,6 +461,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{canonical_hook_command, insert_ingress};
+    // command_fingerprint 只被 cfg(windows) 的断言块使用——非 Windows 编译
+    // 下保留 import 会触发 unused 警告(-D warnings 下即错误)。
+    #[cfg(windows)]
+    use super::command_fingerprint;
     use crate::events::normalize::SafeIngressEvent;
     use crate::ipc::protocol::MAX_SAFE_ENVELOPE_BYTES;
     use crate::model::{AgentKind, ScalarValue};
